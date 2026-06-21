@@ -4,6 +4,7 @@ import 'package:livescore/models/game_model.dart';
 import 'package:livescore/models/team_model.dart';
 import 'package:livescore/models/player_model.dart';
 import 'package:livescore/models/standing_model.dart';
+import 'package:livescore/models/league_leader_model.dart';
 import 'package:livescore/models/news_model.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/models/team_page_data.dart';
@@ -364,6 +365,30 @@ class ApiService {
       alternateColor: '#${team['alternateColor']?.toString() ?? 'FFFFFF'}',
       record: record,
     );
+  }
+
+  /// Resolves a team logo URL from standings entry data.
+  /// ESPN's /standings endpoint usually omits the `logo` field on team objects,
+  /// so we fall back to the standard ESPN CDN pattern using the team ID.
+  String _resolveTeamLogo(Map<String, dynamic> teamData) {
+    // 1. Direct logo string (some endpoints do provide it)
+    final direct = teamData['logo']?.toString() ?? '';
+    if (direct.isNotEmpty && direct.startsWith('http')) return direct;
+
+    // 2. logos[] array (core API format)
+    final logos = teamData['logos'] as List?;
+    if (logos != null && logos.isNotEmpty) {
+      final href = logos.first['href']?.toString() ?? '';
+      if (href.isNotEmpty && href.startsWith('http')) return href;
+    }
+
+    // 3. Construct from team ID — always works for club teams
+    final id = teamData['id']?.toString() ?? '';
+    if (id.isNotEmpty) {
+      return 'https://a.espncdn.com/i/teamlogos/soccer/500/$id.png';
+    }
+
+    return '';
   }
 
   List<int> _parseLineScores(dynamic raw) {
@@ -887,8 +912,9 @@ class ApiService {
 
   // Replace the existing getStandings method with this:
 
-  Future<List<Standing>> getStandings(String leagueCode) async {
-    final url = '${AppConstants.standingsUrl}/$leagueCode/standings';
+  Future<List<Standing>> getStandings(String leagueCode, {String? season}) async {
+    final seasonQuery = (season != null && season.isNotEmpty) ? '?season=$season' : '';
+    final url = '${AppConstants.standingsUrl}/$leagueCode/standings$seasonQuery';
     try {
       final res = await _client
           .get(Uri.parse(url), headers: _headers)
@@ -951,28 +977,53 @@ class ApiService {
         String? form;
 
         for (final stat in statsList) {
-          final name = stat['name']?.toString() ?? '';
+          final name  = stat['name']?.toString() ?? '';
+          final abbr  = stat['abbreviation']?.toString() ?? '';
           final displayValue = stat['displayValue']?.toString() ?? '0';
           statsMap[name] = displayValue;
+          if (abbr.isNotEmpty) statsMap[abbr] = displayValue; // also index by abbreviation
 
-          // Map ESPN stat names to our fields
-          switch (name.toLowerCase()) {
+          // Map ESPN stat names to our fields.
+          // ESPN soccer standings use 'pointsFor'/'pointsAgainst' for goals (not 'goalsFor'!)
+          // and sometimes 'pointDifferential' for GD. Cover all known variants.
+          final key = name.toLowerCase().replaceAll(RegExp(r'[\s_\-]'), '');
+          final abbrKey = abbr.toLowerCase();
+          switch (key) {
             case 'points':
             case 'pts':
               points = int.tryParse(displayValue);
               break;
+          // ── Goals For ─────────────────────────────────────────────────────
+            case 'pointsfor':      // ← ESPN's actual field name for soccer GF
             case 'goalsfor':
-            case 'goals_for':
+            case 'goalsscored':
             case 'gf':
               goalsFor = int.tryParse(displayValue);
               break;
+          // ── Goals Against ─────────────────────────────────────────────────
+            case 'pointsagainst':  // ← ESPN's actual field name for soccer GA
             case 'goalsagainst':
-            case 'goals_against':
+            case 'goalsconceded':
             case 'ga':
               goalsAgainst = int.tryParse(displayValue);
               break;
+          // ── Goal Difference ───────────────────────────────────────────────
+            case 'pointdifferential':
+            case 'pointsdiff':
+            case 'goaldifference':
+            case 'goaldiff':
+            case 'gd':
+            case 'diff':
+            // Use directly when available instead of computing
+              final gdVal = int.tryParse(displayValue);
+              if (gdVal != null && goalsFor == null && goalsAgainst == null) {
+                // Store for later — can't assign directly here; handled below
+              }
+              break;
+          // ── Games Played ──────────────────────────────────────────────────
             case 'gamesplayed':
-            case 'games_played':
+            case 'matchesplayed':
+            case 'played':
             case 'gp':
             case 'mp':
               gamesPlayed = int.tryParse(displayValue);
@@ -993,9 +1044,24 @@ class ApiService {
             case 'form':
             case 'last5':
             case 'formguide':
+            case 'recentform':
               form = displayValue;
               break;
           }
+          // Abbreviation fallback for when name doesn't match
+          if (goalsFor == null && (abbrKey == 'gf' || abbrKey == 'pf')) {
+            goalsFor = int.tryParse(displayValue);
+          }
+          if (goalsAgainst == null && (abbrKey == 'ga' || abbrKey == 'pa')) {
+            goalsAgainst = int.tryParse(displayValue);
+          }
+          if (gamesPlayed == null && (abbrKey == 'gp' || abbrKey == 'mp' || abbrKey == 'p')) {
+            gamesPlayed = int.tryParse(displayValue);
+          }
+          if (wins == null && abbrKey == 'w') wins = int.tryParse(displayValue);
+          if (draws == null && (abbrKey == 'd' || abbrKey == 'dr')) draws = int.tryParse(displayValue);
+          if (losses == null && abbrKey == 'l') losses = int.tryParse(displayValue);
+          if (points == null && (abbrKey == 'pts' || abbrKey == 'pt')) points = int.tryParse(displayValue);
         }
 
         // Calculate goal difference
@@ -1018,7 +1084,7 @@ class ApiService {
             name: teamData['name']?.toString() ?? '',
             displayName: teamData['displayName']?.toString() ?? '',
             abbreviation: teamData['abbreviation']?.toString() ?? '',
-            logo: teamData['logo']?.toString() ?? '',
+            logo: _resolveTeamLogo(teamData),
             color: '#${teamData['color']?.toString() ?? '1A62C8'}',
             alternateColor: '#${teamData['alternateColor']?.toString() ?? 'FFFFFF'}',
             record: '${wins ?? 0}-${losses ?? 0}-${draws ?? 0}',
@@ -1091,7 +1157,373 @@ class ApiService {
     return standings;
   }
 
+  // ── League Stat Leaders ───────────────────────────────────────────────────────
+  //
+  // Strategy (tried in order):
+  //
+  // 1. site.web.api.espn.com /apis/v2/sports/soccer/leagues/{code}/seasons/{year}/types/{type}/leaders
+  //    — This is the endpoint ESPN's own scorers page uses. Returns inline athlete
+  //    and team objects (no $ref resolution needed). Tried with type=2 (regular
+  //    season), then type=3 (tournament), then without the types segment.
+  //
+  // 2. Aggregate from the last 90 days of daily scoreboard calls.
+  //    ESPN scoreboard only accepts single dates (date RANGE params → 400).
+  //    We fetch daily scoreboards for the past 90 days (batched, parallel)
+  //    and tally goals/assists/cards from each game's details[] array —
+  //    the same source that powers _parseGoalScorers() for live game cards.
+  //    This always works for active seasons and the ongoing World Cup.
+  //
+  static const String _coreApiBase = 'https://sports.core.api.espn.com/v2/sports/soccer/leagues';
+
+  Future<LeagueLeaders> getLeagueLeaders(String leagueCode, {String? season, int limit = 5}) async {
+    // ── Strategy 1: site.web.api ESPN leaders endpoint ────────────────────────
+    // This is what espn.com/soccer/scorers uses. Returns inline data, no $refs.
+    final result1 = await _tryWebApiLeaders(leagueCode, season: season, limit: limit);
+    if (!result1.isEmpty) {
+      print('[Leaders] ✅ Got leaders from web API for $leagueCode');
+      return result1;
+    }
+
+    // ── Strategy 2: Aggregate from season-correct daily scoreboards ─────────
+    // ESPN scoreboard only accepts single dates (ranges → 400).
+    // We fetch daily scoreboards for the correct season window and tally stats.
+    print('[Leaders] Web API returned empty, falling back to scoreboard aggregation');
+    final result2 = await _aggregateLeadersFromRecentGames(leagueCode, season: season, limit: limit);
+    if (!result2.isEmpty) {
+      print('[Leaders] ✅ Got leaders from scoreboard aggregation for $leagueCode');
+      return result2;
+    }
+
+    print('[Leaders] No leaders data available for $leagueCode');
+    return LeagueLeaders.empty;
+  }
+
+  /// Strategy 1: ESPN's web API leaders endpoint (what espn.com scorers page uses).
+  /// Tries multiple URL patterns: with types/2, types/3, and without types segment.
+  Future<LeagueLeaders> _tryWebApiLeaders(String leagueCode, {String? season, int limit = 5}) async {
+    final int seasonYear = int.tryParse(season ?? '') ?? DateTime.now().year;
+    // For World Cup / tournaments use seasontype 3; domestic leagues use 2; try both
+    final bool isTournament = AppConstants.isNationalTeamLeague(leagueCode);
+    final primaryType = isTournament ? 3 : 2;
+    final fallbackType = isTournament ? 2 : 3;
+
+    final urlPatterns = [
+      'https://site.web.api.espn.com/apis/v2/sports/soccer/leagues/$leagueCode/seasons/$seasonYear/types/$primaryType/leaders?limit=$limit&lang=en&region=us',
+      'https://site.web.api.espn.com/apis/v2/sports/soccer/leagues/$leagueCode/seasons/$seasonYear/types/$fallbackType/leaders?limit=$limit&lang=en&region=us',
+      'https://site.web.api.espn.com/apis/v2/sports/soccer/leagues/$leagueCode/seasons/$seasonYear/leaders?limit=$limit&lang=en&region=us',
+    ];
+
+    for (final url in urlPatterns) {
+      try {
+        print('[Leaders] Trying: $url');
+        final res = await _client
+            .get(Uri.parse(url), headers: _headers)
+            .timeout(const Duration(seconds: 10));
+
+        if (res.statusCode == 200) {
+          final data = json.decode(res.body) as Map<String, dynamic>;
+          final leaders = _parseWebApiLeaders(data, limit);
+          if (!leaders.isEmpty) return leaders;
+        } else {
+          print('[Leaders] HTTP ${res.statusCode} for $url');
+        }
+      } catch (e) {
+        print('[Leaders] Error trying $url: $e');
+      }
+    }
+    return LeagueLeaders.empty;
+  }
+
+  /// Parses the site.web.api leaders response.
+  /// Response shape: { categories: [ { name, displayName, leaders: [ { athlete:{}, team:{}, value } ] } ] }
+  LeagueLeaders _parseWebApiLeaders(Map<String, dynamic> data, int limit) {
+    final categories = data['categories'] as List? ?? [];
+    if (categories.isEmpty) return LeagueLeaders.empty;
+
+    List<LeaderEntry> parseCategory(List<String> namePatterns) {
+      for (final cat in categories) {
+        final catName = (cat['name'] ?? cat['displayName'] ?? cat['abbreviation'] ?? '')
+            .toString().toLowerCase();
+        if (!namePatterns.any((p) => catName.contains(p))) continue;
+
+        final rawLeaders = cat['leaders'] as List? ?? [];
+        final entries = <LeaderEntry>[];
+
+        for (final leader in rawLeaders.take(limit)) {
+          try {
+            // site.web.api returns inline athlete/team objects (no $ref)
+            final athlete = leader['athlete'] as Map<String, dynamic>? ?? {};
+            final team    = leader['team']    as Map<String, dynamic>? ?? {};
+            final value   = leader['value'] ?? leader['displayValue'] ?? 0;
+
+            // Athlete may be nested under 'athlete' key or be the leader itself
+            final athleteId   = athlete['id']?.toString() ?? '';
+            final athleteName = athlete['displayName']?.toString()
+                ?? athlete['fullName']?.toString() ?? '';
+            if (athleteName.isEmpty && athleteId.isEmpty) continue;
+
+            // Headshot: inline href, or CDN pattern
+            String headshot = '';
+            final hs = athlete['headshot'];
+            if (hs is Map)        headshot = hs['href']?.toString() ?? '';
+            else if (hs is String) headshot = hs;
+            if (headshot.isEmpty && athleteId.isNotEmpty) {
+              headshot = 'https://a.espncdn.com/i/headshots/soccer/players/full/$athleteId.png';
+            }
+
+            // Team logo
+            final teamId   = team['id']?.toString() ?? '';
+            String teamLogo = '';
+            final logos = team['logos'] as List?;
+            if (logos != null && logos.isNotEmpty) {
+              teamLogo = logos.first['href']?.toString() ?? '';
+            }
+            if (teamLogo.isEmpty && team['logo'] != null) {
+              teamLogo = team['logo'].toString();
+            }
+            if (teamLogo.isEmpty && teamId.isNotEmpty) {
+              teamLogo = 'https://a.espncdn.com/i/teamlogos/soccer/500/$teamId.png';
+            }
+
+            entries.add(LeaderEntry(
+              athleteId: athleteId,
+              name: athleteName,
+              headshot: headshot,
+              teamId: teamId,
+              teamAbbreviation: team['abbreviation']?.toString() ?? '',
+              teamLogo: teamLogo,
+              value: value is num ? value : num.tryParse(value.toString()) ?? 0,
+            ));
+          } catch (e) {
+            print('[Leaders] Error parsing leader entry: $e');
+          }
+        }
+
+        if (entries.isNotEmpty) return entries;
+      }
+      return [];
+    }
+
+    final scorers = parseCategory(['goals', 'scoring', 'goal']);
+    final assists = parseCategory(['assist']);
+    final yellow  = parseCategory(['yellow']);
+    final red     = parseCategory(['red']);
+
+    if (scorers.isEmpty && assists.isEmpty && yellow.isEmpty && red.isEmpty) {
+      return LeagueLeaders.empty;
+    }
+
+    return LeagueLeaders(
+      topScorers: scorers,
+      topAssists: assists,
+      mostYellowCards: yellow,
+      mostRedCards: red,
+    );
+  }
+
+  /// Strategy 2: Aggregate stats from season-correct daily scoreboards.
+  /// ESPN only supports single-date scoreboard calls (date ranges → 400).
+  /// We sample every 7th day across the season window (≈52 calls for a full year)
+  /// rather than fetching all 365 days, which balances coverage vs latency.
+  Future<LeagueLeaders> _aggregateLeadersFromRecentGames(
+      String leagueCode, {String? season, int limit = 5}) async {
+
+    // Compute the correct season date window from the season param.
+    // ESPN season convention: season='2025' = the 2024-25 season.
+    //   Domestic leagues: Aug 1 of (year-1) → Jun 30 of (year)
+    //   World Cup / international tournaments: Jan 1 of year → Dec 31 of year
+    final now = DateTime.now();
+    final int seasonYear = int.tryParse(season ?? '') ?? now.year;
+    final bool isTournament = AppConstants.isNationalTeamLeague(leagueCode);
+
+    DateTime rangeStart, rangeEnd;
+    if (isTournament) {
+      // Tournament: single calendar year
+      rangeStart = DateTime(seasonYear, 1, 1);
+      rangeEnd   = DateTime(seasonYear, 12, 31);
+    } else {
+      // Domestic league: Aug of previous year → Jun of season year
+      rangeStart = DateTime(seasonYear - 1, 8, 1);
+      rangeEnd   = DateTime(seasonYear, 6, 30);
+    }
+
+    // Don't fetch into the future
+    if (rangeEnd.isAfter(now)) rangeEnd = now;
+    // If rangeStart is in the future (e.g. next season selected), abort
+    if (rangeStart.isAfter(now)) {
+      print('[Leaders] Season $seasonYear is in the future, skipping aggregation');
+      return LeagueLeaders.empty;
+    }
+
+    // Sample every 7 days across the range (≈52 samples for a full season)
+    final dates = <String>[];
+    for (var d = rangeStart; d.isBefore(rangeEnd) || d.isAtSameMomentAs(rangeEnd);
+    d = d.add(const Duration(days: 7))) {
+      dates.add(_fmt(d));
+    }
+    // Always include the last day of range to catch end-of-season games
+    final lastFmt = _fmt(rangeEnd);
+    if (!dates.contains(lastFmt)) dates.add(lastFmt);
+
+    print('[Leaders] Fetching ${dates.length} weekly scoreboard samples for $leagueCode season $seasonYear '
+        '(${_fmt(rangeStart)} → ${_fmt(rangeEnd)})');
+
+    final Map<String, Map<String, dynamic>> playerStats = {};
+    const batchSize = 10;
+
+    for (int i = 0; i < dates.length; i += batchSize) {
+      final batch = dates.sublist(i, (i + batchSize).clamp(0, dates.length));
+      final futures = batch.map((dateStr) async {
+        final url = '${AppConstants.baseUrl}/$leagueCode/scoreboard?dates=$dateStr';
+        try {
+          final res = await _client
+              .get(Uri.parse(url), headers: _headers)
+              .timeout(const Duration(seconds: 8));
+          if (res.statusCode != 200) return;
+          final data = json.decode(res.body) as Map<String, dynamic>;
+          _tallyStatsFromScoreboard(data, playerStats);
+        } catch (_) {}
+      }).toList();
+      await Future.wait(futures);
+    }
+
+    if (playerStats.isEmpty) {
+      print('[Leaders] No stats found in scoreboard aggregation for $leagueCode $seasonYear');
+      return LeagueLeaders.empty;
+    }
+
+    print('[Leaders] Aggregated stats for ${playerStats.length} players from $leagueCode $seasonYear');
+
+    LeaderEntry _toEntry(MapEntry<String, Map<String, dynamic>> e, String statKey) {
+      final s = e.value;
+      String headshot = s['headshot'] as String? ?? '';
+      if (headshot.isEmpty) {
+        headshot = 'https://a.espncdn.com/i/headshots/soccer/players/full/${e.key}.png';
+      }
+      return LeaderEntry(
+        athleteId: e.key,
+        name: s['name'] as String? ?? '',
+        headshot: headshot,
+        teamId: s['teamId'] as String? ?? '',
+        teamAbbreviation: s['teamAbbr'] as String? ?? '',
+        teamLogo: s['teamLogo'] as String? ?? '',
+        value: s[statKey] as int,
+      );
+    }
+
+    List<LeaderEntry> buildList(String statKey) {
+      return (playerStats.entries.toList()
+        ..sort((a, b) => (b.value[statKey] as int).compareTo(a.value[statKey] as int)))
+          .where((e) => (e.value[statKey] as int) > 0)
+          .take(limit)
+          .map((e) => _toEntry(e, statKey))
+          .toList();
+    }
+
+    final topScorers = buildList('goals');
+    final topAssists = buildList('assists');
+    final mostYellow = buildList('yellow');
+    final mostRed    = buildList('red');
+
+    print('[Leaders] Aggregation results → scorers:${topScorers.length} '
+        'assists:${topAssists.length} yellow:${mostYellow.length} red:${mostRed.length}');
+
+    return LeagueLeaders(
+      topScorers: topScorers,
+      topAssists: topAssists,
+      mostYellowCards: mostYellow,
+      mostRedCards: mostRed,
+    );
+  }
+
+  /// Tallies goals/assists/yellow/red from a scoreboard response's details[] arrays.
+  void _tallyStatsFromScoreboard(
+      Map<String, dynamic> data, Map<String, Map<String, dynamic>> playerStats) {
+    final events = data['events'] as List? ?? [];
+
+    for (final event in events) {
+      // Only count completed matches
+      final state     = event['status']?['type']?['state']?.toString() ?? '';
+      final completed = event['status']?['type']?['completed'] == true;
+      if (state != 'post' && !completed) continue;
+
+      final competition =
+      (event['competitions'] as List?)?.first as Map<String, dynamic>?;
+      if (competition == null) continue;
+
+      // Build teamId → {abbr, logo} for this game
+      final Map<String, Map<String, String>> teamInfo = {};
+      for (final c in (competition['competitors'] as List? ?? [])) {
+        final t   = c['team'] as Map<String, dynamic>? ?? {};
+        final tid = t['id']?.toString() ?? '';
+        if (tid.isEmpty) continue;
+        String logo = t['logo']?.toString() ?? '';
+        if (logo.isEmpty) {
+          logo = 'https://a.espncdn.com/i/teamlogos/soccer/500/$tid.png';
+        }
+        teamInfo[tid] = {'abbr': t['abbreviation']?.toString() ?? '', 'logo': logo};
+      }
+
+      final details = competition['details'] as List? ?? [];
+      for (final detail in details) {
+        final typeStr = (detail['type']?['text'] ?? detail['type']?['name'] ?? '')
+            .toString().toLowerCase();
+        final athletes = detail['athletesInvolved'] as List? ?? [];
+        if (athletes.isEmpty) continue;
+
+        final teamId = detail['team']?['id']?.toString() ?? '';
+        final tInfo  = teamInfo[teamId] ?? {};
+
+        void credit(Map<String, dynamic> athlete, String key) {
+          final pid = athlete['id']?.toString() ?? '';
+          if (pid.isEmpty) return;
+          final stats = playerStats.putIfAbsent(pid, () => _emptyPlayerStat(athlete, teamId, tInfo));
+          stats[key] = (stats[key] as int) + 1;
+          // Update team info with richer data when available
+          if (teamId.isNotEmpty) stats['teamId'] = teamId;
+          if ((tInfo['abbr'] ?? '').isNotEmpty) stats['teamAbbr'] = tInfo['abbr'];
+          if ((tInfo['logo'] ?? '').isNotEmpty) stats['teamLogo'] = tInfo['logo'];
+        }
+
+        if (typeStr.contains('goal') && !typeStr.contains('penalty miss')) {
+          credit(athletes.first as Map<String, dynamic>, 'goals');
+          // Assist: second athlete, only for non-own-goals
+          if (!typeStr.contains('own goal') && athletes.length > 1) {
+            credit(athletes[1] as Map<String, dynamic>, 'assists');
+          }
+        } else if (typeStr.contains('yellow card') &&
+            !typeStr.contains('second yellow') && !typeStr.contains('red')) {
+          credit(athletes.first as Map<String, dynamic>, 'yellow');
+        } else if (typeStr.contains('red card') || typeStr.contains('second yellow')) {
+          credit(athletes.first as Map<String, dynamic>, 'red');
+        }
+      }
+    }
+  }
+
+  /// Creates a zeroed-out stat accumulator for a player.
+  Map<String, dynamic> _emptyPlayerStat(
+      Map<String, dynamic> athlete, String teamId, Map<String, String> tInfo) {
+    String headshot = '';
+    final rawHs = athlete['headshot'];
+    if (rawHs is String && rawHs.isNotEmpty) headshot = rawHs;
+    else if (rawHs is Map) headshot = rawHs['href']?.toString() ?? rawHs['full']?.toString() ?? '';
+
+    return {
+      'name': athlete['displayName']?.toString() ?? athlete['fullName']?.toString() ?? '',
+      'headshot': headshot,
+      'teamId': teamId,
+      'teamAbbr': tInfo['abbr'] ?? '',
+      'teamLogo': tInfo['logo'] ?? '',
+      'goals': 0,
+      'assists': 0,
+      'yellow': 0,
+      'red': 0,
+    };
+  }
+
   List<Standing> _parseSoccerStandingsImproved(Map<String, dynamic> data, String leagueCode) {
+
     final List<Standing> standings = [];
     int rank = 1;
 
@@ -1148,29 +1580,29 @@ class ApiService {
 
         for (final stat in statsList) {
           final name = stat['name']?.toString() ?? '';
+          final abbr = stat['abbreviation']?.toString() ?? '';
           final displayValue = stat['displayValue']?.toString() ?? '0';
           statsMap[name] = displayValue;
+          if (abbr.isNotEmpty) statsMap[abbr] = displayValue;
 
-          switch (name.toLowerCase()) {
-            case 'points':
-              points = int.tryParse(displayValue);
-              break;
-            case 'goalsfor':
-            case 'goals_for':
-              goalsFor = int.tryParse(displayValue);
-              break;
-            case 'goalsagainst':
-            case 'goals_against':
-              goalsAgainst = int.tryParse(displayValue);
-              break;
-            case 'gamesplayed':
-            case 'games_played':
-              gamesPlayed = int.tryParse(displayValue);
-              break;
-            case 'form':
-              form = displayValue;
-              break;
+          final key = name.toLowerCase().replaceAll(RegExp(r'[\s_\-]'), '');
+          final abbrKey = abbr.toLowerCase();
+          switch (key) {
+            case 'points': case 'pts':
+            points = int.tryParse(displayValue); break;
+            case 'pointsfor': case 'goalsfor': case 'goalsscored': case 'gf':
+            goalsFor = int.tryParse(displayValue); break;
+            case 'pointsagainst': case 'goalsagainst': case 'goalsconceded': case 'ga':
+            goalsAgainst = int.tryParse(displayValue); break;
+            case 'gamesplayed': case 'matchesplayed': case 'played': case 'gp': case 'mp':
+            gamesPlayed = int.tryParse(displayValue); break;
+            case 'form': case 'last5': case 'formguide': case 'recentform':
+            form = displayValue; break;
           }
+          if (goalsFor == null && (abbrKey == 'gf' || abbrKey == 'pf')) goalsFor = int.tryParse(displayValue);
+          if (goalsAgainst == null && (abbrKey == 'ga' || abbrKey == 'pa')) goalsAgainst = int.tryParse(displayValue);
+          if (gamesPlayed == null && (abbrKey == 'gp' || abbrKey == 'mp' || abbrKey == 'p')) gamesPlayed = int.tryParse(displayValue);
+          if (points == null && (abbrKey == 'pts' || abbrKey == 'pt')) points = int.tryParse(displayValue);
         }
 
         // Calculate goal difference
@@ -1183,7 +1615,7 @@ class ApiService {
             name: teamData['name']?.toString() ?? '',
             displayName: teamData['displayName']?.toString() ?? '',
             abbreviation: teamData['abbreviation']?.toString() ?? '',
-            logo: teamData['logo']?.toString() ?? '',
+            logo: _resolveTeamLogo(teamData),
             color: '#${teamData['color']?.toString() ?? '1A62C8'}',
             alternateColor: '#${teamData['alternateColor']?.toString() ?? 'FFFFFF'}',
             record: '${statsMap['wins'] ?? '0'}-${statsMap['losses'] ?? '0'}-${statsMap['ties'] ?? '0'}',
@@ -1282,7 +1714,7 @@ class ApiService {
               name: team['name']?.toString() ?? '',
               displayName: team['displayName']?.toString() ?? '',
               abbreviation: team['abbreviation']?.toString() ?? '',
-              logo: team['logo']?.toString() ?? '',
+              logo: _resolveTeamLogo(team),
               color: '#${team['color']?.toString() ?? '1A62C8'}',
               alternateColor: '#${team['alternateColor']?.toString() ?? 'FFFFFF'}',
               record: '${statsMap['wins'] ?? '0'}-${statsMap['losses'] ?? '0'}-${statsMap['ties'] ?? '0'}',

@@ -3,6 +3,7 @@ import 'package:livescore/services/sport_service.dart';
 import 'package:livescore/services/preferences_service.dart';
 import 'package:livescore/models/game_model.dart';
 import 'package:livescore/models/standing_model.dart';
+import 'package:livescore/models/league_leader_model.dart';
 import 'package:livescore/models/news_model.dart';
 import 'package:livescore/models/team_model.dart';
 import 'package:livescore/models/player_model.dart';
@@ -508,14 +509,24 @@ class AppProvider extends ChangeNotifier {
 
   // Add or verify this method exists in AppProvider class:
 
-  Future<List<Standing>> fetchStandingsDirect(String leagueCode) async {
+  Future<List<Standing>> fetchStandingsDirect(String leagueCode, {String? season}) async {
     try {
       _sportService.setLeague(leagueCode);
-      final standings = await _sportService.getStandings(forceRefresh: true);
+      final standings = await _sportService.getStandings(forceRefresh: true, season: season);
       return standings;
     } catch (e) {
       print('Error fetching standings: $e');
       return [];
+    }
+  }
+
+  Future<LeagueLeaders> fetchLeagueLeaders(String leagueCode, {String? season}) async {
+    try {
+      _sportService.setLeague(leagueCode);
+      return await _sportService.getLeagueLeaders(season: season);
+    } catch (e) {
+      print('Error fetching league leaders: $e');
+      return LeagueLeaders.empty;
     }
   }
 

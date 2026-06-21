@@ -2,6 +2,7 @@ import 'package:livescore/services/api_service.dart';
 import 'package:livescore/services/cache_service.dart';
 import 'package:livescore/models/game_model.dart';
 import 'package:livescore/models/standing_model.dart';
+import 'package:livescore/models/league_leader_model.dart';
 import 'package:livescore/models/news_model.dart';
 import 'package:livescore/models/player_model.dart';
 import 'package:livescore/models/team_model.dart';
@@ -344,25 +345,34 @@ class SportService {
     }
   }
 
-  Future<List<Standing>> getStandings({bool forceRefresh = false}) async {
+  Future<List<Standing>> getStandings({bool forceRefresh = false, String? season}) async {
     if (!forceRefresh) {
       try {
-        final cached = await _cache.getCachedStandings(leagueCode: _currentLeagueCode);
+        final cached = await _cache.getCachedStandings(leagueCode: '${_currentLeagueCode}_${season ?? 'current'}');
         if (cached != null && cached.isNotEmpty) return cached;
       } catch (e) {
         print('Cache read error: $e');
       }
     }
     try {
-      final standings = await _api.getStandings(_currentLeagueCode);
-      await _cache.cacheStandings(standings, leagueCode: _currentLeagueCode);
+      final standings = await _api.getStandings(_currentLeagueCode, season: season);
+      await _cache.cacheStandings(standings, leagueCode: '${_currentLeagueCode}_${season ?? 'current'}');
       return standings;
     } catch (e) {
       try {
-        final cached = await _cache.getCachedStandings(leagueCode: _currentLeagueCode);
+        final cached = await _cache.getCachedStandings(leagueCode: '${_currentLeagueCode}_${season ?? 'current'}');
         if (cached != null && cached.isNotEmpty) return cached;
       } catch (_) {}
       rethrow;
+    }
+  }
+
+  Future<LeagueLeaders> getLeagueLeaders({String? season}) async {
+    try {
+      return await _api.getLeagueLeaders(_currentLeagueCode, season: season);
+    } catch (e) {
+      print('Error fetching league leaders: $e');
+      return LeagueLeaders.empty;
     }
   }
 

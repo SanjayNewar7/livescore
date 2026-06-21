@@ -183,6 +183,43 @@ class AppConstants {
     'fifa.friendly',
   ];
 
+  // ─── LEAGUE LOGO IDs (ESPN CDN) — keyed by league CODE for the standings selector ──
+  static const Map<String, String> leagueLogoIds = {
+    'fifa.world':           '4',
+    'uefa.champions':       '2',
+    'uefa.europa':          '2310',
+    'uefa.conference':      '2311',
+    'eng.1': '23', 'esp.1': '15', 'ita.1': '12', 'ger.1': '10', 'fra.1': '9',
+    'por.1': '14', 'ned.1': '11', 'tur.1': '52', 'bel.1': '41', 'sco.1': '44',
+    'aut.1': '60', 'sui.1': '62',
+    'bra.1': '85', 'usa.1': '19', 'mex.1': '26', 'arg.1': '27',
+    'jpn.1': '32', 'swe.1': '57', 'nor.1': '61', 'den.1': '40',
+    'conmebol.libertadores': '58', 'conmebol.sudamericana': '59',
+    'concacaf.champions': '18', 'afc.champions': '17', 'caf.champions': '15',
+    'fifa.clubworld': '7',
+    'uefa.euro': '21', 'conmebol.america': '26', 'uefa.nations': '15157',
+    'fifa.worldq.uefa': '4', 'fifa.worldq.conmebol': '4', 'fifa.worldq.afc': '4',
+    'fifa.worldq.caf': '4', 'fifa.worldq.concacaf': '4',
+    'concacaf.gold': '18', 'afc.cup': '17', 'caf.nations': '15',
+    'ofc.nations': '15', 'fifa.friendly': '55',
+  };
+
+  static String? leagueLogoUrl(String leagueCode) {
+    final id = leagueLogoIds[leagueCode];
+    if (id == null) return null;
+    return 'https://a.espncdn.com/i/leaguelogos/soccer/500/$id.png';
+  }
+
+  // ─── SEASON OPTIONS for the standings/leaders season selector ───────────────
+  // ESPN's `season` query param expects the START year of the season
+  // (e.g. "2025" = the 2025-26 season).
+  static const List<Map<String, String>> standingsSeasons = [
+    {'value': '2026', 'label': '2026'},
+    {'value': '2025', 'label': '25–26'},
+    {'value': '2024', 'label': '24–25'},
+    {'value': '2023', 'label': '23–24'},
+  ];
+
   // Add this to the existing constants.dart file
 
 // Add FIFA World Cup 2026 to the beginning of the leagues list for standings

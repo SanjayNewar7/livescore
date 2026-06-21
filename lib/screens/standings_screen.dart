@@ -1,10 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:livescore/providers/app_provider.dart';
-import 'package:livescore/utils/theme.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/models/standing_model.dart';
+import 'package:livescore/models/league_leader_model.dart';
+
+// ─── Design Tokens (matches home_screen / game_detail_screen palette) ─────────
+class _C {
+  static const blue      = Color(0xFF1A62C8);
+  static const blueDark  = Color(0xFF0D3F85);
+  static const blueLight = Color(0xFFE8F0FC);
+  static const white     = Color(0xFFFFFFFF);
+  static const offWhite  = Color(0xFFF5F7FB);
+  static const border    = Color(0xFFE2E8F2);
+  static const text      = Color(0xFF0F1623);
+  static const muted     = Color(0xFF6B7A96);
+  static const green     = Color(0xFF16A34A);
+  static const red       = Color(0xFFE53535);
+  static const amber     = Color(0xFFCA8A04);
+  static const gold      = Color(0xFFD4AF37);
+}
 
 class StandingsScreen extends StatefulWidget {
   const StandingsScreen({super.key});
@@ -14,17 +31,32 @@ class StandingsScreen extends StatefulWidget {
 }
 
 class _StandingsScreenState extends State<StandingsScreen> {
+  // Default selection: FIFA World Cup 2026
   String _selectedLeagueCode = 'fifa.world';
+  String _selectedSeason = AppConstants.standingsSeasons.first['value']!;
+
   bool _isLoading = false;
   List<Standing> _standings = [];
+  LeagueLeaders _leaders = LeagueLeaders.empty;
+  bool _isLoadingLeaders = false;
   String? _error;
+
   String _selectedGroup = 'All';
   List<String> _groups = ['All'];
+
+  final List<Map<String, String>> _leagues = AppConstants.allLeagues;
 
   @override
   void initState() {
     super.initState();
-    _loadStandings();
+    _loadAll();
+  }
+
+  bool _isWorldCup() => _selectedLeagueCode == 'fifa.world';
+
+  Future<void> _loadAll() async {
+    await _loadStandings();
+    _loadLeaders(); // fire-and-forget — doesn't block the table
   }
 
   Future<void> _loadStandings() async {
@@ -36,21 +68,25 @@ class _StandingsScreenState extends State<StandingsScreen> {
 
     try {
       final provider = Provider.of<AppProvider>(context, listen: false);
-      final standings = await provider.fetchStandingsDirect(_selectedLeagueCode);
+      final standings = await provider.fetchStandingsDirect(
+        _selectedLeagueCode,
+        season: _selectedSeason,
+      );
 
-      // Extract unique groups
       final groups = standings
           .map((s) => s.conference)
-          .where((g) => g != null && g.isNotEmpty)
+          .where((g) => g.isNotEmpty)
           .toSet()
           .toList();
 
+      if (!mounted) return;
       setState(() {
         _standings = standings;
         _groups = ['All', ...groups];
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -58,361 +94,523 @@ class _StandingsScreenState extends State<StandingsScreen> {
     }
   }
 
-  List<Standing> get _filteredStandings {
-    if (_selectedGroup == 'All') {
-      return _standings;
+  Future<void> _loadLeaders() async {
+    setState(() {
+      _isLoadingLeaders = true;
+      _leaders = LeagueLeaders.empty;
+    });
+    try {
+      final provider = Provider.of<AppProvider>(context, listen: false);
+      final leaders = await provider.fetchLeagueLeaders(
+        _selectedLeagueCode,
+        season: _selectedSeason,
+      );
+      if (!mounted) return;
+      setState(() {
+        _leaders = leaders;
+        _isLoadingLeaders = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoadingLeaders = false);
     }
+  }
+
+  List<Standing> get _filteredStandings {
+    if (_selectedGroup == 'All') return _standings;
     return _standings.where((s) => s.conference == _selectedGroup).toList();
   }
 
-  bool _isWorldCup() => _selectedLeagueCode == 'fifa.world';
+  void _onLeagueChanged(String code) {
+    if (code == _selectedLeagueCode) return;
+    HapticFeedback.lightImpact();
+    setState(() => _selectedLeagueCode = code);
+    _loadAll();
+  }
+
+  void _onSeasonChanged(String value) {
+    if (value == _selectedSeason) return;
+    setState(() => _selectedSeason = value);
+    _loadAll();
+  }
+
+  String _getLeagueName() {
+    final league = _leagues.firstWhere(
+          (l) => l['code'] == _selectedLeagueCode,
+      orElse: () => {'name': 'League'},
+    );
+    return league['name']!;
+  }
+
+  String _seasonLabel() {
+    final s = AppConstants.standingsSeasons.firstWhere(
+          (s) => s['value'] == _selectedSeason,
+      orElse: () => {'label': _selectedSeason},
+    );
+    return s['label']!;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-    final isWorldCup = _isWorldCup();
-
     return Scaffold(
-      backgroundColor: isDarkMode ? Colors.black : Colors.grey[50],
-      appBar: AppBar(
-        title: Text(
-          'STANDINGS',
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1,
-            color: isWorldCup ? AppTheme.primaryBlue : null,
-          ),
-        ),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: false,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(120),
-          child: Column(
-            children: [
-              // League selector
-              Container(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                child: DropdownButtonFormField<String>(
-                  value: _selectedLeagueCode,
-                  isExpanded: true,
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: isDarkMode ? AppTheme.darkGray : Colors.white,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: isWorldCup ? AppTheme.primaryBlue.withOpacity(0.3) : Colors.transparent,
-                      ),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: AppTheme.primaryBlue,
-                        width: 1,
-                      ),
-                    ),
-                    prefixIcon: isWorldCup
-                        ? Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Image.network(
-                        AppConstants.fifaWorldCup2026LogoUrlSmall,
-                        width: 24,
-                        height: 24,
-                        errorBuilder: (_, __, ___) => const Icon(Icons.emoji_events, size: 20),
-                      ),
-                    )
-                        : const Icon(Icons.emoji_events, size: 20),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  ),
-                  items: AppConstants.allLeagues.map((league) {
-                    final code = league['code']!;
-                    final isWC = code == 'fifa.world';
-
-                    return DropdownMenuItem(
-                      value: code,
-                      child: Row(
-                        children: [
-                          if (isWC)
-                            Container(
-                              width: 28,
-                              height: 28,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.white,
-                                border: Border.all(color: AppTheme.primaryBlue, width: 1.5),
-                              ),
-                              child: ClipOval(
-                                child: Image.network(
-                                  AppConstants.fifaWorldCup2026LogoUrlSmall,
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (_, __, ___) => Text(league['flag']!, style: const TextStyle(fontSize: 16)),
-                                ),
-                              ),
-                            )
-                          else
-                            Text(league['flag']!, style: const TextStyle(fontSize: 24)),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  league['name']!,
-                                  style: TextStyle(
-                                    fontWeight: isWC ? FontWeight.w700 : FontWeight.w600,
-                                    color: isWC ? AppTheme.primaryBlue : null,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                                Text(
-                                  league['country'] ?? '',
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: AppTheme.lightGray,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          if (isWC)
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: AppTheme.primaryBlue,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: const Text(
-                                '2026',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    if (value != null && value != _selectedLeagueCode) {
-                      setState(() {
-                        _selectedLeagueCode = value;
-                      });
-                      _loadStandings();
-                    }
-                  },
-                ),
-              ),
-              // Group filter chips
-              if (_groups.length > 1)
-                Container(
-                  height: 45,
-                  margin: const EdgeInsets.only(bottom: 8),
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: _groups.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 8),
-                    itemBuilder: (ctx, i) {
-                      final group = _groups[i];
-                      final isSelected = _selectedGroup == group;
-                      return FilterChip(
-                        label: Text(group),
-                        selected: isSelected,
-                        onSelected: (_) {
-                          setState(() {
-                            _selectedGroup = group;
-                          });
-                        },
-                        backgroundColor: isDarkMode ? AppTheme.darkGray : Colors.grey[100],
-                        selectedColor: AppTheme.primaryBlue.withOpacity(0.1),
-                        checkmarkColor: AppTheme.primaryBlue,
-                        labelStyle: TextStyle(
-                          color: isSelected ? AppTheme.primaryBlue : (isDarkMode ? Colors.white : Colors.grey[700]),
-                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                          fontSize: 12,
-                        ),
-                      );
-                    },
-                  ),
-                ),
-            ],
-          ),
+      backgroundColor: _C.offWhite,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            _Header(
+              leagueName: _getLeagueName(),
+              isWorldCup: _isWorldCup(),
+              selectedLeagueCode: _selectedLeagueCode,
+              selectedSeasonLabel: _seasonLabel(),
+              onSeasonTap: _showSeasonPicker,
+            ),
+            _LeagueSelectorStrip(
+              leagues: _leagues,
+              selectedCode: _selectedLeagueCode,
+              onSelected: _onLeagueChanged,
+            ),
+            if (_groups.length > 1) _GroupChips(
+              groups: _groups,
+              selectedGroup: _selectedGroup,
+              onSelected: (g) => setState(() => _selectedGroup = g),
+            ),
+            Expanded(child: _buildBody()),
+          ],
         ),
       ),
-      body: _buildContent(),
     );
   }
 
-  Widget _buildContent() {
-    if (_isLoading) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 32,
-              height: 32,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            SizedBox(height: 12),
-            Text('Loading standings...'),
-          ],
-        ),
-      );
-    }
+  void _showSeasonPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _SeasonPickerSheet(
+        selected: _selectedSeason,
+        onSelected: (v) {
+          Navigator.pop(context);
+          _onSeasonChanged(v);
+        },
+      ),
+    );
+  }
 
-    if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.error_outline, size: 48, color: AppTheme.dangerRed),
-            const SizedBox(height: 16),
-            Text(_error!, style: const TextStyle(color: AppTheme.lightGray)),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _loadStandings,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primaryBlue,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              child: const Text('RETRY'),
-            ),
-          ],
-        ),
-      );
+  Widget _buildBody() {
+    if (_isLoading) return const _LoadingState();
+
+    if (_error != null && _standings.isEmpty) {
+      return _ErrorState(error: _error!, onRetry: _loadAll);
     }
 
     if (_standings.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.emoji_events, size: 48, color: AppTheme.lightGray),
-            SizedBox(height: 16),
-            Text('No standings available for this league'),
-          ],
-        ),
+      return const _EmptyState(
+        title: 'No standings available',
+        subtitle: 'Try a different league or season',
       );
     }
 
     if (_filteredStandings.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.search_off, size: 48, color: AppTheme.lightGray),
-            SizedBox(height: 16),
-            Text('No teams in this group'),
-          ],
-        ),
+      return const _EmptyState(
+        title: 'No teams in this group',
+        subtitle: 'Try a different group filter',
       );
     }
 
     return RefreshIndicator(
-      onRefresh: _loadStandings,
-      color: AppTheme.primaryBlue,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Container(
-          constraints: BoxConstraints(
-            minWidth: MediaQuery.of(context).size.width,
+      color: _C.blue,
+      onRefresh: _loadAll,
+      child: ListView(
+        padding: const EdgeInsets.only(bottom: 24),
+        children: [
+          _StandingsTable(
+            standings: _filteredStandings,
+            isWorldCup: _isWorldCup(),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // League title
-              if (_selectedGroup == 'All')
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    children: [
-                      if (_isWorldCup())
-                        Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.white,
-                            border: Border.all(color: AppTheme.primaryBlue, width: 1.5),
-                          ),
-                          child: ClipOval(
-                            child: Image.network(
-                              AppConstants.fifaWorldCup2026LogoUrlSmall,
-                              fit: BoxFit.contain,
-                              errorBuilder: (_, __, ___) => const Icon(Icons.emoji_events, size: 20),
-                            ),
-                          ),
-                        ),
-                      if (_isWorldCup()) const SizedBox(width: 12),
-                      Text(
-                        _getLeagueName(),
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: _isWorldCup() ? AppTheme.primaryBlue : null,
-                        ),
-                      ),
-                      if (_selectedGroup != 'All') ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: AppTheme.primaryBlue.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            _selectedGroup,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: AppTheme.primaryBlue,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
+          const SizedBox(height: 8),
+          _LeadersSection(
+            leaders: _leaders,
+            isLoading: _isLoadingLeaders,
+            leagueName: _getLeagueName(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Header ───────────────────────────────────────────────────────────────────
+
+class _Header extends StatelessWidget {
+  final String leagueName;
+  final bool isWorldCup;
+  final String selectedLeagueCode;
+  final String selectedSeasonLabel;
+  final VoidCallback onSeasonTap;
+
+  const _Header({
+    required this.leagueName,
+    required this.isWorldCup,
+    required this.selectedLeagueCode,
+    required this.selectedSeasonLabel,
+    required this.onSeasonTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final logoUrl = AppConstants.leagueLogoUrl(selectedLeagueCode);
+
+    return Container(
+      color: _C.white,
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 14),
+      child: Row(
+        children: [
+          // League logo (official image, no emoji)
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _C.blueLight,
+              border: Border.all(color: _C.border),
+            ),
+            padding: const EdgeInsets.all(6),
+            child: logoUrl != null
+                ? CachedNetworkImage(
+              imageUrl: logoUrl,
+              fit: BoxFit.contain,
+              placeholder: (_, __) => const SizedBox(),
+              errorWidget: (_, __, ___) =>
+              const Icon(Icons.emoji_events_rounded, size: 18, color: _C.blue),
+            )
+                : const Icon(Icons.emoji_events_rounded, size: 18, color: _C.blue),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  leagueName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: _C.text,
+                    letterSpacing: -0.3,
                   ),
                 ),
-              // Table header
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                color: AppTheme.primaryBlue.withOpacity(0.08),
-                child: Row(
+                const SizedBox(height: 2),
+                const Text(
+                  'STANDINGS',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.4,
+                    color: _C.muted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Season selector pill
+          GestureDetector(
+            onTap: onSeasonTap,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: _C.blueLight,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: _C.blue.withOpacity(0.25)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    selectedSeasonLabel,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: _C.blue,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: _C.blue),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── League Selector Strip (logos only — no emoji) ────────────────────────────
+
+class _LeagueSelectorStrip extends StatelessWidget {
+  final List<Map<String, String>> leagues;
+  final String selectedCode;
+  final ValueChanged<String> onSelected;
+
+  const _LeagueSelectorStrip({
+    required this.leagues,
+    required this.selectedCode,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: _C.white,
+      padding: const EdgeInsets.only(bottom: 12),
+      child: SizedBox(
+        height: 76,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          itemCount: leagues.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 10),
+          itemBuilder: (ctx, i) {
+            final league = leagues[i];
+            final code = league['code']!;
+            final isSelected = code == selectedCode;
+            final isWC = code == 'fifa.world';
+            final logoUrl = AppConstants.leagueLogoUrl(code);
+
+            return GestureDetector(
+              onTap: () => onSelected(code),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                width: 64,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    _buildHeaderCell('POS', 45),
-                    _buildHeaderCell('CLUB', 200),
-                    _buildHeaderCell('MP', 50),
-                    _buildHeaderCell('W', 45),
-                    _buildHeaderCell('D', 45),
-                    _buildHeaderCell('L', 45),
-                    _buildHeaderCell('GF', 50),
-                    _buildHeaderCell('GA', 50),
-                    _buildHeaderCell('GD', 55),
-                    _buildHeaderCell('PTS', 55),
-                    _buildHeaderCell('Last 5', 100),
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: isSelected
+                            ? (isWC ? _C.gold.withOpacity(0.15) : _C.blueLight)
+                            : _C.offWhite,
+                        border: Border.all(
+                          color: isSelected
+                              ? (isWC ? _C.gold : _C.blue)
+                              : _C.border,
+                          width: isSelected ? 2 : 1.2,
+                        ),
+                      ),
+                      padding: const EdgeInsets.all(8),
+                      child: logoUrl != null
+                          ? CachedNetworkImage(
+                        imageUrl: logoUrl,
+                        fit: BoxFit.contain,
+                        placeholder: (_, __) => const SizedBox(),
+                        errorWidget: (_, __, ___) =>
+                            Icon(Icons.shield_rounded, size: 20, color: _C.muted),
+                      )
+                          : Icon(Icons.shield_rounded, size: 20, color: _C.muted),
+                    ),
+                    const SizedBox(height: 4),
+                    SizedBox(
+                      width: 64,
+                      child: Text(
+                        _shortName(league['name']!),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                          color: isSelected
+                              ? (isWC ? _C.amber : _C.blue)
+                              : _C.muted,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
-              // Table rows
-              ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: _filteredStandings.length,
-                itemBuilder: (context, index) {
-                  final standing = _filteredStandings[index];
-                  return _buildStandingRow(standing, index);
-                },
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  String _shortName(String name) {
+    // Keep league chip labels compact
+    if (name.length <= 12) return name;
+    return name.split(' ').first;
+  }
+}
+
+// ─── Season Picker bottom sheet ────────────────────────────────────────────────
+
+class _SeasonPickerSheet extends StatelessWidget {
+  final String selected;
+  final ValueChanged<String> onSelected;
+  const _SeasonPickerSheet({required this.selected, required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: _C.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(color: _C.border, borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          const SizedBox(height: 18),
+          const Text('SELECT SEASON',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2, color: _C.muted)),
+          const SizedBox(height: 12),
+          ...AppConstants.standingsSeasons.map((s) {
+            final isSel = s['value'] == selected;
+            return GestureDetector(
+              onTap: () => onSelected(s['value']!),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                decoration: BoxDecoration(
+                  color: isSel ? _C.blueLight : _C.offWhite,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: isSel ? _C.blue : _C.border),
+                ),
+                child: Row(
+                  children: [
+                    Text(s['label']!,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: isSel ? FontWeight.w800 : FontWeight.w600,
+                          color: isSel ? _C.blue : _C.text,
+                        )),
+                    const Spacer(),
+                    if (isSel) const Icon(Icons.check_circle_rounded, color: _C.blue, size: 18),
+                  ],
+                ),
               ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Group Chips (e.g. World Cup groups A–H) ──────────────────────────────────
+
+class _GroupChips extends StatelessWidget {
+  final List<String> groups;
+  final String selectedGroup;
+  final ValueChanged<String> onSelected;
+
+  const _GroupChips({
+    required this.groups,
+    required this.selectedGroup,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: _C.white,
+      height: 44,
+      padding: const EdgeInsets.only(bottom: 10),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: groups.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (ctx, i) {
+          final group = groups[i];
+          final isSelected = group == selectedGroup;
+          return GestureDetector(
+            onTap: () => onSelected(group),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              decoration: BoxDecoration(
+                color: isSelected ? _C.blue : _C.offWhite,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: isSelected ? _C.blue : _C.border),
+              ),
+              child: Text(
+                group,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: isSelected ? _C.white : _C.text,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ─── Standings Table ──────────────────────────────────────────────────────────
+
+class _StandingsTable extends StatelessWidget {
+  final List<Standing> standings;
+  final bool isWorldCup;
+
+  const _StandingsTable({required this.standings, required this.isWorldCup});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      decoration: BoxDecoration(
+        color: _C.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _C.border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width - 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header row
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                decoration: const BoxDecoration(
+                  color: _C.blueLight,
+                  border: Border(bottom: BorderSide(color: _C.border)),
+                ),
+                child: Row(
+                  children: [
+                    _headerCell('#', 28),
+                    _headerCell('CLUB', 168, alignLeft: true),
+                    _headerCell('MP', 36),
+                    _headerCell('W', 30),
+                    _headerCell('D', 30),
+                    _headerCell('L', 30),
+                    _headerCell('GF', 36),
+                    _headerCell('GA', 36),
+                    _headerCell('GD', 40),
+                    _headerCell('PTS', 44),
+                  ],
+                ),
+              ),
+              // Rows
+              ...standings.asMap().entries.map((e) => _row(e.value, e.key)),
             ],
           ),
         ),
@@ -420,235 +618,422 @@ class _StandingsScreenState extends State<StandingsScreen> {
     );
   }
 
-  Widget _buildHeaderCell(String text, double width) {
+  Widget _headerCell(String text, double width, {bool alignLeft = false}) {
     return SizedBox(
       width: width,
       child: Text(
         text,
+        textAlign: alignLeft ? TextAlign.left : TextAlign.center,
         style: const TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: AppTheme.primaryBlue,
-          letterSpacing: 0.5,
+          fontSize: 10.5,
+          fontWeight: FontWeight.w800,
+          color: _C.blueDark,
+          letterSpacing: 0.4,
         ),
-        textAlign: text == 'CLUB' ? TextAlign.left : TextAlign.center,
       ),
     );
   }
 
-  Widget _buildStandingRow(Standing standing, int index) {
+  Widget _row(Standing s, int index) {
     final isEven = index % 2 == 0;
-    final isWorldCup = _isWorldCup();
+    final wins = int.tryParse(s.wins) ?? 0;
+    final draws = int.tryParse(s.ties) ?? 0;
+    final losses = int.tryParse(s.losses) ?? 0;
+    final mp = s.matchesPlayed ?? (wins + draws + losses);
+    final gf = s.goalsFor ?? 0;
+    final ga = s.goalsAgainst ?? 0;
+    final gd = s.goalDifference ?? (gf - ga);
+    final pts = s.points ?? 0;
 
-    // Safely get values with fallbacks
-    final points = standing.points ?? 0;
-    final matchesPlayed = standing.matchesPlayed ?? 0;
-    final wins = int.tryParse(standing.wins) ?? 0;
-    final draws = int.tryParse(standing.ties) ?? 0;
-    final losses = int.tryParse(standing.losses) ?? 0;
-    final goalsFor = standing.goalsFor ?? 0;
-    final goalsAgainst = standing.goalsAgainst ?? 0;
-    final goalDifference = standing.goalDifference ?? (goalsFor - goalsAgainst);
-    final form = standing.form ?? '';
+    // Qualification zone highlight (top 4 styled distinctly, like most apps)
+    final rankColor = s.rank <= 4
+        ? _C.blue
+        : (s.rank <= 6 ? _C.green : _C.text);
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      color: isEven ? null : Colors.grey.withOpacity(0.03),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      decoration: BoxDecoration(
+        color: isEven ? _C.white : _C.offWhite.withOpacity(0.5),
+        border: const Border(bottom: BorderSide(color: _C.border, width: 0.6)),
+      ),
       child: Row(
         children: [
-          // Position
           SizedBox(
-            width: 45,
-            child: Text(
-              '${standing.rank}',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: standing.rank <= 4 ? AppTheme.primaryBlue : (isWorldCup ? AppTheme.primaryBlue : Colors.grey[700]),
-              ),
-              textAlign: TextAlign.center,
+            width: 28,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (s.rank <= 4)
+                  Container(width: 3, height: 16, color: _C.blue, margin: const EdgeInsets.only(right: 4)),
+                Text('${s.rank}',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: rankColor)),
+              ],
             ),
           ),
-          // Club with logo
           SizedBox(
-            width: 200,
+            width: 168,
             child: Row(
               children: [
                 Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    shape: BoxShape.circle,
-                  ),
+                  width: 26, height: 26,
+                  decoration: BoxDecoration(color: _C.offWhite, shape: BoxShape.circle),
                   child: ClipOval(
                     child: CachedNetworkImage(
-                      imageUrl: standing.team.logo,
-                      width: 24,
-                      height: 24,
+                      imageUrl: s.team.logo.isNotEmpty && s.team.logo.startsWith('http')
+                          ? s.team.logo
+                          : 'https://a.espncdn.com/i/teamlogos/soccer/500/${s.team.id}.png',
                       fit: BoxFit.contain,
-                      placeholder: (context, url) => const SizedBox(),
-                      errorWidget: (context, url, error) => const Icon(Icons.sports_soccer, size: 18),
+                      placeholder: (_, __) => const SizedBox(),
+                      errorWidget: (_, __, ___) => const Icon(Icons.shield_rounded, size: 16, color: _C.muted),
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    standing.team.abbreviation.isNotEmpty
-                        ? standing.team.abbreviation
-                        : standing.team.displayName.length > 3
-                        ? standing.team.displayName.substring(0, 3).toUpperCase()
-                        : standing.team.displayName,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                    s.team.displayName.isNotEmpty ? s.team.displayName : s.team.name,
+                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: _C.text),
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
             ),
           ),
-          // MP
+          _cell('$mp', 36),
+          _cell('$wins', 30, color: _C.green),
+          _cell('$draws', 30, color: _C.amber),
+          _cell('$losses', 30, color: _C.red),
+          _cell('$gf', 36),
+          _cell('$ga', 36),
+          _cell(gd > 0 ? '+$gd' : '$gd', 40,
+              color: gd > 0 ? _C.green : (gd < 0 ? _C.red : _C.muted), bold: true),
           SizedBox(
-            width: 50,
-            child: Text(
-              '$matchesPlayed',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-          // Wins
-          SizedBox(
-            width: 45,
-            child: Text(
-              '$wins',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.green),
-            ),
-          ),
-          // Draws
-          SizedBox(
-            width: 45,
-            child: Text(
-              '$draws',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.orange),
-            ),
-          ),
-          // Losses
-          SizedBox(
-            width: 45,
-            child: Text(
-              '$losses',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.red),
-            ),
-          ),
-          // Goals For
-          SizedBox(
-            width: 50,
-            child: Text(
-              '$goalsFor',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-          // Goals Against
-          SizedBox(
-            width: 50,
-            child: Text(
-              '$goalsAgainst',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-          // Goal Difference
-          SizedBox(
-            width: 55,
-            child: Text(
-              goalDifference > 0 ? '+$goalDifference' : '$goalDifference',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: goalDifference > 0 ? Colors.green : (goalDifference < 0 ? Colors.red : Colors.grey),
-              ),
-            ),
-          ),
-          // Points
-          SizedBox(
-            width: 55,
-            child: Text(
-              '$points',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.bold,
-                color: isWorldCup ? AppTheme.primaryBlue : AppTheme.primaryBlue,
-              ),
-            ),
-          ),
-          // Last 5 Form
-          SizedBox(
-            width: 100,
-            child: _buildFormIndicator(form),
+            width: 44,
+            child: Text('$pts',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _C.blue)),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildFormIndicator(String form) {
-    if (form.isEmpty) {
-      return const SizedBox();
+  Widget _cell(String text, double width, {Color color = _C.text, bool bold = false}) {
+    return SizedBox(
+      width: width,
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
+          color: color,
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Leaders Section (top scorer / assist / cards) ────────────────────────────
+
+class _LeadersSection extends StatelessWidget {
+  final LeagueLeaders leaders;
+  final bool isLoading;
+  final String leagueName;
+
+  const _LeadersSection({
+    required this.leaders,
+    required this.isLoading,
+    required this.leagueName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) {
+      return Container(
+        margin: const EdgeInsets.fromLTRB(12, 16, 12, 0),
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: _C.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _C.border),
+        ),
+        child: const Center(
+          child: SizedBox(
+            width: 22, height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2, color: _C.blue),
+          ),
+        ),
+      );
     }
 
-    final formLetters = form.split('');
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: formLetters.take(5).map((letter) {
-        Color color;
-        switch (letter.toUpperCase()) {
-          case 'W':
-            color = Colors.green;
-            break;
-          case 'D':
-            color = Colors.orange;
-            break;
-          case 'L':
-            color = Colors.red;
-            break;
-          default:
-            color = Colors.grey;
-        }
-        return Container(
-          margin: const EdgeInsets.symmetric(horizontal: 2),
-          width: 16,
-          height: 16,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(3),
-          ),
-          child: Center(
-            child: Text(
-              letter.toUpperCase(),
-              style: const TextStyle(
-                fontSize: 9,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
+    if (leaders.isEmpty) {
+      return Container(
+        margin: const EdgeInsets.fromLTRB(12, 16, 12, 0),
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: _C.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _C.border),
+        ),
+        child: Row(
+          children: const [
+            Icon(Icons.bar_chart_rounded, size: 18, color: _C.muted),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Stat leaders aren\'t available for this competition yet',
+                style: TextStyle(fontSize: 12.5, color: _C.muted),
               ),
             ),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 16, 12, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(left: 4, bottom: 8),
+            child: Text(
+              'LEAGUE STAT LEADERS',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1.2, color: _C.muted),
+            ),
           ),
-        );
-      }).toList(),
+          if (leaders.topScorers.isNotEmpty)
+            _LeaderCard(
+              title: 'Top Scorer',
+              icon: Icons.sports_soccer_rounded,
+              accent: _C.blue,
+              entries: leaders.topScorers,
+              statSuffix: 'G',
+            ),
+          if (leaders.topAssists.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _LeaderCard(
+              title: 'Top Assists',
+              icon: Icons.assistant_direction_rounded,
+              accent: _C.green,
+              entries: leaders.topAssists,
+              statSuffix: 'A',
+            ),
+          ],
+          if (leaders.mostYellowCards.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _LeaderCard(
+              title: 'Most Yellow Cards',
+              icon: Icons.square_rounded,
+              accent: _C.amber,
+              entries: leaders.mostYellowCards,
+              statSuffix: '',
+            ),
+          ],
+          if (leaders.mostRedCards.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _LeaderCard(
+              title: 'Most Red Cards',
+              icon: Icons.square_rounded,
+              accent: _C.red,
+              entries: leaders.mostRedCards,
+              statSuffix: '',
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _LeaderCard extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Color accent;
+  final List<LeaderEntry> entries;
+  final String statSuffix;
+
+  const _LeaderCard({
+    required this.title,
+    required this.icon,
+    required this.accent,
+    required this.entries,
+    required this.statSuffix,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _C.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _C.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+            child: Row(
+              children: [
+                Icon(icon, size: 15, color: accent),
+                const SizedBox(width: 8),
+                Text(title,
+                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: _C.text)),
+              ],
+            ),
+          ),
+          ...entries.asMap().entries.map((e) => _leaderRow(e.value, e.key, e.key == entries.length - 1)),
+        ],
+      ),
     );
   }
 
-  String _getLeagueName() {
-    final league = AppConstants.allLeagues.firstWhere(
-          (l) => l['code'] == _selectedLeagueCode,
-      orElse: () => {'name': 'League'},
+  Widget _leaderRow(LeaderEntry entry, int index, bool isLast) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+      decoration: BoxDecoration(
+        border: isLast ? null : const Border(top: BorderSide(color: _C.border, width: 0.6)),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 20,
+            child: Text('${index + 1}',
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _C.muted)),
+          ),
+          Container(
+            width: 30, height: 30,
+            decoration: const BoxDecoration(color: _C.offWhite, shape: BoxShape.circle),
+            child: ClipOval(
+              child: entry.headshot.isNotEmpty
+                  ? CachedNetworkImage(
+                imageUrl: entry.headshot,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => const SizedBox(),
+                errorWidget: (_, __, ___) => const Icon(Icons.person_rounded, size: 16, color: _C.muted),
+              )
+                  : const Icon(Icons.person_rounded, size: 16, color: _C.muted),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry.name.isNotEmpty ? entry.name : 'Unknown',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _C.text),
+                ),
+                if (entry.teamAbbreviation.isNotEmpty)
+                  Text(
+                    entry.teamAbbreviation,
+                    style: const TextStyle(fontSize: 10.5, color: _C.muted),
+                  ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: _C.blueLight,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              statSuffix.isNotEmpty ? '${entry.value.toInt()} $statSuffix' : '${entry.value.toInt()}',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: _C.blue),
+            ),
+          ),
+        ],
+      ),
     );
-    return league['name']!;
+  }
+}
+
+// ─── Loading / Error / Empty States ───────────────────────────────────────────
+
+class _LoadingState extends StatelessWidget {
+  const _LoadingState();
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: 10,
+      itemBuilder: (_, i) => Container(
+        height: 44,
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: _C.border.withOpacity(0.5),
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorState extends StatelessWidget {
+  final String error;
+  final Future<void> Function() onRetry;
+  const _ErrorState({required this.error, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline_rounded, size: 40, color: _C.red),
+            const SizedBox(height: 14),
+            const Text('Couldn\'t load standings',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _C.text)),
+            const SizedBox(height: 6),
+            Text(error, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, color: _C.muted)),
+            const SizedBox(height: 18),
+            ElevatedButton(
+              onPressed: () => onRetry(),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _C.blue,
+                foregroundColor: _C.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              ),
+              child: const Text('RETRY', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  const _EmptyState({required this.title, required this.subtitle});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.emoji_events_rounded, size: 40, color: _C.muted),
+            const SizedBox(height: 14),
+            Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _C.text)),
+            const SizedBox(height: 6),
+            Text(subtitle, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, color: _C.muted)),
+          ],
+        ),
+      ),
+    );
   }
 }
