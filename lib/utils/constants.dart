@@ -169,7 +169,11 @@ class AppConstants {
         (name.contains('fifa') && name.contains('world'));
   }
 
+  // ─── INTERNATIONAL FALLBACK LEAGUES ─────────────────────────────────────────
+  // These leagues are searched for both recent matches AND upcoming fixtures
+  // when the primary league returns no data.
   static const List<String> internationalFallbackLeagues = [
+    'fifa.world',
     'fifa.worldq.uefa',
     'fifa.worldq.conmebol',
     'fifa.worldq.afc',
@@ -212,17 +216,28 @@ class AppConstants {
 
   // ─── SEASON OPTIONS for the standings/leaders season selector ───────────────
   // ESPN's `season` query param expects the START year of the season
-  // (e.g. "2025" = the 2025-26 season).
-  static const List<Map<String, String>> standingsSeasons = [
-    {'value': '2026', 'label': '2026'},
-    {'value': '2025', 'label': '25–26'},
-    {'value': '2024', 'label': '24–25'},
-    {'value': '2023', 'label': '23–24'},
-  ];
+  // (e.g. "2025" = the 2025-26 season). Generated dynamically so it always
+  // shows the most recent 10 seasons instead of a hardcoded, aging list.
+  static List<Map<String, String>> get standingsSeasons {
+    final now = DateTime.now();
+    // Seasons "start" around July; before that we're still mid-way through
+    // last year's start-year season.
+    final latestStartYear = now.month >= 7 ? now.year : now.year - 1;
+    return List.generate(10, (i) {
+      final startYear = latestStartYear - i;
+      final startShort = (startYear % 100).toString().padLeft(2, '0');
+      final endShort = ((startYear + 1) % 100).toString().padLeft(2, '0');
+      // Most recent entry shown as a plain year (reads best as the
+      // default for single-year tournaments like the World Cup); older
+      // entries use the familiar "23–24" split-season format.
+      final label = i == 0 ? '$startYear' : '$startShort–$endShort';
+      return {'value': '$startYear', 'label': label};
+    });
+  }
 
   // Add this to the existing constants.dart file
 
-// Add FIFA World Cup 2026 to the beginning of the leagues list for standings
+  // Add FIFA World Cup 2026 to the beginning of the leagues list for standings
   static const List<Map<String, String>> standingsLeagues = [
     {'code': 'fifa.world', 'name': 'FIFA World Cup 2026', 'flag': '🏆', 'country': 'International'},
     {'code': 'eng.1', 'name': 'Premier League', 'flag': '🏴󠁧󠁢󠁥󠁮󠁧󠁿', 'country': 'England'},
@@ -234,4 +249,96 @@ class AppConstants {
     {'code': 'uefa.europa', 'name': 'Europa League', 'flag': '🏆', 'country': 'Europe'},
     {'code': 'usa.1', 'name': 'MLS', 'flag': '🇺🇸', 'country': 'USA'},
   ];
+
+  // ─── API-FOOTBALL (api-sports.io) — fast stat-leaders source ─────────────────
+  //
+  // Used ONLY for league stat leaders (top scorers / assists / yellow / red
+  // cards) on the Standings screen. Everything else in the app (scores,
+  // standings, lineups, news, rosters) still comes from ESPN's free endpoints.
+  //
+  // Free tier: 100 requests/day, 10 requests/minute. We call this at most
+  // 4 times per league per cache window (goals, assists, yellow, red — or 1
+  // time if using the combined approach), so this comfortably supports many
+  // users sharing one key as long as results are cached (see CacheService).
+  //
+  // Get a free key at: https://dashboard.api-football.com/register
+  // Paste it below — do NOT commit a real key to a public repo; for a
+  // production app, load this from a secure config / environment instead.
+  static const String apiFootballKey = 'e8415a93dada24aa95bf19f9ac21887a';
+  static const String apiFootballBaseUrl = 'https://v3.football.api-sports.io';
+
+  // ─── API-FOOTBALL MULTIPLE API KEYS ──────────────────────────────────────────
+  // Free tier: 100 requests/day per key
+  // Using 4 keys gives us 400 requests/day total
+  static const List<String> apiFootballKeys = [
+    'e8415a93dada24aa95bf19f9ac21887a',
+    '98ef32914df3da8368f24c3f40dfb3d4',
+    '9ab1cf2a953e5cb48d1e1e9ec18eb041',
+    '40c90938040724048777a13eec78819a',
+  ];
+
+  // ─── API-FOOTBALL SEARCH ENDPOINTS ─────────────────────────────────────────────
+  static const String apiFootballSearchPlayers = '$apiFootballBaseUrl/players';
+  static const String apiFootballSearchTeams = '$apiFootballBaseUrl/teams';
+  static const String apiFootballSearchLeagues = '$apiFootballBaseUrl/leagues';
+
+  // Search limits
+  static const int maxSearchResults = 20;
+
+  // Maps our internal ESPN league codes -> API-Football numeric league IDs.
+  // Only leagues we actually show stat leaders for need an entry; anything
+  // missing here will cleanly fall back to "not available" in the UI.
+  static const Map<String, int> apiFootballLeagueIds = {
+    // ── International ──
+    'fifa.world':        1,    // FIFA World Cup (season=2026 for this cycle)
+    'uefa.euro':         4,
+    'uefa.nations':      5,
+    'conmebol.america':  9,
+    'concacaf.gold':     22,
+    'caf.nations':       6,
+    'afc.cup':           19,   // AFC Asian Cup
+
+    // ── UEFA club competitions ──
+    'uefa.champions':    2,
+    'uefa.europa':       3,
+    'uefa.conference':   848,
+
+    // ── Big 5 + popular European leagues ──
+    'eng.1': 39,  'esp.1': 140, 'ita.1': 135, 'ger.1': 78, 'fra.1': 61,
+    'por.1': 94,  'ned.1': 88,  'tur.1': 203, 'bel.1': 144, 'sco.1': 179,
+    'aut.1': 218, 'sui.1': 207,
+
+    // ── Americas ──
+    'bra.1': 71, 'usa.1': 253, 'mex.1': 262, 'arg.1': 128,
+
+    // ── Asia / Scandinavia ──
+    'jpn.1': 98, 'swe.1': 113, 'nor.1': 103, 'den.1': 119,
+
+    // ── South American club competitions ──
+    'conmebol.libertadores': 13,
+    'conmebol.sudamericana': 11,
+  };
+
+  /// Returns the API-Football season year to use for a given ESPN league
+  /// code and a "season" string already used elsewhere in the app.
+  ///
+  /// Both ESPN and API-Football key split-calendar seasons (e.g. the
+  /// 2025-26 Premier League season) by their START year — API-Football's
+  /// own docs confirm "the 2018-2019 season in the API will be 2018".
+  /// Our `standingsSeasons` values already store that START year (see
+  /// above), so it can be passed straight through for every league type,
+  /// club or national team, with no adjustment. (Previously this
+  /// subtracted 1 for club leagues, which silently pulled stat leaders
+  /// for the WRONG season on every domestic league.)
+  static int apiFootballSeasonFor(String leagueCode, {String? season}) {
+    final now = DateTime.now();
+    if (season != null && season.isNotEmpty) {
+      final parsed = int.tryParse(season);
+      if (parsed != null) return parsed;
+    }
+    if (isNationalTeamLeague(leagueCode)) return now.year;
+    // Domestic leagues: if we're in Jul-Dec, the season start year is
+    // the current year; if Jan-Jun, the season started last year.
+    return now.month >= 7 ? now.year : now.year - 1;
+  }
 }

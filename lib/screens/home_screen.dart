@@ -3,11 +3,13 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:livescore/screens/search_screen.dart';
 import 'package:provider/provider.dart';
 
 import 'package:livescore/models/game_model.dart';
 import 'package:livescore/providers/app_provider.dart';
 import 'package:livescore/screens/settings_screen.dart';
+import 'package:livescore/screens/team_detail_screen.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/widgets/game_card.dart';
 
@@ -32,37 +34,75 @@ class _C {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/// Improved international detection that checks multiple sources
 bool _isInternational(Game g) {
+  // Get all international league codes and names
+  final intlCodes = AppConstants.internationalLeagues
+      .map((l) => l['code']!.toLowerCase())
+      .toSet();
+
   final intlNames = AppConstants.internationalLeagues
       .map((l) => l['name']!.toLowerCase())
       .toSet();
 
   final leagueLower = g.leagueName.toLowerCase();
+
+  // Check 1: Direct match against international league codes
+  for (final code in intlCodes) {
+    if (leagueLower.contains(code)) {
+      return true;
+    }
+  }
+
+  // Check 2: Direct match against international league names
+  for (final name in intlNames) {
+    if (leagueLower.contains(name) || name.contains(leagueLower)) {
+      return true;
+    }
+  }
+
+  // Check 3: World Cup
   if (leagueLower.contains('world cup') ||
-      leagueLower.contains('fifa world cup')) {
+      leagueLower.contains('fifa world cup') ||
+      leagueLower.contains('worldcup')) {
     return true;
   }
 
-  if (intlNames.contains(g.leagueName.toLowerCase())) return true;
+  // Check 4: Specific patterns
+  final patterns = [
+    'worldq', 'wcq', 'qualif', 'qualifying', 'qualification',
+    'nations league', 'uefa nations',
+    'copa america', 'copa américa',
+    'euro', 'european',
+    'afcon', 'africa cup', 'cup of nations',
+    'gold cup', 'concacaf',
+    'asian cup', 'afc cup',
+    'friendly', 'international friendly',
+    'eliminatorias', 'eliminatoires', 'qualifikation'
+  ];
 
-  if (leagueLower.contains('champions league') ||
-      leagueLower.contains('europa league') ||
-      leagueLower.contains('conference league') ||
-      leagueLower.contains('libertadores') ||
-      leagueLower.contains('sudamericana')) return false;
+  for (final pattern in patterns) {
+    if (leagueLower.contains(pattern)) {
+      // Exclude Champions League, Europa League, etc.
+      if (leagueLower.contains('champions') ||
+          leagueLower.contains('europa') ||
+          leagueLower.contains('conference') ||
+          leagueLower.contains('libertadores') ||
+          leagueLower.contains('sudamericana')) {
+        return false;
+      }
+      return true;
+    }
+  }
 
-  return leagueLower.contains('worldq') ||
-      leagueLower.contains('wcq') ||
-      (leagueLower.contains('euro') && !leagueLower.contains('europa')) ||
-      leagueLower.contains('copa america') ||
-      leagueLower.contains('nations league') ||
-      leagueLower.contains('friendly') ||
-      leagueLower.contains('gold cup') ||
-      leagueLower.contains('asian cup') ||
-      leagueLower.contains('africa cup') ||
-      leagueLower.contains('afcon') ||
-      (leagueLower.contains('concacaf') && !leagueLower.contains('champions')) ||
-      leagueLower.contains('qualif');
+  // Check 5: Check if the league is in the international leagues list by exact match
+  for (final league in AppConstants.internationalLeagues) {
+    if (league['name']!.toLowerCase() == leagueLower) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 // ─── Date Filter Model ────────────────────────────────────────────────────────
@@ -131,46 +171,20 @@ class _HomeScreenState extends State<HomeScreen>
   bool _hasTimeout = false;
   Timer? _loadingTimer;
 
-  bool _showWcSplash = true;
-  DateTime _splashStartTime = DateTime.now();
-  Timer? _splashCheckTimer;
-
   @override
   void initState() {
     super.initState();
-    _splashStartTime = DateTime.now();
-    _tabController = TabController(length: 3, vsync: this, initialIndex: 1);
+    // Default to ALL LEAGUES tab
+    _tabController = TabController(length: 2, vsync: this, initialIndex: 0);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadDataProgressive();
-      _startSplashMonitoring();
     });
 
-    _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (!mounted) return;
       if (_selectedFilter == 'TODAY') {
         context.read<AppProvider>().silentRefreshToday();
-      }
-    });
-  }
-
-  void _startSplashMonitoring() {
-    _splashCheckTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-
-      final provider = context.read<AppProvider>();
-      final internationalGames = provider.todaysGames.where(_isInternational).toList();
-      final hasInternationalData = internationalGames.isNotEmpty || provider.partialGames.where(_isInternational).isNotEmpty;
-
-      if (hasInternationalData ||
-          DateTime.now().difference(_splashStartTime).inSeconds >= 10) {
-        timer.cancel();
-        if (mounted && _showWcSplash) {
-          setState(() => _showWcSplash = false);
-        }
       }
     });
   }
@@ -181,7 +195,6 @@ class _HomeScreenState extends State<HomeScreen>
     _tabController.dispose();
     _scrollController.dispose();
     _loadingTimer?.cancel();
-    _splashCheckTimer?.cancel();
     super.dispose();
   }
 
@@ -248,11 +261,15 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  List<Game> _leagueGames(AppProvider p) =>
-      _allGamesForFilter(p).where((g) => !_isInternational(g)).toList();
+  List<Game> _leagueGames(AppProvider p) {
+    final all = _allGamesForFilter(p);
+    return all.where((g) => !_isInternational(g)).toList();
+  }
 
-  List<Game> _internationalGames(AppProvider p) =>
-      _allGamesForFilter(p).where(_isInternational).toList();
+  List<Game> _internationalGames(AppProvider p) {
+    final all = _allGamesForFilter(p);
+    return all.where(_isInternational).toList();
+  }
 
   Future<void> _showDatePicker(AppProvider p) async {
     final picked = await showDatePicker(
@@ -283,87 +300,66 @@ class _HomeScreenState extends State<HomeScreen>
 
     return Scaffold(
       backgroundColor: _C.offWhite,
-      body: Stack(
+      body: Column(
         children: [
-          Column(
-            children: [
-              _TopBar(
-                selectedFilter: _selectedFilter,
-                filters: _filters,
-                tabController: _tabController,
-                onFilterChanged: (filter) {
-                  HapticFeedback.lightImpact();
-                  setState(() => _selectedFilter = filter);
-                  if (filter == 'CUSTOM') {
-                    _showDatePicker(p);
-                  } else {
-                    _loadData();
-                  }
-                },
-              ),
-              Expanded(
-                child: TabBarView(
-                  controller: _tabController,
-                  children: [
-                    _MatchList(
-                      games: _leagueGames(p),
-                      provider: p,
-                      selectedFilter: _selectedFilter,
-                      onRetry: () => _loadDataProgressive(),
-                      onFilterToday: () {
-                        setState(() => _selectedFilter = 'TODAY');
-                        _loadDataProgressive();
-                      },
-                      onManageFavorites: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                      ),
-                      scrollController: _scrollController,
-                      emptyTitle: 'No league matches',
-                      emptySubtitle: 'Check International for cups & friendlies',
-                    ),
-                    _MatchList(
-                      games: _internationalGames(p),
-                      provider: p,
-                      selectedFilter: _selectedFilter,
-                      onRetry: () => _loadDataProgressive(),
-                      onFilterToday: () {
-                        setState(() => _selectedFilter = 'TODAY');
-                        _loadDataProgressive();
-                      },
-                      onManageFavorites: () {},
-                      scrollController: _scrollController,
-                      emptyTitle: 'No international matches',
-                      emptySubtitle: 'No cups, qualifiers, or friendlies on this date',
-                      showFavouritesStrip: false,
-                      isInternationalTab: true,
-                    ),
-                    _MatchList(
-                      games: p.favoriteTeamGames,
-                      provider: p,
-                      selectedFilter: _selectedFilter,
-                      onRetry: () => _loadDataProgressive(),
-                      onFilterToday: () {},
-                      onManageFavorites: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                      ),
-                      scrollController: _scrollController,
-                      emptyTitle: 'No favourite team matches',
-                      emptySubtitle: 'Add teams from the Teams tab to follow them here',
-                    ),
-                  ],
-                ),
-              ),
-            ],
+          _TopBar(
+            selectedFilter: _selectedFilter,
+            filters: _filters,
+            tabController: _tabController,
+            onFilterChanged: (filter) {
+              HapticFeedback.lightImpact();
+              setState(() => _selectedFilter = filter);
+              if (filter == 'CUSTOM') {
+                _showDatePicker(p);
+              } else {
+                _loadData();
+              }
+            },
           ),
-          if (_showWcSplash)
-            _WorldCupSplash(
-              onDismiss: () {
-                _splashCheckTimer?.cancel();
-                setState(() => _showWcSplash = false);
-              },
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                // TAB 0: ALL LEAGUES
+                _MatchList(
+                  games: _leagueGames(p),
+                  provider: p,
+                  selectedFilter: _selectedFilter,
+                  onRetry: () => _loadDataProgressive(),
+                  onFilterToday: () {
+                    setState(() => _selectedFilter = 'TODAY');
+                    _loadDataProgressive();
+                  },
+                  onManageFavorites: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                  ),
+                  scrollController: _scrollController,
+                  emptyTitle: 'No league matches',
+                  emptySubtitle: 'Check International for cups & friendlies',
+                  showFavouritesStrip: true,
+                  isInternationalTab: false,
+                ),
+                // TAB 1: INTERNATIONAL
+                _MatchList(
+                  games: _internationalGames(p),
+                  provider: p,
+                  selectedFilter: _selectedFilter,
+                  onRetry: () => _loadDataProgressive(),
+                  onFilterToday: () {
+                    setState(() => _selectedFilter = 'TODAY');
+                    _loadDataProgressive();
+                  },
+                  onManageFavorites: () {},
+                  scrollController: _scrollController,
+                  emptyTitle: 'No international matches',
+                  emptySubtitle: 'No cups, qualifiers, or friendlies on this date',
+                  showFavouritesStrip: false,
+                  isInternationalTab: true,
+                ),
+              ],
             ),
+          ),
         ],
       ),
     );
@@ -463,7 +459,13 @@ class _TopBarState extends State<_TopBar> {
                       ],
                     ),
                   ),
-                  _IconBtn(icon: Icons.search_rounded, onTap: () {}),
+                  _IconBtn(
+                    icon: Icons.search_rounded,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const SearchScreen()),
+                    ),
+                  ),
                   const SizedBox(width: 10),
                   if (hasLiveGames)
                     Container(
@@ -574,7 +576,6 @@ class _TopBarState extends State<_TopBar> {
                 tabs: const [
                   Tab(text: 'ALL LEAGUES'),
                   Tab(text: 'INTERNATIONAL'),
-                  Tab(text: 'MY TEAMS'),
                 ],
               ),
             ),
@@ -624,19 +625,37 @@ class _MatchList extends StatelessWidget {
     this.isInternationalTab = false,
   });
 
+  // Helper method to get fresh international games from provider
+  List<Game> _getInternationalGames(AppProvider provider) {
+    final allGames = _getAllGamesForFilter(provider);
+    return allGames.where(_isInternational).toList();
+  }
+
+  List<Game> _getAllGamesForFilter(AppProvider provider) {
+    switch (selectedFilter) {
+      case 'TODAY':     return provider.todaysGames;
+      case 'TOMORROW':  return provider.tomorrowsGames;
+      case 'YESTERDAY': return provider.yesterdaysGames;
+      case 'CUSTOM':    return provider.customGames;
+      default:          return provider.todaysGames;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // For international tab, use fresh games directly from provider
+    // Don't rely on the passed games list which might be stale
+    final displayGames = isInternationalTab
+        ? _getInternationalGames(provider)
+        : games;
+
     final isInitialLoading = (provider.isLoading || provider.isLoadingPartial) &&
-        games.isEmpty &&
+        displayGames.isEmpty &&
         provider.partialGames.isEmpty;
 
     if (isInitialLoading) {
       return _SkeletonLoader();
     }
-
-    final displayGames = provider.isLoadingPartial && provider.partialGames.isNotEmpty
-        ? provider.partialGames.where(_isInternational).toList()
-        : games;
 
     if (provider.error != null && displayGames.isEmpty) {
       return _ErrorState(error: provider.error!, onRetry: onRetry);
@@ -675,10 +694,14 @@ class _MatchList extends StatelessWidget {
       child: CustomScrollView(
         controller: scrollController,
         slivers: [
-          if (isInternationalTab && _hasWorldCupMatches(displayGames))
+          if (showFavouritesStrip)
             SliverToBoxAdapter(
-              child: _WorldCupBanner(),
+              child: _FavouritesStrip(
+                provider: provider,
+                onManage: onManageFavorites,
+              ),
             ),
+          // Show loading indicator while background leagues are loading
           if (provider.isLoadingPartial && provider.partialGames.isNotEmpty)
             SliverToBoxAdapter(
               child: Padding(
@@ -714,14 +737,7 @@ class _MatchList extends StatelessWidget {
                 ),
               ),
             ),
-          if (showFavouritesStrip)
-            SliverToBoxAdapter(
-              child: _FavouritesStrip(
-                provider: provider,
-                onManage: onManageFavorites,
-              ),
-            ),
-          if (provider.isLoading && games.isNotEmpty)
+          if (provider.isLoading && displayGames.isNotEmpty)
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
@@ -778,13 +794,6 @@ class _MatchList extends StatelessWidget {
     );
   }
 
-  bool _hasWorldCupMatches(List<Game> games) {
-    return games.any((g) =>
-    g.leagueName.toLowerCase().contains('world cup') ||
-        g.leagueName.toLowerCase().contains('fifa world cup')
-    );
-  }
-
   Map<String, List<Game>> _groupByLeague(List<Game> games) {
     final Map<String, List<Game>> groups = {};
     for (final g in games) {
@@ -831,125 +840,7 @@ class _MatchList extends StatelessWidget {
   }
 }
 
-// ─── FIFA World Cup Banner with OFFICIAL 2026 Logo ─────────────────────────────
-
-class _WorldCupBanner extends StatelessWidget {
-  const _WorldCupBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-      decoration: BoxDecoration(
-        color: _C.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _C.blue.withOpacity(0.3), width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: _C.blueLight,
-                border: Border.all(color: _C.blue, width: 1.5),
-              ),
-              child: ClipOval(
-                child: CachedNetworkImage(
-                  imageUrl: AppConstants.fifaWorldCup2026LogoUrl,
-                  fit: BoxFit.cover,
-                  placeholder: (context, url) => Container(
-                    color: _C.blueLight,
-                    child: const Center(
-                      child: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: _C.blue,
-                        ),
-                      ),
-                    ),
-                  ),
-                  errorWidget: (context, url, error) => Container(
-                    color: _C.blue,
-                    child: const Icon(
-                      Icons.sports_soccer,
-                      color: Colors.white,
-                      size: 28,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 14),
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'FIFA World Cup 2026',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF1A62C8),
-                    ),
-                  ),
-                  SizedBox(height: 2),
-                  Text(
-                    'USA · Canada · Mexico',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: Color(0xFF6B7A96),
-                    ),
-                  ),
-                  SizedBox(height: 2),
-                  Text(
-                    '48 teams · 104 matches',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w400,
-                      color: Color(0xFF6B7A96),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: _C.liveRed,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Text(
-                'LIVE',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                  letterSpacing: 0.5,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ─── League Header with OFFICIAL FIFA Logo ─────────────────────────────────────
+// ─── League Header ────────────────────────────────────────────────────────────
 
 class _LeagueHeader extends StatelessWidget {
   final String leagueName;
@@ -1107,6 +998,248 @@ class _FavouritesStrip extends StatelessWidget {
 
   const _FavouritesStrip({required this.provider, required this.onManage});
 
+  /// Helper method to detect the correct league code for a team
+  String _detectLeagueCodeForTeam(TeamInfo team) {
+    final teamName = team.displayName.toLowerCase();
+    final teamAbbr = team.abbreviation.toLowerCase();
+    final teamFullName = team.name.toLowerCase();
+
+    // Combine all name variations for matching
+    final combinedName = '$teamName $teamAbbr $teamFullName'.toLowerCase();
+
+    // ─── La Liga (esp.1) ──────────────────────────────────────────────────────
+    final laLigaTeams = [
+      'real madrid', 'barcelona', 'atletico madrid', 'athletic bilbao',
+      'real sociedad', 'real betis', 'valencia', 'sevilla', 'villareal',
+      'getafe', 'espanyol', 'girona', 'osasuna', 'rayo vallecano',
+      'celta vigo', 'alaves', 'mallorca', 'las palmas', 'cadiz',
+      'granada', 'elche', 'almeria', 'valladolid', 'levante'
+    ];
+    for (final name in laLigaTeams) {
+      if (combinedName.contains(name) || name.contains(combinedName.split(' ').first)) {
+        return 'esp.1';
+      }
+    }
+    if (teamAbbr == 'fcb' || teamAbbr == 'rma' || teamAbbr == 'atm' ||
+        teamAbbr == 'ath' || teamAbbr == 'rso' || teamAbbr == 'bet' ||
+        teamAbbr == 'val' || teamAbbr == 'sev' || teamAbbr == 'vil') {
+      return 'esp.1';
+    }
+
+    // ─── Premier League (eng.1) ──────────────────────────────────────────────
+    final premierLeagueTeams = [
+      'manchester united', 'manchester city', 'liverpool', 'arsenal',
+      'chelsea', 'tottenham', 'newcastle', 'aston villa', 'west ham',
+      'everton', 'leicester', 'wolves', 'brighton', 'brentford',
+      'fulham', 'crystal palace', 'nottingham', 'birmingham',
+      'southampton', 'bournemouth', 'burnley', 'sheffield united',
+      'luton', 'ipswich', 'leeds', 'norwich', 'watford'
+    ];
+    for (final name in premierLeagueTeams) {
+      if (combinedName.contains(name) || name.contains(combinedName.split(' ').first)) {
+        return 'eng.1';
+      }
+    }
+    if (teamAbbr == 'mun' || teamAbbr == 'mci' || teamAbbr == 'liv' ||
+        teamAbbr == 'ars' || teamAbbr == 'che' || teamAbbr == 'tot' ||
+        teamAbbr == 'new' || teamAbbr == 'avl' || teamAbbr == 'whu') {
+      return 'eng.1';
+    }
+
+    // ─── Serie A (ita.1) ──────────────────────────────────────────────────────
+    final serieATeams = [
+      'juventus', 'inter milan', 'ac milan', 'napoli', 'roma',
+      'lazio', 'atalanta', 'fiorentina', 'torino', 'bologna',
+      'sampdoria', 'parma', 'udinese', 'sassuolo', 'empoli',
+      'lecce', 'verona', 'genoa', 'cagliari', 'salernitana'
+    ];
+    for (final name in serieATeams) {
+      if (combinedName.contains(name) || name.contains(combinedName.split(' ').first)) {
+        return 'ita.1';
+      }
+    }
+    if (teamAbbr == 'juv' || teamAbbr == 'int' || teamAbbr == 'mil' ||
+        teamAbbr == 'nap' || teamAbbr == 'rom' || teamAbbr == 'laz') {
+      return 'ita.1';
+    }
+
+    // ─── Bundesliga (ger.1) ──────────────────────────────────────────────────
+    final bundesligaTeams = [
+      'bayern munich', 'borussia dortmund', 'rb leipzig', 'bayer leverkusen',
+      'borussia monchengladbach', 'eintracht frankfurt', 'vfb stuttgart',
+      'werder bremen', 'schalke', 'wolfsburg', 'hoffenheim',
+      'mainz', 'augsburg', 'koln', 'freiburg', 'union berlin'
+    ];
+    for (final name in bundesligaTeams) {
+      if (combinedName.contains(name) || name.contains(combinedName.split(' ').first)) {
+        return 'ger.1';
+      }
+    }
+    if (teamAbbr == 'bay' || teamAbbr == 'bvb' || teamAbbr == 'rbl' ||
+        teamAbbr == 'b04' || teamAbbr == 'bm' || teamAbbr == 'sge') {
+      return 'ger.1';
+    }
+
+    // ─── Ligue 1 (fra.1) ──────────────────────────────────────────────────────
+    final ligue1Teams = [
+      'paris saint germain', 'psg', 'marseille', 'monaco', 'lyon',
+      'nice', 'rennes', 'lille', 'montpellier', 'strasbourg',
+      'nantes', 'reims', 'toulouse', 'bordeaux', 'saint-etienne'
+    ];
+    for (final name in ligue1Teams) {
+      if (combinedName.contains(name) || name.contains(combinedName.split(' ').first)) {
+        return 'fra.1';
+      }
+    }
+    if (teamAbbr == 'psg' || teamAbbr == 'om' || teamAbbr == 'asm' ||
+        teamAbbr == 'ol' || teamAbbr == 'ogc' || teamAbbr == 'srfc') {
+      return 'fra.1';
+    }
+
+    // ─── Eredivisie (ned.1) ──────────────────────────────────────────────────
+    if (combinedName.contains('ajax') || combinedName.contains('psv') ||
+        combinedName.contains('feyenoord') || combinedName.contains('az alkmaar') ||
+        combinedName.contains('twente') || combinedName.contains('utrecht')) {
+      return 'ned.1';
+    }
+    if (teamAbbr == 'aja' || teamAbbr == 'psv' || teamAbbr == 'fey') {
+      return 'ned.1';
+    }
+
+    // ─── Primeira Liga (por.1) ──────────────────────────────────────────────
+    if (combinedName.contains('benfica') || combinedName.contains('porto') ||
+        combinedName.contains('sporting') || combinedName.contains('braga') ||
+        combinedName.contains('guimaraes')) {
+      return 'por.1';
+    }
+    if (teamAbbr == 'ben' || teamAbbr == 'por' || teamAbbr == 'spo') {
+      return 'por.1';
+    }
+
+    // ─── MLS (usa.1) ──────────────────────────────────────────────────────────
+    final mlsTeams = [
+      'inter miami', 'los angeles', 'new york', 'seattle', 'atlanta',
+      'toronto', 'vancouver', 'chicago', 'columbus', 'dallas',
+      'houston', 'kansas', 'minnesota', 'montreal', 'nashville',
+      'new england', 'philadelphia', 'portland', 'real salt lake',
+      'san jose', 'st louis', 'dc united', 'austin', 'cincinnati',
+      'colorado', 'orlando', 'charlotte'
+    ];
+    for (final name in mlsTeams) {
+      if (combinedName.contains(name) || name.contains(combinedName.split(' ').first)) {
+        return 'usa.1';
+      }
+    }
+
+    // ─── Brasileirão (bra.1) ──────────────────────────────────────────────────
+    if (combinedName.contains('flamengo') || combinedName.contains('palmeiras') ||
+        combinedName.contains('santos') || combinedName.contains('corinthians') ||
+        combinedName.contains('sao paulo') || combinedName.contains('gremio') ||
+        combinedName.contains('internacional') || combinedName.contains('cruzeiro') ||
+        combinedName.contains('fluminense') || combinedName.contains('athletico paranaense')) {
+      return 'bra.1';
+    }
+
+    // ─── Liga MX (mex.1) ──────────────────────────────────────────────────────
+    if (combinedName.contains('america') || combinedName.contains('chivas') ||
+        combinedName.contains('guadalajara') || combinedName.contains('cruz azul') ||
+        combinedName.contains('pumas') || combinedName.contains('tigres') ||
+        combinedName.contains('monterrey') || combinedName.contains('toluca')) {
+      return 'mex.1';
+    }
+
+    // ─── Argentine Primera (arg.1) ────────────────────────────────────────────
+    if (combinedName.contains('boca juniors') || combinedName.contains('river plate') ||
+        combinedName.contains('racing') || combinedName.contains('independiente') ||
+        combinedName.contains('san lorenzo')) {
+      return 'arg.1';
+    }
+
+    // ─── Championship (eng.2) ──────────────────────────────────────────────────
+    if (combinedName.contains('west brom') || combinedName.contains('norwich') ||
+        combinedName.contains('watford') || combinedName.contains('stoke') ||
+        combinedName.contains('hull') || combinedName.contains('sunderland') ||
+        combinedName.contains('middlesbrough') || combinedName.contains('swansea')) {
+      return 'eng.2';
+    }
+
+    // ─── Turkish Super Lig (tur.1) ────────────────────────────────────────────
+    if (combinedName.contains('galatasaray') || combinedName.contains('fenerbahce') ||
+        combinedName.contains('besiktas') || combinedName.contains('trabzonspor')) {
+      return 'tur.1';
+    }
+
+    // ─── Belgian Pro League (bel.1) ──────────────────────────────────────────
+    if (combinedName.contains('anderlecht') || combinedName.contains('club brugge') ||
+        combinedName.contains('standard liege') || combinedName.contains('genk')) {
+      return 'bel.1';
+    }
+
+    // ─── Scottish Premiership (sco.1) ────────────────────────────────────────
+    if (combinedName.contains('celtic') || combinedName.contains('rangers') ||
+        combinedName.contains('aberdeen') || combinedName.contains('hearts')) {
+      return 'sco.1';
+    }
+
+    // ─── Swiss Super League (sui.1) ──────────────────────────────────────────
+    if (combinedName.contains('basel') || combinedName.contains('young boys') ||
+        combinedName.contains('zurich') || combinedName.contains('servette')) {
+      return 'sui.1';
+    }
+
+    // ─── Austrian Bundesliga (aut.1) ─────────────────────────────────────────
+    if (combinedName.contains('salzburg') || combinedName.contains('rapid vienna') ||
+        combinedName.contains('austria vienna') || combinedName.contains('sturm graz')) {
+      return 'aut.1';
+    }
+
+    // ─── J1 League (jpn.1) ────────────────────────────────────────────────────
+    if (combinedName.contains('kawasaki') || combinedName.contains('yokohama') ||
+        combinedName.contains('vissel kobe') || combinedName.contains('gamba') ||
+        combinedName.contains('uraWA')) {
+      return 'jpn.1';
+    }
+
+    // ─── Allsvenskan (swe.1) ──────────────────────────────────────────────────
+    if (combinedName.contains('malmo') || combinedName.contains('AIK') ||
+        combinedName.contains('djurgarden') || combinedName.contains('hammarby')) {
+      return 'swe.1';
+    }
+
+    // ─── Eliteserien (nor.1) ──────────────────────────────────────────────────
+    if (combinedName.contains('bodo glimt') || combinedName.contains('molde') ||
+        combinedName.contains('rosenborg') || combinedName.contains('valerenga')) {
+      return 'nor.1';
+    }
+
+    // ─── Superliga (den.1) ────────────────────────────────────────────────────
+    if (combinedName.contains('copenhagen') || combinedName.contains('brondby') ||
+        combinedName.contains('midtjylland') || combinedName.contains('aalborg')) {
+      return 'den.1';
+    }
+
+    // ─── Try to find league by checking against all league names ──────────────
+    for (final league in AppConstants.allLeagues) {
+      final leagueName = league['name']!.toLowerCase();
+      final leagueCode = league['code']!;
+
+      // Check if team name contains league name or vice versa
+      if (teamName.contains(leagueName.split(' ').first) ||
+          leagueName.contains(teamName.split(' ').first) ||
+          leagueName.contains(teamAbbr)) {
+        // Make sure it's not a false positive
+        if (leagueCode != 'uefa.champions' && leagueCode != 'uefa.europa' &&
+            leagueCode != 'uefa.conference' && leagueCode != 'fifa.world') {
+          return leagueCode;
+        }
+      }
+    }
+
+    // ─── Default fallback ─────────────────────────────────────────────────────
+    print('[Favourites] Could not detect league for team: ${team.displayName}, using eng.1');
+    return 'eng.1';
+  }
+
   @override
   Widget build(BuildContext context) {
     final favTeamIds = provider.favoriteTeamIds.take(3).toList();
@@ -1120,17 +1253,23 @@ class _FavouritesStrip extends StatelessWidget {
       TeamInfo? found;
       try {
         found = provider.allTeams.firstWhere((t) => t.id == id);
-      } catch (_) {}
+      } catch (_) {
+        print('[Favourites] Team not found in allTeams: $id');
+      }
 
       if (found != null) {
+        final leagueCode = _detectLeagueCodeForTeam(found);
+        print('[Favourites] Team: ${found.displayName}, Detected League: $leagueCode');
         return _FavCircleTeam(
           teamId: id,
           imageUrl: found.logo,
           label: found.abbreviation.isNotEmpty ? found.abbreviation : found.name,
           color: _parseColor(found.color),
+          onTap: () => _navigateToTeamDetail(context, found, leagueCode),
         );
       }
 
+      // If team not found in allTeams, try to fetch it or create a placeholder
       final espnLogoUrl = id.isNotEmpty
           ? 'https://a.espncdn.com/i/teamlogos/soccer/500/$id.png'
           : '';
@@ -1139,6 +1278,7 @@ class _FavouritesStrip extends StatelessWidget {
         imageUrl: espnLogoUrl,
         label: id,
         color: _C.blue,
+        onTap: () => _navigateToTeamDetail(context, null, null, teamId: id),
       );
     }).toList();
 
@@ -1219,6 +1359,60 @@ class _FavouritesStrip extends StatelessWidget {
     );
   }
 
+  void _navigateToTeamDetail(BuildContext context, TeamInfo? team, String? leagueCode, {String? teamId}) {
+    if (team != null) {
+      final code = leagueCode ?? _detectLeagueCodeForTeam(team);
+      print('[Favourites] Navigating to team: ${team.displayName}, League: $code');
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => TeamDetailScreen(
+            team: team,
+            leagueCode: code,
+          ),
+        ),
+      );
+    } else if (teamId != null) {
+      // Try to find the team in the provider's allTeams list
+      try {
+        final foundTeam = provider.allTeams.firstWhere((t) => t.id == teamId);
+        final code = _detectLeagueCodeForTeam(foundTeam);
+        print('[Favourites] Found team by ID: ${foundTeam.displayName}, League: $code');
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TeamDetailScreen(
+              team: foundTeam,
+              leagueCode: code,
+            ),
+          ),
+        );
+      } catch (_) {
+        // If team not found, create a minimal TeamInfo
+        print('[Favourites] Team not found in allTeams, creating minimal with ID: $teamId');
+        final minimalTeam = TeamInfo(
+          id: teamId,
+          name: teamId,
+          displayName: teamId,
+          abbreviation: teamId.length > 3 ? teamId.substring(0, 3).toUpperCase() : teamId,
+          logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/$teamId.png',
+          color: '#1A62C8',
+          alternateColor: '#FFFFFF',
+          record: '0-0-0',
+        );
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TeamDetailScreen(
+              team: minimalTeam,
+              leagueCode: 'eng.1',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
   static Color _parseColor(String hex) {
     try {
       final h = hex.replaceAll('#', '');
@@ -1242,17 +1436,21 @@ class _FavouritesStrip extends StatelessWidget {
   }
 }
 
+// ─── Fav Circle Team (Clickable) ─────────────────────────────────────────────
+
 class _FavCircleTeam extends StatelessWidget {
   final String teamId;
   final String imageUrl;
   final String label;
   final Color color;
+  final VoidCallback? onTap;
 
   const _FavCircleTeam({
     required this.teamId,
     required this.imageUrl,
     required this.label,
     required this.color,
+    this.onTap,
   });
 
   @override
@@ -1265,47 +1463,50 @@ class _FavCircleTeam extends StatelessWidget {
 
     final bgColor = _C.blueLight;
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 54,
-          height: 54,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: bgColor,
-            border: Border.all(color: _C.blue.withOpacity(0.3), width: 1.5),
-          ),
-          padding: const EdgeInsets.all(8),
-          child: url.isNotEmpty
-              ? CachedNetworkImage(
-            imageUrl: url,
-            fit: BoxFit.contain,
-            placeholder: (context, url) => const SizedBox(),
-            errorWidget: (context, url, error) => Icon(
-              Icons.sports_soccer_rounded,
-              size: 26,
-              color: _C.blue,
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 54,
+            height: 54,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: bgColor,
+              border: Border.all(color: _C.blue.withOpacity(0.3), width: 1.5),
             ),
-          )
-              : const Icon(Icons.sports_soccer_rounded, size: 26, color: _C.blue),
-        ),
-        const SizedBox(height: 5),
-        SizedBox(
-          width: 54,
-          child: Text(
-            label,
-            style: const TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              color: _C.text,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
+            padding: const EdgeInsets.all(8),
+            child: url.isNotEmpty
+                ? CachedNetworkImage(
+              imageUrl: url,
+              fit: BoxFit.contain,
+              placeholder: (context, url) => const SizedBox(),
+              errorWidget: (context, url, error) => Icon(
+                Icons.sports_soccer_rounded,
+                size: 26,
+                color: _C.blue,
+              ),
+            )
+                : const Icon(Icons.sports_soccer_rounded, size: 26, color: _C.blue),
           ),
-        ),
-      ],
+          const SizedBox(height: 5),
+          SizedBox(
+            width: 54,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: _C.text,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1619,261 +1820,6 @@ class _EmptyState extends StatelessWidget {
               ),
             ],
           ],
-        ),
-      ),
-    );
-  }
-}
-
-// ─── World Cup Splash Screen with OFFICIAL 2026 Logo ──────────────────────────
-
-class _WorldCupSplash extends StatefulWidget {
-  final VoidCallback onDismiss;
-  const _WorldCupSplash({required this.onDismiss});
-
-  @override
-  State<_WorldCupSplash> createState() => _WorldCupSplashState();
-}
-
-class _WorldCupSplashState extends State<_WorldCupSplash>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-  late Animation<double> _fade;
-  late Animation<double> _scale;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 420));
-    _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeOut);
-    _scale = Tween<double>(begin: 0.88, end: 1.0)
-        .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutBack));
-    _ctrl.forward();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _dismiss() async {
-    await _ctrl.reverse();
-    widget.onDismiss();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _fade,
-      child: GestureDetector(
-        onTap: _dismiss,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          color: Colors.black.withOpacity(0.85),
-          child: Center(
-            child: ScaleTransition(
-              scale: _scale,
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 28),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
-                      blurRadius: 20,
-                      spreadRadius: 4,
-                    ),
-                  ],
-                ),
-                padding: const EdgeInsets.fromLTRB(24, 32, 24, 28),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 100,
-                      height: 100,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _C.blueLight,
-                        border: Border.all(color: _C.blue, width: 2),
-                      ),
-                      child: ClipOval(
-                        child: CachedNetworkImage(
-                          imageUrl: AppConstants.fifaWorldCup2026LogoUrlLarge,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => Container(
-                            color: _C.blueLight,
-                            child: const Center(
-                              child: SizedBox(
-                                width: 30,
-                                height: 30,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: _C.blue,
-                                ),
-                              ),
-                            ),
-                          ),
-                          errorWidget: (context, url, error) => Container(
-                            color: _C.blue,
-                            child: const Icon(
-                              Icons.sports_soccer,
-                              color: Colors.white,
-                              size: 50,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    const Text(
-                      'FIFA WORLD CUP',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Color(0xFF1A62C8),
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 2,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      '2026',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Color(0xFF16A34A),
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.5,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: _C.liveRed.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: _C.liveRed, width: 0.5),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _PulsingDot(),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'NOW IN PROGRESS',
-                            style: TextStyle(
-                              color: Color(0xFFE53535),
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 1,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Container(
-                      height: 1,
-                      color: _C.border,
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'USA · CANADA · MEXICO',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Color(0xFF6B7A96),
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      '48 teams · 104 matches · 1 champion',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Color(0xFF6B7A96),
-                        fontSize: 12,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _dismiss,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _C.blue,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10)),
-                        ),
-                        child: const Text(
-                          'VIEW MATCHES',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 14,
-                            letterSpacing: 1,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Tap anywhere to dismiss',
-                      style: TextStyle(color: Color(0xFF6B7A96), fontSize: 11),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _PulsingDot extends StatefulWidget {
-  @override
-  State<_PulsingDot> createState() => _PulsingDotState();
-}
-
-class _PulsingDotState extends State<_PulsingDot>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _c;
-  late Animation<double> _a;
-
-  @override
-  void initState() {
-    super.initState();
-    _c = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 900))
-      ..repeat(reverse: true);
-    _a = Tween<double>(begin: 0.3, end: 1.0).animate(_c);
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _a,
-      child: Container(
-        width: 8,
-        height: 8,
-        decoration: const BoxDecoration(
-          shape: BoxShape.circle,
-          color: Color(0xFFE53535),
         ),
       ),
     );

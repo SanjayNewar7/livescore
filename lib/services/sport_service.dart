@@ -6,6 +6,7 @@ import 'package:livescore/models/league_leader_model.dart';
 import 'package:livescore/models/news_model.dart';
 import 'package:livescore/models/player_model.dart';
 import 'package:livescore/models/team_model.dart';
+import '../models/search_model.dart';
 import '../models/team_page_data.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/screens/game_detail_screen.dart'
@@ -16,6 +17,10 @@ class SportService {
   final CacheService _cache = CacheService();
 
   String _currentLeagueCode = 'eng.1';
+
+  // ─── CACHE KEYS ──────────────────────────────────────────────────────────
+  static const String _teamPageCacheKeyPrefix = 'team_page_';
+  static const Duration _teamPageCacheDuration = Duration(hours: 6);
 
   void setLeague(String leagueCode) => _currentLeagueCode = leagueCode;
   String get currentLeague => _currentLeagueCode;
@@ -367,12 +372,28 @@ class SportService {
     }
   }
 
-  Future<LeagueLeaders> getLeagueLeaders({String? season}) async {
+  Future<LeagueLeaders> getLeagueLeaders({String? season, bool forceRefresh = false}) async {
+    final cacheKey = '${_currentLeagueCode}_${season ?? 'current'}';
+
+    if (!forceRefresh) {
+      final cached = await _cache.getCachedLeagueLeaders(leagueCode: cacheKey);
+      if (cached != null) {
+        print('[SportService] Using cached leaders for $cacheKey');
+        return cached;
+      }
+    }
+
     try {
-      return await _api.getLeagueLeaders(_currentLeagueCode, season: season);
+      final leaders = await _api.getLeagueLeaders(_currentLeagueCode, season: season);
+      if (!leaders.isEmpty) {
+        await _cache.cacheLeagueLeaders(leaders, leagueCode: cacheKey);
+      }
+      return leaders;
     } catch (e) {
       print('Error fetching league leaders: $e');
-      return LeagueLeaders.empty;
+      // Fall back to a stale cache entry rather than nothing, if one exists.
+      final stale = await _cache.getCachedLeagueLeaders(leagueCode: cacheKey);
+      return stale ?? LeagueLeaders.empty;
     }
   }
 
@@ -420,9 +441,7 @@ class SportService {
   Future<MatchLineup?> getMatchLineup(String gameId) async =>
       _api.getMatchLineup(gameId);
 
-  Future<List<H2HResult>> getH2H(
-      String awayTeamId, String homeTeamId, String currentGameId) async =>
-      _api.getH2H(awayTeamId, homeTeamId, currentGameId, _currentLeagueCode);
+
 
   Future<List<Game>> getYesterdaysMatchesProgressive({
     bool forceRefresh = false,
@@ -504,15 +523,48 @@ class SportService {
     }
   }
 
+  // ─── TEAM PAGE DATA WITH 6-HOUR CACHING ────────────────────────────────────
   Future<TeamPageData> getTeamPageData(
       String teamId, {
         String? leagueCode,
+        bool forceRefresh = false,
       }) async {
+    final resolvedLeague = leagueCode ?? _currentLeagueCode;
+    final cacheKey = '${_teamPageCacheKeyPrefix}${teamId}_${resolvedLeague}';
+
+    // Check cache first (6 hours)
+    if (!forceRefresh) {
+      try {
+        final cached = await _cache.getCachedTeamPageData(cacheKey);
+        if (cached != null) {
+          print('[SportService] ✅ Team page cache HIT for $teamId');
+          return cached;
+        }
+      } catch (e) {
+        print('[SportService] Team page cache read error: $e');
+      }
+    }
+
     try {
-      return await _api.getTeamPageData(teamId, leagueCode: leagueCode);
+      print('[SportService] Fetching fresh team page data for $teamId');
+      final data = await _api.getTeamPageData(teamId, leagueCode: resolvedLeague);
+
+      // Cache the data for 6 hours
+      await _cache.cacheTeamPageData(cacheKey, data);
+      print('[SportService] ✅ Team page data cached for $teamId (6 hours)');
+
+      return data;
     } catch (e) {
       print('[SportService] getTeamPageData error: $e');
-      return TeamPageData.empty(leagueCode ?? 'eng.1');
+      // Try to return stale cache if available
+      try {
+        final cached = await _cache.getCachedTeamPageData(cacheKey);
+        if (cached != null) {
+          print('[SportService] ⚠️ Returning stale cache for $teamId');
+          return cached;
+        }
+      } catch (_) {}
+      return TeamPageData.empty(resolvedLeague);
     }
   }
 
@@ -520,6 +572,10 @@ class SportService {
   /// (World Cup, qualifiers, nations league, etc.).
   bool isNationalTeamLeague(String leagueCode) =>
       AppConstants.isNationalTeamLeague(leagueCode);
+
+  Future<SearchResponse> search(String query) async {
+    return _api.search(query);
+  }
 
   Future<List<Game>> getTodaysMatchesSilent() async {
     try {

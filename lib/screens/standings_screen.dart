@@ -44,7 +44,27 @@ class _StandingsScreenState extends State<StandingsScreen> {
   String _selectedGroup = 'All';
   List<String> _groups = ['All'];
 
-  final List<Map<String, String>> _leagues = AppConstants.allLeagues;
+  // FIFA World Cup 2026 is pinned to the FRONT of the strip. It already
+  // lives inside AppConstants.allLeagues (as part of internationalLeagues),
+  // but that puts it ~50 chips deep in the horizontal scroll — practically
+  // unreachable once you've scrolled away to look at another league. Pinning
+  // it first means it's always one tap away, in both directions.
+  //
+  // NOTE: we deliberately do this locally rather than reordering
+  // AppConstants.allLeagues itself — that combined list is also walked
+  // in api_service.dart's getGameDetail() brute-force league search, where
+  // club leagues need to stay first for performance on the common case.
+  static List<Map<String, String>> _buildLeagueStrip() {
+    final all = List<Map<String, String>>.from(AppConstants.allLeagues);
+    final wcIndex = all.indexWhere((l) => l['code'] == 'fifa.world');
+    if (wcIndex > 0) {
+      final wc = all.removeAt(wcIndex);
+      all.insert(0, wc);
+    }
+    return all;
+  }
+
+  final List<Map<String, String>> _leagues = _buildLeagueStrip();
 
   @override
   void initState() {
@@ -186,6 +206,7 @@ class _StandingsScreenState extends State<StandingsScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true, // needed now that there are 10 seasons, not 4
       builder: (_) => _SeasonPickerSheet(
         selected: _selectedSeason,
         onSelected: (v) {
@@ -371,7 +392,17 @@ class _LeagueSelectorStrip extends StatelessWidget {
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 16),
           itemCount: leagues.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 10),
+          separatorBuilder: (_, i) {
+            // Thin divider right after the pinned World Cup chip (index 0)
+            // to visually set it apart as "featured" from the rest.
+            if (i == 0 && leagues[0]['code'] == 'fifa.world') {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 10),
+                child: VerticalDivider(width: 20, thickness: 1, color: _C.border),
+              );
+            }
+            return const SizedBox(width: 10);
+          },
           itemBuilder: (ctx, i) {
             final league = leagues[i];
             final code = league['code']!;
@@ -394,11 +425,11 @@ class _LeagueSelectorStrip extends StatelessWidget {
                         shape: BoxShape.circle,
                         color: isSelected
                             ? (isWC ? _C.gold.withOpacity(0.15) : _C.blueLight)
-                            : _C.offWhite,
+                            : (isWC ? _C.gold.withOpacity(0.06) : _C.offWhite),
                         border: Border.all(
                           color: isSelected
                               ? (isWC ? _C.gold : _C.blue)
-                              : _C.border,
+                              : (isWC ? _C.gold.withOpacity(0.4) : _C.border),
                           width: isSelected ? 2 : 1.2,
                         ),
                       ),
@@ -456,7 +487,9 @@ class _SeasonPickerSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final maxHeight = MediaQuery.of(context).size.height * 0.7;
     return Container(
+      constraints: BoxConstraints(maxHeight: maxHeight),
       decoration: const BoxDecoration(
         color: _C.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -476,33 +509,39 @@ class _SeasonPickerSheet extends StatelessWidget {
           const Text('SELECT SEASON',
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2, color: _C.muted)),
           const SizedBox(height: 12),
-          ...AppConstants.standingsSeasons.map((s) {
-            final isSel = s['value'] == selected;
-            return GestureDetector(
-              onTap: () => onSelected(s['value']!),
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                decoration: BoxDecoration(
-                  color: isSel ? _C.blueLight : _C.offWhite,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: isSel ? _C.blue : _C.border),
-                ),
-                child: Row(
-                  children: [
-                    Text(s['label']!,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: isSel ? FontWeight.w800 : FontWeight.w600,
-                          color: isSel ? _C.blue : _C.text,
-                        )),
-                    const Spacer(),
-                    if (isSel) const Icon(Icons.check_circle_rounded, color: _C.blue, size: 18),
-                  ],
-                ),
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                children: AppConstants.standingsSeasons.map((s) {
+                  final isSel = s['value'] == selected;
+                  return GestureDetector(
+                    onTap: () => onSelected(s['value']!),
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                      decoration: BoxDecoration(
+                        color: isSel ? _C.blueLight : _C.offWhite,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: isSel ? _C.blue : _C.border),
+                      ),
+                      child: Row(
+                        children: [
+                          Text(s['label']!,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: isSel ? FontWeight.w800 : FontWeight.w600,
+                                color: isSel ? _C.blue : _C.text,
+                              )),
+                          const Spacer(),
+                          if (isSel) const Icon(Icons.check_circle_rounded, color: _C.blue, size: 18),
+                        ],
+                      ),
+                    ),
+                  );
+                }).toList(),
               ),
-            );
-          }),
+            ),
+          ),
         ],
       ),
     );

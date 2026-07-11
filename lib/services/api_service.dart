@@ -8,8 +8,12 @@ import 'package:livescore/models/league_leader_model.dart';
 import 'package:livescore/models/news_model.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/models/team_page_data.dart';
+import 'package:livescore/services/cache_service.dart';
 import 'package:livescore/screens/game_detail_screen.dart'
     show MatchLineup, LineupPlayer, H2HResult;
+
+import '../models/search_model.dart';
+import 'api_key_manager.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Private helper class (file-scoped, not exported)
@@ -38,6 +42,7 @@ class ApiService {
 
   final http.Client _client = http.Client();
   final Map<String, int> _leaguePriorityCache = {};
+  final CacheService _cache = CacheService();
 
   Map<String, String> get _headers => {
     'Content-Type': 'application/json',
@@ -51,18 +56,51 @@ class ApiService {
 
   String _normalizeStatus(String raw) {
     final s = raw.toLowerCase().trim();
-    if (s.contains('progress') || s == 'in progress' || s == 'halftime' ||
-        s.contains('live') || s.contains('half time') || s.contains('extra time') ||
-        s.contains('penalty') || s.contains('overtime')) {
+
+    // Expanded LIVE detection
+    if (s.contains('progress') ||
+        s == 'in progress' ||
+        s.contains('halftime') ||
+        s.contains('half time') ||
+        s.contains('extra time') ||
+        s.contains('overtime') ||
+        s.contains('penalty') ||
+        s.contains('shootout') ||
+        s.contains('1st half') ||
+        s.contains('2nd half') ||
+        s.contains('1st half') ||
+        s.contains('2nd half') ||
+        s.contains('half') ||
+        s.contains('live') ||
+        s.contains('active') ||
+        s.contains('started') ||
+        s.contains('playing') ||
+        s.contains('ongoing')) {
       return 'STATUS_LIVE';
     }
-    if (s.contains('final') || s == 'ft' || s == 'finished' || s == 'ended' ||
-        s.contains('full time') || s == 'after extra time' || s == 'after penalties' ||
-        s == 'post' || s == 'complete' || s == 'completed' || s == 'result') {
+
+    // Expanded FINAL detection
+    if (s.contains('final') ||
+        s == 'ft' ||
+        s == 'finished' ||
+        s == 'ended' ||
+        s.contains('full time') ||
+        s == 'after extra time' ||
+        s == 'after penalties' ||
+        s == 'post' ||
+        s == 'complete' ||
+        s == 'completed' ||
+        s == 'result' ||
+        s.contains('fulltime') ||
+        s.contains('end')) {
       return 'STATUS_FINAL';
     }
+
+    // Everything else is scheduled
     return 'STATUS_SCHEDULED';
   }
+
+  // api_service.dart - Fixed _normalizeEventStatus function
 
   String _normalizeEventStatus(Map<String, dynamic> event) {
     final competitions = event['competitions'] as List?;
@@ -80,51 +118,201 @@ class ApiService {
     if (eventStatus != null) blocks.add(eventStatus);
 
     for (final statusBlock in blocks) {
+      // Check type block first (most reliable)
       final typeBlock = statusBlock['type'] as Map<String, dynamic>?;
       if (typeBlock != null) {
         final state = typeBlock['state']?.toString().toLowerCase() ?? '';
-        if (state == 'post') return 'STATUS_FINAL';
-        if (state == 'in') return 'STATUS_LIVE';
-        if (state == 'pre') return 'STATUS_SCHEDULED';
-
+        final name = typeBlock['name']?.toString().toLowerCase() ?? '';
+        final description = typeBlock['description']?.toString().toLowerCase() ?? '';
         final completed = typeBlock['completed'];
-        if (completed == true) return 'STATUS_FINAL';
 
-        final description = typeBlock['description']?.toString() ?? '';
-        if (description.isNotEmpty) {
-          final norm = _normalizeStatus(description);
-          if (norm != 'STATUS_SCHEDULED') return norm;
+        // Check for LIVE states - expanded to catch all variations
+        if (state == 'in' ||
+            state == 'live' ||
+            state == 'inprogress' ||
+            state == 'in progress' ||
+            state == 'active' ||
+            state == 'started' ||
+            state == 'progress' ||
+            name.contains('live') ||
+            name.contains('in progress') ||
+            name.contains('active') ||
+            description.contains('live') ||
+            description.contains('in progress') ||
+            description.contains('halftime') ||
+            description.contains('half time') ||
+            description.contains('extra time') ||
+            description.contains('overtime') ||
+            description.contains('penalty') ||
+            description.contains('shootout')) {
+          return 'STATUS_LIVE';
         }
-        final typeName = typeBlock['name']?.toString() ?? '';
-        if (typeName.isNotEmpty) {
-          final norm = _normalizeStatus(typeName);
-          if (norm != 'STATUS_SCHEDULED') return norm;
+
+        // Check for FINAL states
+        if (state == 'post' ||
+            state == 'finished' ||
+            state == 'completed' ||
+            state == 'final' ||
+            name.contains('final') ||
+            name.contains('full time') ||
+            name.contains('finished') ||
+            name.contains('completed') ||
+            description.contains('final') ||
+            description.contains('full time') ||
+            description.contains('finished') ||
+            completed == true) {
+          return 'STATUS_FINAL';
+        }
+
+        // Check for SCHEDULED/UPCOMING states
+        if (state == 'pre' ||
+            state == 'scheduled' ||
+            state == 'upcoming' ||
+            state == 'pending' ||
+            name.contains('scheduled') ||
+            name.contains('upcoming') ||
+            name.contains('pre') ||
+            description.contains('scheduled') ||
+            description.contains('upcoming')) {
+          return 'STATUS_SCHEDULED';
         }
       }
 
-      final directState = statusBlock['state']?.toString().toLowerCase() ?? '';
-      if (directState == 'post') return 'STATUS_FINAL';
-      if (directState == 'in') return 'STATUS_LIVE';
-      if (directState == 'pre') return 'STATUS_SCHEDULED';
-
-      final directCompleted = statusBlock['completed'];
-      if (directCompleted == true) return 'STATUS_FINAL';
-
-      final directDesc = statusBlock['description']?.toString() ?? '';
-      if (directDesc.isNotEmpty) return _normalizeStatus(directDesc);
-
+      // Check direct status fields
+      final state = statusBlock['state']?.toString().toLowerCase() ?? '';
+      final description = statusBlock['description']?.toString().toLowerCase() ?? '';
       final displayClock = statusBlock['displayClock']?.toString() ?? '';
       final periodRaw = statusBlock['period'];
-      if (displayClock == '0:00' && periodRaw != null) {
+      final completed = statusBlock['completed'];
+
+      // Check for LIVE states from direct fields
+      if (state == 'in' ||
+          state == 'live' ||
+          state == 'inprogress' ||
+          state == 'in progress' ||
+          state == 'active' ||
+          state == 'started' ||
+          state == 'progress' ||
+          description.contains('live') ||
+          description.contains('in progress') ||
+          description.contains('halftime') ||
+          description.contains('half time') ||
+          description.contains('extra time') ||
+          description.contains('overtime') ||
+          description.contains('penalty')) {
+        return 'STATUS_LIVE';
+      }
+
+      // Check for FINAL states from direct fields
+      if (state == 'post' ||
+          state == 'finished' ||
+          state == 'completed' ||
+          state == 'final' ||
+          description.contains('final') ||
+          description.contains('full time') ||
+          description.contains('finished') ||
+          completed == true) {
+        return 'STATUS_FINAL';
+      }
+
+      // Check for SCHEDULED states from direct fields
+      if (state == 'pre' ||
+          state == 'scheduled' ||
+          state == 'upcoming' ||
+          state == 'pending' ||
+          description.contains('scheduled') ||
+          description.contains('upcoming')) {
+        return 'STATUS_SCHEDULED';
+      }
+
+      // If there's a displayClock and period, determine status from them
+      if (displayClock.isNotEmpty && periodRaw != null) {
         final periodVal = int.tryParse(periodRaw.toString()) ?? 0;
-        if (periodVal >= 2) return 'STATUS_FINAL';
+
+        // If we have a clock and period >= 1, it's likely live
+        if (periodVal >= 1 && periodVal <= 3) {
+          // Check if it's halftime (clock often "0:00" at HT)
+          if (displayClock == '0:00' && periodVal >= 2) {
+            // Could be HT or FT - check if there's more info
+            if (description.contains('halftime') || description.contains('half time')) {
+              return 'STATUS_LIVE';
+            }
+            // If period is 2 and clock is 0:00, it's likely halftime
+            if (periodVal == 2 && displayClock == '0:00') {
+              return 'STATUS_LIVE';
+            }
+            // If period is 3+ and clock is 0:00, it might be FT
+            if (periodVal >= 3 && displayClock == '0:00') {
+              return 'STATUS_FINAL';
+            }
+          }
+          // Any other clock with period >= 1 is live
+          return 'STATUS_LIVE';
+        }
       }
     }
 
+    // Fallback: Check if the event is currently happening based on date
     try {
       final eventDate = DateTime.parse(event['date']?.toString() ?? '');
-      final cutoff = eventDate.add(const Duration(hours: 3));
-      if (DateTime.now().isAfter(cutoff)) return 'STATUS_FINAL';
+      final now = DateTime.now();
+      final eventEnd = eventDate.add(const Duration(hours: 2, minutes: 30));
+
+      // If current time is between event start and 2.5 hours after, it's likely live
+      if (now.isAfter(eventDate) && now.isBefore(eventEnd)) {
+        // Check if there's any score data - if so, it's definitely live
+        final competitions = event['competitions'] as List?;
+        if (competitions != null && competitions.isNotEmpty) {
+          final comp = competitions.first as Map<String, dynamic>;
+          final competitors = comp['competitors'] as List?;
+          if (competitors != null && competitors.isNotEmpty) {
+            for (final c in competitors) {
+              if (c is Map && c['score'] != null && c['score'] != '0') {
+                return 'STATUS_LIVE';
+              }
+            }
+          }
+        }
+        // If we have a displayClock, it's live
+        final status = event['status'] as Map<String, dynamic>?;
+        if (status != null && status['displayClock']?.toString().isNotEmpty == true) {
+          return 'STATUS_LIVE';
+        }
+      }
+
+      // If event date is more than 3 hours ago, it's final
+      if (now.isAfter(eventDate.add(const Duration(hours: 3)))) {
+        return 'STATUS_FINAL';
+      }
+    } catch (_) {}
+
+    // If the event is in the past but not marked as final, try to determine from score
+    try {
+      final eventDate = DateTime.parse(event['date']?.toString() ?? '');
+      final now = DateTime.now();
+      if (now.isAfter(eventDate)) {
+        final competitions = event['competitions'] as List?;
+        if (competitions != null && competitions.isNotEmpty) {
+          final comp = competitions.first as Map<String, dynamic>;
+          final competitors = comp['competitors'] as List?;
+          if (competitors != null && competitors.isNotEmpty) {
+            bool hasScore = false;
+            for (final c in competitors) {
+              if (c is Map && c['score'] != null) {
+                final score = c['score'].toString();
+                if (score.isNotEmpty && score != '0') {
+                  hasScore = true;
+                  break;
+                }
+              }
+            }
+            // If it's past and has scores, it's final
+            if (hasScore) {
+              return 'STATUS_FINAL';
+            }
+          }
+        }
+      }
     } catch (_) {}
 
     return 'STATUS_SCHEDULED';
@@ -300,8 +488,21 @@ class ApiService {
           capacity: venueData?['capacity'] ?? 0,
         );
 
-        final rawStatus = event['status']?['type']?['description']?.toString() ?? 'Scheduled';
-        final status = _normalizeStatus(rawStatus);
+        // Use the improved status detection
+        final status = _normalizeEventStatus(event);
+
+        // Additional check: if status is SCHEDULED but the event has a clock and score, it's actually LIVE
+        if (status == 'STATUS_SCHEDULED') {
+          final clock = event['status']?['displayClock']?.toString() ?? '';
+          final hasScore = competitors.any((c) {
+            final score = c['score']?.toString() ?? '';
+            return score.isNotEmpty && score != '0';
+          });
+          if (clock.isNotEmpty && clock != '0:00' && hasScore) {
+            // This is actually a live match
+            print('[API] Status correction: SCHEDULED -> LIVE for event ${event['id']} (clock: $clock)');
+          }
+        }
 
         final matchNote = _extractMatchNote(competition, leagueName, event);
 
@@ -368,21 +569,16 @@ class ApiService {
   }
 
   /// Resolves a team logo URL from standings entry data.
-  /// ESPN's /standings endpoint usually omits the `logo` field on team objects,
-  /// so we fall back to the standard ESPN CDN pattern using the team ID.
   String _resolveTeamLogo(Map<String, dynamic> teamData) {
-    // 1. Direct logo string (some endpoints do provide it)
     final direct = teamData['logo']?.toString() ?? '';
     if (direct.isNotEmpty && direct.startsWith('http')) return direct;
 
-    // 2. logos[] array (core API format)
     final logos = teamData['logos'] as List?;
     if (logos != null && logos.isNotEmpty) {
       final href = logos.first['href']?.toString() ?? '';
       if (href.isNotEmpty && href.startsWith('http')) return href;
     }
 
-    // 3. Construct from team ID — always works for club teams
     final id = teamData['id']?.toString() ?? '';
     if (id.isNotEmpty) {
       return 'https://a.espncdn.com/i/teamlogos/soccer/500/$id.png';
@@ -908,10 +1104,6 @@ class ApiService {
     return [];
   }
 
-  // Add this method to ApiService class in api_service.dart
-
-  // Replace the existing getStandings method with this:
-
   Future<List<Standing>> getStandings(String leagueCode, {String? season}) async {
     final seasonQuery = (season != null && season.isNotEmpty) ? '?season=$season' : '';
     final url = '${AppConstants.standingsUrl}/$leagueCode/standings$seasonQuery';
@@ -933,13 +1125,11 @@ class ApiService {
 
     print('[Standings] Parsing standings for league: $leagueCode');
 
-    // Helper function to extract entries recursively
     List<dynamic> extractEntries(dynamic node) {
       final List<dynamic> entries = [];
 
       if (node == null) return entries;
 
-      // If this node has direct standings entries
       if (node['standings'] != null) {
         final standingsData = node['standings'];
         if (standingsData['entries'] != null) {
@@ -949,7 +1139,6 @@ class ApiService {
         }
       }
 
-      // If this node has children, recurse
       if (node['children'] != null && (node['children'] as List).isNotEmpty) {
         for (final child in node['children'] as List) {
           entries.addAll(extractEntries(child));
@@ -959,7 +1148,6 @@ class ApiService {
       return entries;
     }
 
-    // Extract all entries
     final List<dynamic> allEntries = extractEntries(data);
     print('[Standings] Found ${allEntries.length} entries');
 
@@ -971,7 +1159,6 @@ class ApiService {
         final teamData = entry['team'] as Map<String, dynamic>? ?? {};
         final statsList = entry['stats'] as List? ?? [];
 
-        // Parse all stats with ESPN's actual field names
         final Map<String, String> statsMap = {};
         int? points, goalsFor, goalsAgainst, gamesPlayed, wins, draws, losses;
         String? form;
@@ -981,11 +1168,8 @@ class ApiService {
           final abbr  = stat['abbreviation']?.toString() ?? '';
           final displayValue = stat['displayValue']?.toString() ?? '0';
           statsMap[name] = displayValue;
-          if (abbr.isNotEmpty) statsMap[abbr] = displayValue; // also index by abbreviation
+          if (abbr.isNotEmpty) statsMap[abbr] = displayValue;
 
-          // Map ESPN stat names to our fields.
-          // ESPN soccer standings use 'pointsFor'/'pointsAgainst' for goals (not 'goalsFor'!)
-          // and sometimes 'pointDifferential' for GD. Cover all known variants.
           final key = name.toLowerCase().replaceAll(RegExp(r'[\s_\-]'), '');
           final abbrKey = abbr.toLowerCase();
           switch (key) {
@@ -993,34 +1177,27 @@ class ApiService {
             case 'pts':
               points = int.tryParse(displayValue);
               break;
-          // ── Goals For ─────────────────────────────────────────────────────
-            case 'pointsfor':      // ← ESPN's actual field name for soccer GF
+            case 'pointsfor':
             case 'goalsfor':
             case 'goalsscored':
             case 'gf':
               goalsFor = int.tryParse(displayValue);
               break;
-          // ── Goals Against ─────────────────────────────────────────────────
-            case 'pointsagainst':  // ← ESPN's actual field name for soccer GA
+            case 'pointsagainst':
             case 'goalsagainst':
             case 'goalsconceded':
             case 'ga':
               goalsAgainst = int.tryParse(displayValue);
               break;
-          // ── Goal Difference ───────────────────────────────────────────────
             case 'pointdifferential':
             case 'pointsdiff':
             case 'goaldifference':
             case 'goaldiff':
             case 'gd':
             case 'diff':
-            // Use directly when available instead of computing
               final gdVal = int.tryParse(displayValue);
-              if (gdVal != null && goalsFor == null && goalsAgainst == null) {
-                // Store for later — can't assign directly here; handled below
-              }
+              if (gdVal != null && goalsFor == null && goalsAgainst == null) {}
               break;
-          // ── Games Played ──────────────────────────────────────────────────
             case 'gamesplayed':
             case 'matchesplayed':
             case 'played':
@@ -1048,7 +1225,6 @@ class ApiService {
               form = displayValue;
               break;
           }
-          // Abbreviation fallback for when name doesn't match
           if (goalsFor == null && (abbrKey == 'gf' || abbrKey == 'pf')) {
             goalsFor = int.tryParse(displayValue);
           }
@@ -1064,10 +1240,8 @@ class ApiService {
           if (points == null && (abbrKey == 'pts' || abbrKey == 'pt')) points = int.tryParse(displayValue);
         }
 
-        // Calculate goal difference
         final gd = (goalsFor ?? 0) - (goalsAgainst ?? 0);
 
-        // Get group/conference name
         final groupName = entry['group']?['name']?.toString() ??
             entry['conference']?.toString() ??
             entry['division']?.toString() ?? '';
@@ -1112,7 +1286,6 @@ class ApiService {
       }
     }
 
-    // Sort by points (descending), then goal difference, then goals for
     standings.sort((a, b) {
       final aPoints = a.points ?? 0;
       final bPoints = b.points ?? 0;
@@ -1127,7 +1300,6 @@ class ApiService {
       return bGF.compareTo(aGF);
     });
 
-    // Update ranks after sorting
     for (int i = 0; i < standings.length; i++) {
       final s = standings[i];
       standings[i] = Standing(
@@ -1157,603 +1329,152 @@ class ApiService {
     return standings;
   }
 
-  // ── League Stat Leaders ───────────────────────────────────────────────────────
-  //
-  // Strategy (tried in order):
-  //
-  // 1. site.web.api.espn.com /apis/v2/sports/soccer/leagues/{code}/seasons/{year}/types/{type}/leaders
-  //    — This is the endpoint ESPN's own scorers page uses. Returns inline athlete
-  //    and team objects (no $ref resolution needed). Tried with type=2 (regular
-  //    season), then type=3 (tournament), then without the types segment.
-  //
-  // 2. Aggregate from the last 90 days of daily scoreboard calls.
-  //    ESPN scoreboard only accepts single dates (date RANGE params → 400).
-  //    We fetch daily scoreboards for the past 90 days (batched, parallel)
-  //    and tally goals/assists/cards from each game's details[] array —
-  //    the same source that powers _parseGoalScorers() for live game cards.
-  //    This always works for active seasons and the ongoing World Cup.
-  //
-  static const String _coreApiBase = 'https://sports.core.api.espn.com/v2/sports/soccer/leagues';
-
   Future<LeagueLeaders> getLeagueLeaders(String leagueCode, {String? season, int limit = 5}) async {
-    // ── Strategy 1: site.web.api ESPN leaders endpoint ────────────────────────
-    // This is what espn.com/soccer/scorers uses. Returns inline data, no $refs.
-    final result1 = await _tryWebApiLeaders(leagueCode, season: season, limit: limit);
-    if (!result1.isEmpty) {
-      print('[Leaders] ✅ Got leaders from web API for $leagueCode');
-      return result1;
-    }
-
-    // ── Strategy 2: Aggregate from season-correct daily scoreboards ─────────
-    // ESPN scoreboard only accepts single dates (ranges → 400).
-    // We fetch daily scoreboards for the correct season window and tally stats.
-    print('[Leaders] Web API returned empty, falling back to scoreboard aggregation');
-    final result2 = await _aggregateLeadersFromRecentGames(leagueCode, season: season, limit: limit);
-    if (!result2.isEmpty) {
-      print('[Leaders] ✅ Got leaders from scoreboard aggregation for $leagueCode');
-      return result2;
-    }
-
-    print('[Leaders] No leaders data available for $leagueCode');
-    return LeagueLeaders.empty;
-  }
-
-  /// Strategy 1: ESPN's web API leaders endpoint (what espn.com scorers page uses).
-  /// Tries multiple URL patterns: with types/2, types/3, and without types segment.
-  Future<LeagueLeaders> _tryWebApiLeaders(String leagueCode, {String? season, int limit = 5}) async {
-    final int seasonYear = int.tryParse(season ?? '') ?? DateTime.now().year;
-    // For World Cup / tournaments use seasontype 3; domestic leagues use 2; try both
-    final bool isTournament = AppConstants.isNationalTeamLeague(leagueCode);
-    final primaryType = isTournament ? 3 : 2;
-    final fallbackType = isTournament ? 2 : 3;
-
-    final urlPatterns = [
-      'https://site.web.api.espn.com/apis/v2/sports/soccer/leagues/$leagueCode/seasons/$seasonYear/types/$primaryType/leaders?limit=$limit&lang=en&region=us',
-      'https://site.web.api.espn.com/apis/v2/sports/soccer/leagues/$leagueCode/seasons/$seasonYear/types/$fallbackType/leaders?limit=$limit&lang=en&region=us',
-      'https://site.web.api.espn.com/apis/v2/sports/soccer/leagues/$leagueCode/seasons/$seasonYear/leaders?limit=$limit&lang=en&region=us',
-    ];
-
-    for (final url in urlPatterns) {
-      try {
-        print('[Leaders] Trying: $url');
-        final res = await _client
-            .get(Uri.parse(url), headers: _headers)
-            .timeout(const Duration(seconds: 10));
-
-        if (res.statusCode == 200) {
-          final data = json.decode(res.body) as Map<String, dynamic>;
-          final leaders = _parseWebApiLeaders(data, limit);
-          if (!leaders.isEmpty) return leaders;
-        } else {
-          print('[Leaders] HTTP ${res.statusCode} for $url');
-        }
-      } catch (e) {
-        print('[Leaders] Error trying $url: $e');
-      }
-    }
-    return LeagueLeaders.empty;
-  }
-
-  /// Parses the site.web.api leaders response.
-  /// Response shape: { categories: [ { name, displayName, leaders: [ { athlete:{}, team:{}, value } ] } ] }
-  LeagueLeaders _parseWebApiLeaders(Map<String, dynamic> data, int limit) {
-    final categories = data['categories'] as List? ?? [];
-    if (categories.isEmpty) return LeagueLeaders.empty;
-
-    List<LeaderEntry> parseCategory(List<String> namePatterns) {
-      for (final cat in categories) {
-        final catName = (cat['name'] ?? cat['displayName'] ?? cat['abbreviation'] ?? '')
-            .toString().toLowerCase();
-        if (!namePatterns.any((p) => catName.contains(p))) continue;
-
-        final rawLeaders = cat['leaders'] as List? ?? [];
-        final entries = <LeaderEntry>[];
-
-        for (final leader in rawLeaders.take(limit)) {
-          try {
-            // site.web.api returns inline athlete/team objects (no $ref)
-            final athlete = leader['athlete'] as Map<String, dynamic>? ?? {};
-            final team    = leader['team']    as Map<String, dynamic>? ?? {};
-            final value   = leader['value'] ?? leader['displayValue'] ?? 0;
-
-            // Athlete may be nested under 'athlete' key or be the leader itself
-            final athleteId   = athlete['id']?.toString() ?? '';
-            final athleteName = athlete['displayName']?.toString()
-                ?? athlete['fullName']?.toString() ?? '';
-            if (athleteName.isEmpty && athleteId.isEmpty) continue;
-
-            // Headshot: inline href, or CDN pattern
-            String headshot = '';
-            final hs = athlete['headshot'];
-            if (hs is Map)        headshot = hs['href']?.toString() ?? '';
-            else if (hs is String) headshot = hs;
-            if (headshot.isEmpty && athleteId.isNotEmpty) {
-              headshot = 'https://a.espncdn.com/i/headshots/soccer/players/full/$athleteId.png';
-            }
-
-            // Team logo
-            final teamId   = team['id']?.toString() ?? '';
-            String teamLogo = '';
-            final logos = team['logos'] as List?;
-            if (logos != null && logos.isNotEmpty) {
-              teamLogo = logos.first['href']?.toString() ?? '';
-            }
-            if (teamLogo.isEmpty && team['logo'] != null) {
-              teamLogo = team['logo'].toString();
-            }
-            if (teamLogo.isEmpty && teamId.isNotEmpty) {
-              teamLogo = 'https://a.espncdn.com/i/teamlogos/soccer/500/$teamId.png';
-            }
-
-            entries.add(LeaderEntry(
-              athleteId: athleteId,
-              name: athleteName,
-              headshot: headshot,
-              teamId: teamId,
-              teamAbbreviation: team['abbreviation']?.toString() ?? '',
-              teamLogo: teamLogo,
-              value: value is num ? value : num.tryParse(value.toString()) ?? 0,
-            ));
-          } catch (e) {
-            print('[Leaders] Error parsing leader entry: $e');
-          }
-        }
-
-        if (entries.isNotEmpty) return entries;
-      }
-      return [];
-    }
-
-    final scorers = parseCategory(['goals', 'scoring', 'goal']);
-    final assists = parseCategory(['assist']);
-    final yellow  = parseCategory(['yellow']);
-    final red     = parseCategory(['red']);
-
-    if (scorers.isEmpty && assists.isEmpty && yellow.isEmpty && red.isEmpty) {
+    final leagueId = AppConstants.apiFootballLeagueIds[leagueCode];
+    if (leagueId == null) {
+      print('[Leaders] No API-Football league mapping for $leagueCode — skipping');
       return LeagueLeaders.empty;
     }
 
-    return LeagueLeaders(
-      topScorers: scorers,
-      topAssists: assists,
-      mostYellowCards: yellow,
-      mostRedCards: red,
-    );
-  }
-
-  /// Strategy 2: Aggregate stats from season-correct daily scoreboards.
-  /// ESPN only supports single-date scoreboard calls (date ranges → 400).
-  /// We sample every 7th day across the season window (≈52 calls for a full year)
-  /// rather than fetching all 365 days, which balances coverage vs latency.
-  Future<LeagueLeaders> _aggregateLeadersFromRecentGames(
-      String leagueCode, {String? season, int limit = 5}) async {
-
-    // Compute the correct season date window from the season param.
-    // ESPN season convention: season='2025' = the 2024-25 season.
-    //   Domestic leagues: Aug 1 of (year-1) → Jun 30 of (year)
-    //   World Cup / international tournaments: Jan 1 of year → Dec 31 of year
-    final now = DateTime.now();
-    final int seasonYear = int.tryParse(season ?? '') ?? now.year;
-    final bool isTournament = AppConstants.isNationalTeamLeague(leagueCode);
-
-    DateTime rangeStart, rangeEnd;
-    if (isTournament) {
-      // Tournament: single calendar year
-      rangeStart = DateTime(seasonYear, 1, 1);
-      rangeEnd   = DateTime(seasonYear, 12, 31);
-    } else {
-      // Domestic league: Aug of previous year → Jun of season year
-      rangeStart = DateTime(seasonYear - 1, 8, 1);
-      rangeEnd   = DateTime(seasonYear, 6, 30);
-    }
-
-    // Don't fetch into the future
-    if (rangeEnd.isAfter(now)) rangeEnd = now;
-    // If rangeStart is in the future (e.g. next season selected), abort
-    if (rangeStart.isAfter(now)) {
-      print('[Leaders] Season $seasonYear is in the future, skipping aggregation');
+    final apiKey = AppConstants.apiFootballKey;
+    if (apiKey.isEmpty || apiKey == 'YOUR_API_FOOTBALL_KEY_HERE') {
+      print('[Leaders] No API-Football key configured — skipping leaders fetch');
       return LeagueLeaders.empty;
     }
 
-    // Sample every 7 days across the range (≈52 samples for a full season)
-    final dates = <String>[];
-    for (var d = rangeStart; d.isBefore(rangeEnd) || d.isAtSameMomentAs(rangeEnd);
-    d = d.add(const Duration(days: 7))) {
-      dates.add(_fmt(d));
-    }
-    // Always include the last day of range to catch end-of-season games
-    final lastFmt = _fmt(rangeEnd);
-    if (!dates.contains(lastFmt)) dates.add(lastFmt);
+    final seasonYear = AppConstants.apiFootballSeasonFor(leagueCode, season: season);
 
-    print('[Leaders] Fetching ${dates.length} weekly scoreboard samples for $leagueCode season $seasonYear '
-        '(${_fmt(rangeStart)} → ${_fmt(rangeEnd)})');
+    print('[Leaders] Fetching leaders for $leagueCode (apiFootball league=$leagueId, season=$seasonYear)');
 
-    final Map<String, Map<String, dynamic>> playerStats = {};
-    const batchSize = 10;
+    final results = await Future.wait([
+      _fetchApiFootballLeaders('topscorers', leagueId, seasonYear, limit),
+      _fetchApiFootballLeaders('topassists', leagueId, seasonYear, limit),
+      _fetchApiFootballLeaders('topyellowcards', leagueId, seasonYear, limit),
+      _fetchApiFootballLeaders('topredcards', leagueId, seasonYear, limit),
+    ]);
 
-    for (int i = 0; i < dates.length; i += batchSize) {
-      final batch = dates.sublist(i, (i + batchSize).clamp(0, dates.length));
-      final futures = batch.map((dateStr) async {
-        final url = '${AppConstants.baseUrl}/$leagueCode/scoreboard?dates=$dateStr';
-        try {
-          final res = await _client
-              .get(Uri.parse(url), headers: _headers)
-              .timeout(const Duration(seconds: 8));
-          if (res.statusCode != 200) return;
-          final data = json.decode(res.body) as Map<String, dynamic>;
-          _tallyStatsFromScoreboard(data, playerStats);
-        } catch (_) {}
-      }).toList();
-      await Future.wait(futures);
-    }
+    final topScorers     = results[0];
+    final topAssists     = results[1];
+    final mostYellowCards = results[2];
+    final mostRedCards    = results[3];
 
-    if (playerStats.isEmpty) {
-      print('[Leaders] No stats found in scoreboard aggregation for $leagueCode $seasonYear');
+    if (topScorers.isEmpty && topAssists.isEmpty &&
+        mostYellowCards.isEmpty && mostRedCards.isEmpty) {
+      print('[Leaders] No leaders data returned for $leagueCode $seasonYear');
       return LeagueLeaders.empty;
     }
 
-    print('[Leaders] Aggregated stats for ${playerStats.length} players from $leagueCode $seasonYear');
-
-    LeaderEntry _toEntry(MapEntry<String, Map<String, dynamic>> e, String statKey) {
-      final s = e.value;
-      String headshot = s['headshot'] as String? ?? '';
-      if (headshot.isEmpty) {
-        headshot = 'https://a.espncdn.com/i/headshots/soccer/players/full/${e.key}.png';
-      }
-      return LeaderEntry(
-        athleteId: e.key,
-        name: s['name'] as String? ?? '',
-        headshot: headshot,
-        teamId: s['teamId'] as String? ?? '',
-        teamAbbreviation: s['teamAbbr'] as String? ?? '',
-        teamLogo: s['teamLogo'] as String? ?? '',
-        value: s[statKey] as int,
-      );
-    }
-
-    List<LeaderEntry> buildList(String statKey) {
-      return (playerStats.entries.toList()
-        ..sort((a, b) => (b.value[statKey] as int).compareTo(a.value[statKey] as int)))
-          .where((e) => (e.value[statKey] as int) > 0)
-          .take(limit)
-          .map((e) => _toEntry(e, statKey))
-          .toList();
-    }
-
-    final topScorers = buildList('goals');
-    final topAssists = buildList('assists');
-    final mostYellow = buildList('yellow');
-    final mostRed    = buildList('red');
-
-    print('[Leaders] Aggregation results → scorers:${topScorers.length} '
-        'assists:${topAssists.length} yellow:${mostYellow.length} red:${mostRed.length}');
+    print('[Leaders] ✅ scorers:${topScorers.length} assists:${topAssists.length} '
+        'yellow:${mostYellowCards.length} red:${mostRedCards.length}');
 
     return LeagueLeaders(
       topScorers: topScorers,
       topAssists: topAssists,
-      mostYellowCards: mostYellow,
-      mostRedCards: mostRed,
+      mostYellowCards: mostYellowCards,
+      mostRedCards: mostRedCards,
     );
   }
 
-  /// Tallies goals/assists/yellow/red from a scoreboard response's details[] arrays.
-  void _tallyStatsFromScoreboard(
-      Map<String, dynamic> data, Map<String, Map<String, dynamic>> playerStats) {
-    final events = data['events'] as List? ?? [];
+  Future<List<LeaderEntry>> _fetchApiFootballLeaders(
+      String statKey, int leagueId, int season, int limit) async {
+    final url = '${AppConstants.apiFootballBaseUrl}/players/$statKey'
+        '?league=$leagueId&season=$season';
 
-    for (final event in events) {
-      // Only count completed matches
-      final state     = event['status']?['type']?['state']?.toString() ?? '';
-      final completed = event['status']?['type']?['completed'] == true;
-      if (state != 'post' && !completed) continue;
+    try {
+      final res = await _client.get(
+        Uri.parse(url),
+        headers: {'x-apisports-key': AppConstants.apiFootballKey},
+      ).timeout(const Duration(seconds: 8));
 
-      final competition =
-      (event['competitions'] as List?)?.first as Map<String, dynamic>?;
-      if (competition == null) continue;
-
-      // Build teamId → {abbr, logo} for this game
-      final Map<String, Map<String, String>> teamInfo = {};
-      for (final c in (competition['competitors'] as List? ?? [])) {
-        final t   = c['team'] as Map<String, dynamic>? ?? {};
-        final tid = t['id']?.toString() ?? '';
-        if (tid.isEmpty) continue;
-        String logo = t['logo']?.toString() ?? '';
-        if (logo.isEmpty) {
-          logo = 'https://a.espncdn.com/i/teamlogos/soccer/500/$tid.png';
-        }
-        teamInfo[tid] = {'abbr': t['abbreviation']?.toString() ?? '', 'logo': logo};
+      if (res.statusCode != 200) {
+        print('[Leaders] $statKey HTTP ${res.statusCode} for league=$leagueId season=$season: ${res.body}');
+        return [];
       }
 
-      final details = competition['details'] as List? ?? [];
-      for (final detail in details) {
-        final typeStr = (detail['type']?['text'] ?? detail['type']?['name'] ?? '')
-            .toString().toLowerCase();
-        final athletes = detail['athletesInvolved'] as List? ?? [];
-        if (athletes.isEmpty) continue;
+      final data = json.decode(res.body) as Map<String, dynamic>;
 
-        final teamId = detail['team']?['id']?.toString() ?? '';
-        final tInfo  = teamInfo[teamId] ?? {};
-
-        void credit(Map<String, dynamic> athlete, String key) {
-          final pid = athlete['id']?.toString() ?? '';
-          if (pid.isEmpty) return;
-          final stats = playerStats.putIfAbsent(pid, () => _emptyPlayerStat(athlete, teamId, tInfo));
-          stats[key] = (stats[key] as int) + 1;
-          // Update team info with richer data when available
-          if (teamId.isNotEmpty) stats['teamId'] = teamId;
-          if ((tInfo['abbr'] ?? '').isNotEmpty) stats['teamAbbr'] = tInfo['abbr'];
-          if ((tInfo['logo'] ?? '').isNotEmpty) stats['teamLogo'] = tInfo['logo'];
-        }
-
-        if (typeStr.contains('goal') && !typeStr.contains('penalty miss')) {
-          credit(athletes.first as Map<String, dynamic>, 'goals');
-          // Assist: second athlete, only for non-own-goals
-          if (!typeStr.contains('own goal') && athletes.length > 1) {
-            credit(athletes[1] as Map<String, dynamic>, 'assists');
-          }
-        } else if (typeStr.contains('yellow card') &&
-            !typeStr.contains('second yellow') && !typeStr.contains('red')) {
-          credit(athletes.first as Map<String, dynamic>, 'yellow');
-        } else if (typeStr.contains('red card') || typeStr.contains('second yellow')) {
-          credit(athletes.first as Map<String, dynamic>, 'red');
-        }
+      final errors = data['errors'];
+      if (errors is Map && errors.isNotEmpty) {
+        // Common causes when this fires for a valid league/season combo:
+        // the free API-Football plan doesn't include that season yet, or
+        // the daily 100-request quota has been hit. Both surface here as
+        // a non-empty `errors` map rather than an HTTP error.
+        print('[Leaders] $statKey API error for league=$leagueId season=$season: $errors');
+        return [];
+      } else if (errors is List && errors.isNotEmpty) {
+        print('[Leaders] $statKey API error for league=$leagueId season=$season: $errors');
+        return [];
       }
+
+      final rawList = data['response'] as List? ?? [];
+      if (rawList.isEmpty) {
+        // No `errors`, but also no data: usually means this competition/
+        // season has no recorded stats yet (e.g. group stage hasn't
+        // produced qualifying data) or isn't covered on the current plan.
+        print('[Leaders] $statKey empty response for league=$leagueId season=$season '
+            '(results=${data['results']})');
+      }
+      return rawList
+          .take(limit)
+          .map((entry) => _parseApiFootballLeader(entry as Map<String, dynamic>, statKey))
+          .whereType<LeaderEntry>()
+          .toList();
+    } catch (e) {
+      print('[Leaders] Error fetching $statKey: $e');
+      return [];
     }
   }
 
-  /// Creates a zeroed-out stat accumulator for a player.
-  Map<String, dynamic> _emptyPlayerStat(
-      Map<String, dynamic> athlete, String teamId, Map<String, String> tInfo) {
-    String headshot = '';
-    final rawHs = athlete['headshot'];
-    if (rawHs is String && rawHs.isNotEmpty) headshot = rawHs;
-    else if (rawHs is Map) headshot = rawHs['href']?.toString() ?? rawHs['full']?.toString() ?? '';
+  LeaderEntry? _parseApiFootballLeader(Map<String, dynamic> entry, String statKey) {
+    try {
+      final player = entry['player'] as Map<String, dynamic>? ?? {};
+      final statsList = entry['statistics'] as List? ?? [];
+      if (statsList.isEmpty) return null;
+      final stats = statsList.first as Map<String, dynamic>;
 
-    return {
-      'name': athlete['displayName']?.toString() ?? athlete['fullName']?.toString() ?? '',
-      'headshot': headshot,
-      'teamId': teamId,
-      'teamAbbr': tInfo['abbr'] ?? '',
-      'teamLogo': tInfo['logo'] ?? '',
-      'goals': 0,
-      'assists': 0,
-      'yellow': 0,
-      'red': 0,
-    };
-  }
+      final team = stats['team'] as Map<String, dynamic>? ?? {};
 
-  List<Standing> _parseSoccerStandingsImproved(Map<String, dynamic> data, String leagueCode) {
+      final athleteId = player['id']?.toString() ?? '';
+      final name = player['name']?.toString() ?? '';
+      if (name.isEmpty && athleteId.isEmpty) return null;
 
-    final List<Standing> standings = [];
-    int rank = 1;
+      final headshot = player['photo']?.toString() ?? '';
+      final teamId = team['id']?.toString() ?? '';
+      final teamLogo = team['logo']?.toString() ?? '';
+      final teamName = team['name']?.toString() ?? '';
+      final teamAbbr = teamName.length >= 3
+          ? teamName.substring(0, 3).toUpperCase()
+          : teamName.toUpperCase();
 
-    print('[Standings] Parsing standings for league: $leagueCode');
-
-    // Handle different response structures
-    List<dynamic> entries = [];
-
-    // Try to find the standings entries
-    if (data['children'] != null && (data['children'] as List).isNotEmpty) {
-      final children = data['children'] as List;
-      for (final child in children) {
-        if (child['standings'] != null) {
-          final standingsData = child['standings'];
-          if (standingsData['entries'] != null) {
-            entries.addAll(standingsData['entries'] as List);
-          } else if (standingsData is List) {
-            entries.addAll(standingsData);
-          }
-        }
-        if (child['children'] != null) {
-          for (final subChild in child['children'] as List) {
-            if (subChild['standings'] != null) {
-              final standingsData = subChild['standings'];
-              if (standingsData['entries'] != null) {
-                entries.addAll(standingsData['entries'] as List);
-              } else if (standingsData is List) {
-                entries.addAll(standingsData);
-              }
-            }
-          }
-        }
+      num value = 0;
+      switch (statKey) {
+        case 'topscorers':
+          value = (stats['goals']?['total'] as num?) ?? 0;
+          break;
+        case 'topassists':
+          value = (stats['goals']?['assists'] as num?) ?? 0;
+          break;
+        case 'topyellowcards':
+          value = (stats['cards']?['yellow'] as num?) ?? 0;
+          break;
+        case 'topredcards':
+          value = (stats['cards']?['red'] as num?) ?? 0;
+          break;
       }
-    } else if (data['standings'] != null) {
-      final standingsData = data['standings'];
-      if (standingsData['entries'] != null) {
-        entries = standingsData['entries'] as List;
-      } else if (standingsData is List) {
-        entries = standingsData;
-      }
-    }
 
-    print('[Standings] Found ${entries.length} entries');
-
-    for (final entry in entries) {
-      try {
-        final teamData = entry['team'] as Map<String, dynamic>? ?? {};
-        final statsList = entry['stats'] as List? ?? [];
-
-        // Parse all stats
-        final Map<String, String> statsMap = {};
-        int? points, goalsFor, goalsAgainst, gamesPlayed;
-        String? form;
-
-        for (final stat in statsList) {
-          final name = stat['name']?.toString() ?? '';
-          final abbr = stat['abbreviation']?.toString() ?? '';
-          final displayValue = stat['displayValue']?.toString() ?? '0';
-          statsMap[name] = displayValue;
-          if (abbr.isNotEmpty) statsMap[abbr] = displayValue;
-
-          final key = name.toLowerCase().replaceAll(RegExp(r'[\s_\-]'), '');
-          final abbrKey = abbr.toLowerCase();
-          switch (key) {
-            case 'points': case 'pts':
-            points = int.tryParse(displayValue); break;
-            case 'pointsfor': case 'goalsfor': case 'goalsscored': case 'gf':
-            goalsFor = int.tryParse(displayValue); break;
-            case 'pointsagainst': case 'goalsagainst': case 'goalsconceded': case 'ga':
-            goalsAgainst = int.tryParse(displayValue); break;
-            case 'gamesplayed': case 'matchesplayed': case 'played': case 'gp': case 'mp':
-            gamesPlayed = int.tryParse(displayValue); break;
-            case 'form': case 'last5': case 'formguide': case 'recentform':
-            form = displayValue; break;
-          }
-          if (goalsFor == null && (abbrKey == 'gf' || abbrKey == 'pf')) goalsFor = int.tryParse(displayValue);
-          if (goalsAgainst == null && (abbrKey == 'ga' || abbrKey == 'pa')) goalsAgainst = int.tryParse(displayValue);
-          if (gamesPlayed == null && (abbrKey == 'gp' || abbrKey == 'mp' || abbrKey == 'p')) gamesPlayed = int.tryParse(displayValue);
-          if (points == null && (abbrKey == 'pts' || abbrKey == 'pt')) points = int.tryParse(displayValue);
-        }
-
-        // Calculate goal difference
-        final gd = (goalsFor ?? 0) - (goalsAgainst ?? 0);
-
-        standings.add(Standing(
-          rank: rank++,
-          team: TeamInfo(
-            id: teamData['id']?.toString() ?? '',
-            name: teamData['name']?.toString() ?? '',
-            displayName: teamData['displayName']?.toString() ?? '',
-            abbreviation: teamData['abbreviation']?.toString() ?? '',
-            logo: _resolveTeamLogo(teamData),
-            color: '#${teamData['color']?.toString() ?? '1A62C8'}',
-            alternateColor: '#${teamData['alternateColor']?.toString() ?? 'FFFFFF'}',
-            record: '${statsMap['wins'] ?? '0'}-${statsMap['losses'] ?? '0'}-${statsMap['ties'] ?? '0'}',
-          ),
-          wins: statsMap['wins'] ?? '0',
-          losses: statsMap['losses'] ?? '0',
-          ties: statsMap['ties'] ?? '0',
-          winPercentage: statsMap['winPercent'] ?? '.000',
-          pointsFor: statsMap['pointsFor'] ?? statsMap['goalsFor'] ?? '0',
-          pointsAgainst: statsMap['pointsAgainst'] ?? statsMap['goalsAgainst'] ?? '0',
-          streak: statsMap['streak'] ?? '0',
-          clinchedPlayoffs: entry['clinched'] ?? false,
-          conference: '',
-          division: '',
-          stats: statsMap,
-          points: points,
-          goalsFor: goalsFor,
-          goalsAgainst: goalsAgainst,
-          goalDifference: gd,
-          form: form,
-          matchesPlayed: gamesPlayed,
-        ));
-      } catch (e) {
-        print('[Standings] Error parsing entry: $e');
-      }
-    }
-
-    // Sort by points (descending), then goal difference
-    standings.sort((a, b) {
-      final aPoints = a.points ?? int.tryParse(a.stats['points'] ?? '0') ?? 0;
-      final bPoints = b.points ?? int.tryParse(b.stats['points'] ?? '0') ?? 0;
-      if (aPoints != bPoints) return bPoints.compareTo(aPoints);
-
-      final aGD = a.goalDifference ?? 0;
-      final bGD = b.goalDifference ?? 0;
-      if (aGD != bGD) return bGD.compareTo(aGD);
-
-      final aGF = a.goalsFor ?? int.tryParse(a.stats['goalsFor'] ?? '0') ?? 0;
-      final bGF = b.goalsFor ?? int.tryParse(b.stats['goalsFor'] ?? '0') ?? 0;
-      return bGF.compareTo(aGF);
-    });
-
-    // Update ranks after sorting
-    for (int i = 0; i < standings.length; i++) {
-      standings[i] = Standing(
-        rank: i + 1,
-        team: standings[i].team,
-        wins: standings[i].wins,
-        losses: standings[i].losses,
-        ties: standings[i].ties,
-        winPercentage: standings[i].winPercentage,
-        pointsFor: standings[i].pointsFor,
-        pointsAgainst: standings[i].pointsAgainst,
-        streak: standings[i].streak,
-        clinchedPlayoffs: standings[i].clinchedPlayoffs,
-        conference: standings[i].conference,
-        division: standings[i].division,
-        stats: standings[i].stats,
-        points: standings[i].points,
-        goalsFor: standings[i].goalsFor,
-        goalsAgainst: standings[i].goalsAgainst,
-        goalDifference: standings[i].goalDifference,
-        form: standings[i].form,
-        matchesPlayed: standings[i].matchesPlayed,
+      return LeaderEntry(
+        athleteId: athleteId,
+        name: name,
+        headshot: headshot,
+        teamId: teamId,
+        teamAbbreviation: teamAbbr,
+        teamLogo: teamLogo,
+        value: value,
       );
+    } catch (e) {
+      print('[Leaders] Error parsing $statKey entry: $e');
+      return null;
     }
-
-    print('[Standings] Parsed ${standings.length} standings');
-    return standings;
-  }
-
-  List<Standing> _parseSoccerStandings(Map<String, dynamic> data) {
-    final List<Standing> standings = [];
-    int rank = 1;
-
-    List<dynamic> children = [];
-
-    if (data['children'] is List) {
-      children = data['children'] as List;
-    } else if (data['standings'] is List) {
-      children = [{'name': 'League', 'standings': data['standings']}];
-    }
-
-    void parseStandingEntries(List<dynamic> entries, String groupName) {
-      for (final ts in entries) {
-        try {
-          final team = ts['team'] as Map<String, dynamic>? ?? {};
-          final Map<String, String> statsMap = {};
-          for (final stat in (ts['stats'] as List? ?? [])) {
-            statsMap[stat['name'].toString()] = stat['displayValue']?.toString() ?? '0';
-          }
-          standings.add(Standing(
-            rank: rank++,
-            team: TeamInfo(
-              id: team['id']?.toString() ?? '',
-              name: team['name']?.toString() ?? '',
-              displayName: team['displayName']?.toString() ?? '',
-              abbreviation: team['abbreviation']?.toString() ?? '',
-              logo: _resolveTeamLogo(team),
-              color: '#${team['color']?.toString() ?? '1A62C8'}',
-              alternateColor: '#${team['alternateColor']?.toString() ?? 'FFFFFF'}',
-              record: '${statsMap['wins'] ?? '0'}-${statsMap['losses'] ?? '0'}-${statsMap['ties'] ?? '0'}',
-            ),
-            wins: statsMap['wins'] ?? '0',
-            losses: statsMap['losses'] ?? '0',
-            ties: statsMap['ties'] ?? '0',
-            winPercentage: statsMap['winPercent'] ?? '.000',
-            pointsFor: statsMap['pointsFor'] ?? '0',
-            pointsAgainst: statsMap['pointsAgainst'] ?? '0',
-            streak: statsMap['streak'] ?? '0',
-            clinchedPlayoffs: false,
-            conference: groupName,
-            division: '',
-            stats: statsMap,
-          ));
-        } catch (e) {
-          print('[Standings] Entry parse error: $e');
-        }
-      }
-    }
-
-    for (final child in children) {
-      final groupName = child['name']?.toString() ?? 'League';
-
-      if (child['standings'] is List) {
-        parseStandingEntries(child['standings'] as List, groupName);
-      }
-      else if (child['children'] is List) {
-        for (final subChild in child['children'] as List) {
-          final subGroup = subChild['name']?.toString() ?? groupName;
-          if (subChild['standings'] is List) {
-            parseStandingEntries(subChild['standings'] as List, subGroup);
-          }
-        }
-      }
-    }
-
-    return standings;
   }
 
   GameDetail _getEmptyGameDetail(String gameId) => GameDetail(
@@ -1978,19 +1699,7 @@ class ApiService {
     return [];
   }
 
-
-  // ── getMatchLineup ──────────────────────────────────────────────────────────
-  // Strategy:
-  //  1. Try leagues most likely to contain the game first (priority leagues +
-  //     international leagues) so we hit the right summary endpoint fast.
-  //  2. Parse ESPN's two roster formats:
-  //       A) boxscore.players[].statistics[].athletes[]  (club competitions)
-  //       B) boxscore.players[].roster[]                 (some intl / WC)
-  //       C) rosters[] at root level                     (WC 2026 / summary v2)
-  //  3. Deduplicate by player id so no one appears twice.
-  //  4. Fall back gracefully — return whatever data we got even if partial.
   Future<MatchLineup?> getMatchLineup(String gameId) async {
-    // Try all leagues, prioritising ones most likely to have the match
     final orderedLeagues = [
       ...AppConstants.internationalLeagues,
       ...AppConstants.priorityLeagues,
@@ -2009,7 +1718,6 @@ class ApiService {
 
         final data = json.decode(res.body) as Map<String, dynamic>;
 
-        // Must have at least a header or boxscore to be the right endpoint
         final hasHeader   = data['header'] != null;
         final hasBoxscore = data['boxscore'] != null;
         if (!hasHeader && !hasBoxscore) continue;
@@ -2019,7 +1727,6 @@ class ApiService {
         String homeFormation = '';
         String awayFormation = '';
 
-        // ── Path A & B: boxscore.players[] ─────────────────────────────────
         final boxscorePlayers =
             data['boxscore']?['players'] as List? ?? [];
 
@@ -2029,7 +1736,6 @@ class ApiService {
           if (isHome && formation.isNotEmpty) homeFormation = formation;
           if (!isHome && formation.isNotEmpty) awayFormation = formation;
 
-          // Path A: statistics[].athletes[]
           final statistics = teamData['statistics'] as List? ?? [];
           for (final group in statistics) {
             final athletes = group['athletes'] as List? ?? [];
@@ -2042,7 +1748,6 @@ class ApiService {
             }
           }
 
-          // Path B: roster[] (used by some ESPN soccer endpoints)
           final roster = teamData['roster'] as List? ?? [];
           for (final a in roster) {
             final p = _parseLineupAthlete(a, isHome: isHome);
@@ -2053,7 +1758,6 @@ class ApiService {
           }
         }
 
-        // ── Path C: root-level rosters[] (World Cup 2026 / summary v2) ─────
         final rootRosters = data['rosters'] as List? ?? [];
         for (final teamData in rootRosters) {
           final isHome = teamData['homeAway']?.toString() == 'home';
@@ -2073,11 +1777,9 @@ class ApiService {
           }
         }
 
-        // ── Deduplicate by id (keep first occurrence) ──────────────────────
         homePlayers = _dedup(homePlayers);
         awayPlayers = _dedup(awayPlayers);
 
-        // ── Sort: starters first (GK→DEF→MID→FWD), then subs ──────────────
         homePlayers = _sortLineup(homePlayers);
         awayPlayers = _sortLineup(awayPlayers);
 
@@ -2096,14 +1798,10 @@ class ApiService {
     return null;
   }
 
-  /// Parse a single athlete entry from any ESPN lineup format.
-  /// Returns null if there's not enough data to build a player.
   LineupPlayer? _parseLineupAthlete(dynamic raw, {required bool isHome}) {
     if (raw == null) return null;
     final a = raw as Map<String, dynamic>;
 
-    // ESPN wraps the athlete under 'athlete' key in statistics format,
-    // but places it flat in roster format.
     final athlete = (a['athlete'] is Map)
         ? a['athlete'] as Map<String, dynamic>
         : a;
@@ -2123,12 +1821,10 @@ class ApiService {
             ?? athlete['position']?.toString()
             ?? '';
 
-    // isStarter: ESPN uses 'starter', 'active', or position order
     final starter = a['starter'] == true
         || a['active'] == true
         || a['didPlay'] == true;
 
-    // Headshot — ESPN returns it as a String URL or as a Map with 'href'/'full'
     String headshot = '';
     final rawHs = athlete['headshot'] ?? a['headshot'];
     if (rawHs is String) {
@@ -2136,7 +1832,6 @@ class ApiService {
     } else if (rawHs is Map) {
       headshot = (rawHs['href'] ?? rawHs['full'] ?? rawHs['default'] ?? '').toString();
     }
-    // Try ESPN CDN pattern as last resort when we have an id
     if (headshot.isEmpty && id.isNotEmpty) {
       headshot =
       'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$id.png&w=96&h=70&cb=1';
@@ -2159,16 +1854,14 @@ class ApiService {
     );
   }
 
-  /// Remove duplicate players (same id) keeping the first seen.
   List<LineupPlayer> _dedup(List<LineupPlayer> players) {
     final seen = <String>{};
     return players.where((p) {
-      if (p.id.isEmpty) return true; // keep anonymous
+      if (p.id.isEmpty) return true;
       return seen.add(p.id);
     }).toList();
   }
 
-  /// Sort: starters first ordered GK→DEF→MID→FWD, then subs.
   List<LineupPlayer> _sortLineup(List<LineupPlayer> players) {
     int posOrder(String pos) {
       switch (pos.toUpperCase()) {
@@ -2363,91 +2056,481 @@ class ApiService {
     return firstBatch;
   }
 
-  Future<List<H2HResult>> getH2H(
-      String awayTeamId,
-      String homeTeamId,
-      String currentGameId,
-      String leagueCode,
-      ) async {
+
+
+// ─── SEARCH METHODS ─────────────────────────────────────────────────────────────
+
+  /// Search for players, teams, and leagues using ESPN's API
+// Add these methods to api_service.dart
+
+// ─── SEARCH METHODS ─────────────────────────────────────────────────────────────
+
+  /// Search for players, teams, and leagues using ESPN's API
+  // ─── SEARCH METHODS ─────────────────────────────────────────────────────────────
+
+  /// Search for players, teams, and leagues using ESPN's API
+// ─── SEARCH METHODS ─────────────────────────────────────────────────────────────
+
+
+// ─── SEARCH METHODS USING API-FOOTBALL ──────────────────────────────────────
+
+  /// Search for players, teams, and leagues using API-Football
+  Future<SearchResponse> search(String query) async {
+    if (query.trim().isEmpty) {
+      return SearchResponse();
+    }
+
+    print('[Search] Searching for: "$query" using API-Football');
+    final lowerQuery = query.trim();
+
+    final List<SearchResult> players = [];
+    final List<SearchResult> teams = [];
+    final List<SearchResult> leagues = [];
+
     try {
-      final url = '${AppConstants.baseUrl}/$leagueCode/teams/$awayTeamId/schedule';
-      final res = await _client
-          .get(Uri.parse(url), headers: _headers)
-          .timeout(const Duration(seconds: 8));
-      if (res.statusCode != 200) return [];
+      // ── Search Leagues (from constants - instant) ─────────────────────────
+      final leagueResults = _searchLeaguesFromConstants(lowerQuery);
+      leagues.addAll(leagueResults);
+      print('[Search] Found ${leagues.length} leagues');
 
-      final data = json.decode(res.body) as Map<String, dynamic>;
-      final events = data['events'] as List? ?? [];
-      final List<H2HResult> results = [];
+      // ── Search Teams (API-Football) ──────────────────────────────────────
+      final teamResults = await _searchTeamsApiFootball(lowerQuery);
+      teams.addAll(teamResults);
+      print('[Search] Found ${teams.length} teams');
 
-      for (final event in events) {
-        if (event['id']?.toString() == currentGameId) continue;
-        final competition = (event['competitions'] as List?)?.first;
-        if (competition == null) continue;
+      // ── Search Players (API-Football - search in multiple leagues) ──────
+      final playerResults = await _searchPlayersApiFootball(lowerQuery);
+      players.addAll(playerResults);
+      print('[Search] Found ${players.length} players');
 
-        final competitors = competition['competitors'] as List? ?? [];
-        if (competitors.length < 2) continue;
+      print('[Search] Total: ${players.length + teams.length + leagues.length} results (players: ${players.length}, teams: ${teams.length}, leagues: ${leagues.length})');
 
-        String? awayId, homeId, awayScore, homeScore;
-        String? awayName, homeName;
-
-        for (final c in competitors) {
-          final tId = c['team']?['id']?.toString() ?? '';
-          final ha  = c['homeAway']?.toString();
-          if (ha == 'away') {
-            awayId    = tId;
-            awayScore = c['score']?.toString() ?? '0';
-            awayName  = c['team']?['displayName']?.toString()
-                ?? c['team']?['name']?.toString()
-                ?? c['team']?['abbreviation']?.toString() ?? '';
-          } else {
-            homeId    = tId;
-            homeScore = c['score']?.toString() ?? '0';
-            homeName  = c['team']?['displayName']?.toString()
-                ?? c['team']?['name']?.toString()
-                ?? c['team']?['abbreviation']?.toString() ?? '';
-          }
-        }
-
-        final isH2H = (awayId == awayTeamId || awayId == homeTeamId) &&
-            (homeId == awayTeamId || homeId == homeTeamId);
-        if (!isH2H) continue;
-
-        final rawStatus = event['status']?['type']?['description']?.toString() ?? '';
-        if (!rawStatus.toLowerCase().contains('final') &&
-            !rawStatus.toLowerCase().contains('ft') &&
-            !rawStatus.toLowerCase().contains('finish')) continue;
-
-        final aGoals = int.tryParse(awayScore ?? '0') ?? 0;
-        final hGoals = int.tryParse(homeScore ?? '0') ?? 0;
-
-        String result;
-        if (aGoals == hGoals) result = 'draw';
-        else if (aGoals > hGoals) result = 'away_win';
-        else result = 'home_win';
-
-        results.add(H2HResult(
-          date: event['date']?.toString() ?? '',
-          homeTeam: homeName ?? homeId ?? '',
-          awayTeam: awayName ?? awayId ?? '',
-          homeScore: homeScore ?? '0',
-          awayScore: awayScore ?? '0',
-          result: result,
-        ));
-
-        if (results.length >= 5) break;
-      }
-
-      return results;
+      return SearchResponse(
+        players: players,
+        teams: teams,
+        leagues: leagues,
+      );
     } catch (e) {
-      print('getH2H error: $e');
-      return [];
+      print('[Search] Error: $e');
+      return SearchResponse(
+        players: players,
+        teams: teams,
+        leagues: leagues,
+      );
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // TEAM PAGE DATA METHODS
-  // ─────────────────────────────────────────────────────────────────────────────
+  /// Search teams using API-Football
+  Future<List<SearchResult>> _searchTeamsApiFootball(String query) async {
+    final List<SearchResult> results = [];
+    final Set<String> seenIds = {};
+
+    final keyManager = ApiKeyManager();
+
+    print('[SearchTeams] Searching for: "$query"');
+
+    for (int attempt = 0; attempt < 3; attempt++) {
+      try {
+        final apiKey = keyManager.getNextKey();
+
+        final url = '${AppConstants.apiFootballBaseUrl}/teams?search=$query';
+
+        print('[SearchTeams] Requesting: $url');
+
+        final res = await _client.get(
+          Uri.parse(url),
+          headers: {'x-apisports-key': apiKey},
+        ).timeout(const Duration(seconds: 10));
+
+        keyManager.markRequest(apiKey);
+
+        print('[SearchTeams] Response status: ${res.statusCode}');
+
+        if (res.statusCode == 200) {
+          final data = json.decode(res.body) as Map<String, dynamic>;
+
+          if (data['errors'] != null && data['errors'].isNotEmpty) {
+            print('[SearchTeams] API error: ${data['errors']}');
+            continue;
+          }
+
+          final response = data['response'] as List? ?? [];
+          print('[SearchTeams] Found ${response.length} raw results');
+
+          for (final teamData in response) {
+            if (teamData is! Map) continue;
+            final team = teamData['team'] as Map<String, dynamic>?;
+
+            if (team == null) continue;
+
+            final id = team['id']?.toString() ?? '';
+            if (id.isEmpty || seenIds.contains(id)) continue;
+
+            final name = team['name']?.toString() ?? '';
+            final displayName = team['name']?.toString() ?? '';
+            final abbreviation = team['code']?.toString() ?? '';
+            final logo = team['logo']?.toString() ?? '';
+
+            // Check if query matches the name (case insensitive)
+            if (!name.toLowerCase().contains(query.toLowerCase())) {
+              continue;
+            }
+
+            seenIds.add(id);
+
+            // Try to find league for this team from constants
+            String leagueName = '';
+            String leagueCode = '';
+            for (final league in AppConstants.allLeagues) {
+              if (name.toLowerCase().contains(league['name']!.toLowerCase().split(' ').first.toLowerCase())) {
+                leagueName = league['name']!;
+                leagueCode = league['code']!;
+                break;
+              }
+            }
+
+            results.add(SearchResult(
+              id: id,
+              name: name,
+              displayName: displayName,
+              type: 'team',
+              imageUrl: logo.isNotEmpty ? logo : null,
+              leagueName: leagueName,
+              leagueCode: leagueCode,
+              abbreviation: abbreviation,
+            ));
+
+            print('[SearchTeams] Added: $name');
+          }
+          break; // Success
+        } else if (res.statusCode == 429) {
+          print('[SearchTeams] Rate limit hit, trying next key...');
+          continue;
+        } else {
+          print('[SearchTeams] API error: ${res.statusCode}');
+          break;
+        }
+      } catch (e) {
+        print('[SearchTeams] Exception: $e');
+      }
+    }
+
+    return results;
+  }
+
+  /// Search players using API-Football by searching across multiple leagues
+  Future<List<SearchResult>> _searchPlayersApiFootball(String query) async {
+    final List<SearchResult> results = [];
+    final Set<String> seenIds = {};
+
+    final keyManager = ApiKeyManager();
+
+    print('[SearchPlayers] Searching for: "$query"');
+
+    // Common league IDs to search for players
+    // 39 = Premier League, 140 = La Liga, 135 = Serie A, 78 = Bundesliga, 61 = Ligue 1
+    // 2 = Champions League, 3 = Europa League
+    // 71 = Brasileirão, 253 = MLS, 128 = Argentina, 94 = Portugal, 88 = Netherlands
+    final leagueIds = [39, 140, 135, 78, 61, 2, 3, 71, 253, 128, 94, 88, 203, 144, 179];
+
+    // Use current season (2024 or 2025)
+    final currentYear = DateTime.now().year;
+    final season = currentYear >= 7 ? currentYear : currentYear - 1;
+
+    for (final leagueId in leagueIds) {
+      if (results.length >= 30) break; // Limit results to 30
+
+      for (int attempt = 0; attempt < 2; attempt++) {
+        try {
+          final apiKey = keyManager.getNextKey();
+
+          // Search players by name with league filter
+          // Note: API-Football requires league or team with search
+          final url = '${AppConstants.apiFootballBaseUrl}/players?league=$leagueId&season=$season&search=$query&limit=20';
+
+          print('[SearchPlayers] Searching league $leagueId for "$query"');
+
+          final res = await _client.get(
+            Uri.parse(url),
+            headers: {'x-apisports-key': apiKey},
+          ).timeout(const Duration(seconds: 8));
+
+          keyManager.markRequest(apiKey);
+
+          if (res.statusCode == 200) {
+            final data = json.decode(res.body) as Map<String, dynamic>;
+
+            if (data['errors'] != null && data['errors'].isNotEmpty) {
+              print('[SearchPlayers] League $leagueId error: ${data['errors']}');
+              break;
+            }
+
+            final response = data['response'] as List? ?? [];
+
+            if (response.isNotEmpty) {
+              print('[SearchPlayers] League $leagueId found ${response.length} players');
+            }
+
+            for (final playerData in response) {
+              if (results.length >= 30) break;
+              if (playerData is! Map) continue;
+
+              final player = playerData['player'] as Map<String, dynamic>?;
+              if (player == null) continue;
+
+              final id = player['id']?.toString() ?? '';
+              if (id.isEmpty || seenIds.contains(id)) continue;
+
+              final name = player['name']?.toString() ?? '';
+              final firstname = player['firstname']?.toString() ?? '';
+              final lastname = player['lastname']?.toString() ?? '';
+              final displayName = '$firstname $lastname'.trim();
+
+              // Double-check name match
+              final searchableText = '$name $firstname $lastname'.toLowerCase();
+              if (!searchableText.contains(query.toLowerCase())) {
+                continue;
+              }
+
+              seenIds.add(id);
+
+              String position = '';
+              String headshot = player['photo']?.toString() ?? '';
+              String nationality = player['nationality']?.toString() ?? '';
+              int? age = player['age'] as int?;
+
+              final statistics = playerData['statistics'] as List? ?? [];
+              String teamName = '';
+              if (statistics.isNotEmpty) {
+                final firstStat = statistics.first as Map<String, dynamic>;
+                final team = firstStat['team'] as Map<String, dynamic>?;
+                if (team != null) {
+                  teamName = team['name']?.toString() ?? '';
+                }
+                final games = firstStat['games'] as Map<String, dynamic>?;
+                if (games != null) {
+                  position = games['position']?.toString() ?? '';
+                }
+              }
+
+              results.add(SearchResult(
+                id: id,
+                name: name.isNotEmpty ? name : displayName,
+                displayName: displayName.isNotEmpty ? displayName : name,
+                type: 'player',
+                imageUrl: headshot.isNotEmpty ? headshot : null,
+                teamName: teamName,
+                teamId: '',
+                position: position,
+                jerseyNumber: '',
+                abbreviation: '',
+                nationality: nationality,
+                age: age,
+                rating: null,
+              ));
+
+              print('[SearchPlayers] Added: $displayName ($position) from ${teamName.isNotEmpty ? teamName : 'Unknown Team'}');
+            }
+            break; // Success, move to next league
+          } else if (res.statusCode == 429) {
+            print('[SearchPlayers] Rate limit hit, trying next key...');
+            continue;
+          } else {
+            print('[SearchPlayers] League $leagueId API error: ${res.statusCode}');
+            break;
+          }
+        } catch (e) {
+          print('[SearchPlayers] Exception for league $leagueId: $e');
+        }
+      }
+    }
+
+    // If we didn't find many results, try searching without the search parameter
+    // and filter manually (some leagues don't support search with league)
+    if (results.length < 5) {
+      print('[SearchPlayers] Few results found, trying fallback search...');
+
+      for (final leagueId in leagueIds.take(5)) {
+        if (results.length >= 20) break;
+
+        try {
+          final apiKey = keyManager.getNextKey();
+
+          // Get players from league without search parameter
+          final url = '${AppConstants.apiFootballBaseUrl}/players?league=$leagueId&season=$season&limit=30';
+
+          final res = await _client.get(
+            Uri.parse(url),
+            headers: {'x-apisports-key': apiKey},
+          ).timeout(const Duration(seconds: 8));
+
+          keyManager.markRequest(apiKey);
+
+          if (res.statusCode == 200) {
+            final data = json.decode(res.body) as Map<String, dynamic>;
+
+            if (data['errors'] != null && data['errors'].isNotEmpty) {
+              continue;
+            }
+
+            final response = data['response'] as List? ?? [];
+
+            for (final playerData in response) {
+              if (results.length >= 20) break;
+              if (playerData is! Map) continue;
+
+              final player = playerData['player'] as Map<String, dynamic>?;
+              if (player == null) continue;
+
+              final id = player['id']?.toString() ?? '';
+              if (id.isEmpty || seenIds.contains(id)) continue;
+
+              final name = player['name']?.toString() ?? '';
+              final firstname = player['firstname']?.toString() ?? '';
+              final lastname = player['lastname']?.toString() ?? '';
+              final displayName = '$firstname $lastname'.trim();
+
+              final searchableText = '$name $firstname $lastname'.toLowerCase();
+              if (!searchableText.contains(query.toLowerCase())) {
+                continue;
+              }
+
+              seenIds.add(id);
+
+              String position = '';
+              String headshot = player['photo']?.toString() ?? '';
+              String nationality = player['nationality']?.toString() ?? '';
+              int? age = player['age'] as int?;
+
+              final statistics = playerData['statistics'] as List? ?? [];
+              String teamName = '';
+              if (statistics.isNotEmpty) {
+                final firstStat = statistics.first as Map<String, dynamic>;
+                final team = firstStat['team'] as Map<String, dynamic>?;
+                if (team != null) {
+                  teamName = team['name']?.toString() ?? '';
+                }
+                final games = firstStat['games'] as Map<String, dynamic>?;
+                if (games != null) {
+                  position = games['position']?.toString() ?? '';
+                }
+              }
+
+              results.add(SearchResult(
+                id: id,
+                name: name.isNotEmpty ? name : displayName,
+                displayName: displayName.isNotEmpty ? displayName : name,
+                type: 'player',
+                imageUrl: headshot.isNotEmpty ? headshot : null,
+                teamName: teamName,
+                teamId: '',
+                position: position,
+                jerseyNumber: '',
+                abbreviation: '',
+                nationality: nationality,
+                age: age,
+                rating: null,
+              ));
+
+              print('[SearchPlayers] Fallback Added: $displayName');
+            }
+          }
+        } catch (e) {
+          print('[SearchPlayers] Fallback exception: $e');
+        }
+      }
+    }
+
+    print('[SearchPlayers] Total found: ${results.length} players');
+    return results;
+  }
+
+  /// Search leagues from constants (instant, no API call needed)
+  List<SearchResult> _searchLeaguesFromConstants(String query) {
+    final List<SearchResult> results = [];
+    final allLeagues = AppConstants.allLeagues;
+
+    print('[SearchLeagues] Searching for: "$query"');
+
+    for (final league in allLeagues) {
+      final name = league['name'] ?? '';
+      final code = league['code'] ?? '';
+      final flag = league['flag'] ?? '⚽';
+
+      final searchableText = '$name $code'.toLowerCase();
+      if (searchableText.contains(query.toLowerCase())) {
+        final logoUrl = AppConstants.leagueLogoUrl(code);
+
+        results.add(SearchResult(
+          id: code,
+          name: name,
+          displayName: name,
+          type: 'league',
+          imageUrl: logoUrl,
+          leagueName: name,
+          leagueCode: code,
+          abbreviation: code.length > 3 ? code.substring(0, 3).toUpperCase() : code.toUpperCase(),
+        ));
+
+        print('[SearchLeagues] Added: $name');
+      }
+    }
+
+    return results;
+  }
+  /// Helper method to extract headshot URL from athlete data
+  String? _extractHeadshotFromAthleteData(dynamic data) {
+    if (data == null) return null;
+
+    // Convert to Map<String, dynamic> if needed
+    final Map<String, dynamic> athleteData;
+    if (data is Map<String, dynamic>) {
+      athleteData = data;
+    } else if (data is Map) {
+      athleteData = Map<String, dynamic>.from(data);
+    } else {
+      return null;
+    }
+
+    final hs = athleteData['headshot'];
+    if (hs is Map) {
+      final href = hs['href']?.toString() ?? '';
+      if (href.isNotEmpty && href.startsWith('http')) return href;
+      final full = hs['full']?.toString() ?? '';
+      if (full.isNotEmpty && full.startsWith('http')) return full;
+    }
+    if (hs is String && hs.isNotEmpty && hs.startsWith('http')) return hs;
+
+    final links = athleteData['links'] as List? ?? [];
+    for (final link in links) {
+      if (link is! Map) continue;
+      final rels = (link['rel'] as List? ?? [])
+          .map((r) => r.toString().toLowerCase())
+          .toList();
+      if (rels.contains('headshot') || rels.contains('photo') ||
+          rels.contains('athlete-headshot')) {
+        final href = link['href']?.toString() ?? '';
+        if (href.isNotEmpty && href.startsWith('http')) return href;
+      }
+    }
+
+    final images = athleteData['images'] as List? ?? [];
+    for (final img in images) {
+      if (img is! Map) continue;
+      final imgType = img['type']?.toString().toLowerCase() ??
+          img['name']?.toString().toLowerCase() ?? '';
+      if (imgType.contains('headshot') || imgType.contains('photo')) {
+        final href = img['href']?.toString() ?? img['url']?.toString() ?? '';
+        if (href.isNotEmpty && href.startsWith('http')) return href;
+      }
+    }
+
+    return null;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // TEAM PAGE DATA METHODS - MAIN ENTRY POINT
+  // ══════════════════════════════════════════════════════════════════════════════
 
   Future<TeamPageData> getTeamPageData(
       String teamId, {
@@ -2463,56 +2546,136 @@ class ApiService {
       return _getTeamPageDataNational(teamId, resolvedLeague);
     }
 
-    // ── Club team path (unchanged) ─────────────────────────────────────────────
-    final results = await Future.wait([
-      _fetchTeamSchedule(teamId, resolvedLeague),
-      _fetchTeamRosterFull(teamId, resolvedLeague),
-      _fetchTeamStandingInfo(teamId, resolvedLeague),
+    // ── Club team path with cross-season handling ─────────────────────────────
+    return _getTeamPageDataClub(teamId, resolvedLeague);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // CLUB TEAM DATA WITH CROSS-SEASON HANDLING
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  Future<TeamPageData> _getTeamPageDataClub(
+      String teamId,
+      String leagueCode,
+      ) async {
+    print('[ClubTeam] ▶ _getTeamPageDataClub teamId=$teamId league=$leagueCode');
+
+    // Get current season data first
+    final currentResults = await Future.wait([
+      _fetchTeamSchedule(teamId, leagueCode),
+      _fetchTeamRosterFull(teamId, leagueCode),
+      _fetchTeamStandingInfo(teamId, leagueCode),
     ]);
 
-    _ScheduleResult scheduleData = results[0] as _ScheduleResult;
-    final rawSquadPlayers = results[1] as List<TeamSquadPlayer>;
-    final standingInfo = results[2] as TeamStandingInfo;
+    _ScheduleResult currentSchedule = currentResults[0] as _ScheduleResult;
+    final currentSquad = currentResults[1] as List<TeamSquadPlayer>;
+    final currentStanding = currentResults[2] as TeamStandingInfo;
 
-    // Enrich headshots: tries sports.core.api → site.web.api → site.api in order
-    final squadPlayers = await _enrichRosterHeadshots(rawSquadPlayers, resolvedLeague);
+    print('[ClubTeam] Current season: ${currentSchedule.recentMatches.length} recent, ${currentSchedule.upcoming.length} upcoming');
 
-    if (scheduleData.upcoming.isEmpty) {
-      print('[TeamPage] No upcoming fixtures — trying next season schedule');
-      final nextYear = DateTime.now().year + 1;
-      final nextSeasonSchedule = await _fetchTeamScheduleForYear(
-          teamId, resolvedLeague, nextYear);
-      if (nextSeasonSchedule.upcoming.isNotEmpty) {
-        scheduleData = _ScheduleResult(
-          recentMatches: scheduleData.recentMatches,
-          upcoming: nextSeasonSchedule.upcoming,
-          headCoach: scheduleData.headCoach ?? nextSeasonSchedule.headCoach,
-          recentMatchEventIds: scheduleData.recentMatchEventIds,
-        );
+    // ── Check if current season has started ──────────────────────────────────
+    final now = DateTime.now();
+    bool allMatchesOld = true;
+    for (final match in currentSchedule.recentMatches) {
+      try {
+        final matchDate = DateTime.parse(match.date);
+        if (matchDate.year >= now.year) {
+          allMatchesOld = false;
+          break;
+        }
+      } catch (_) {}
+    }
+
+    // ── If season hasn't started or all matches are old, fetch last season ──
+    _ScheduleResult recentMatchesFromLastSeason = _ScheduleResult.empty();
+    _ScheduleResult upcomingFromNextSeason = _ScheduleResult.empty();
+
+    if (currentSchedule.recentMatches.isEmpty || allMatchesOld) {
+      final lastYear = now.year - 1;
+      print('[ClubTeam] Fetching last season ($lastYear) for recent matches');
+      final lastSeasonSchedule = await _fetchTeamScheduleForYear(teamId, leagueCode, lastYear);
+      if (lastSeasonSchedule.recentMatches.isNotEmpty) {
+        recentMatchesFromLastSeason = lastSeasonSchedule;
+        print('[ClubTeam] Found ${recentMatchesFromLastSeason.recentMatches.length} matches from last season');
       }
     }
 
-    print('[TeamPage] Schedule: ${scheduleData.recentMatches.length} recent, ${scheduleData.upcoming.length} upcoming');
-    print('[TeamPage] Squad: ${squadPlayers.length} players');
-    print('[TeamPage] Standing: rank=${standingInfo.rank}, pts=${standingInfo.points}');
+    // ── If no upcoming fixtures, fetch next season ──────────────────────────
+    if (currentSchedule.upcoming.isEmpty) {
+      final nextYear = now.year + 1;
+      print('[ClubTeam] Fetching next season ($nextYear) for upcoming fixtures');
+      final nextSeasonSchedule = await _fetchTeamScheduleForYear(teamId, leagueCode, nextYear);
+      if (nextSeasonSchedule.upcoming.isNotEmpty) {
+        upcomingFromNextSeason = nextSeasonSchedule;
+        print('[ClubTeam] Found ${upcomingFromNextSeason.upcoming.length} upcoming fixtures from next season');
+      } else {
+        final currentYear = now.year;
+        final currentYearSchedule = await _fetchTeamScheduleForYear(teamId, leagueCode, currentYear);
+        if (currentYearSchedule.upcoming.isNotEmpty) {
+          upcomingFromNextSeason = currentYearSchedule;
+          print('[ClubTeam] Found ${upcomingFromNextSeason.upcoming.length} upcoming fixtures from current season');
+        }
+      }
+    }
 
-    final enrichedMatches = await _enrichMatchesWithSummaryStats(
-      scheduleData.recentMatches,
-      scheduleData.recentMatchEventIds,
-      teamId,
-      resolvedLeague,
+    // ── Combine results ──────────────────────────────────────────────────────
+    final List<TeamRecentMatch> finalRecentMatches = [];
+    final List<String> finalRecentIds = [];
+
+    if (recentMatchesFromLastSeason.recentMatches.isNotEmpty) {
+      finalRecentMatches.addAll(recentMatchesFromLastSeason.recentMatches);
+      finalRecentIds.addAll(recentMatchesFromLastSeason.recentMatchEventIds);
+    } else {
+      finalRecentMatches.addAll(currentSchedule.recentMatches);
+      finalRecentIds.addAll(currentSchedule.recentMatchEventIds);
+    }
+
+    final List<TeamUpcomingFixture> finalUpcoming = [];
+    if (upcomingFromNextSeason.upcoming.isNotEmpty) {
+      finalUpcoming.addAll(upcomingFromNextSeason.upcoming);
+    } else {
+      finalUpcoming.addAll(currentSchedule.upcoming);
+    }
+
+    // Sort recent by date (newest first) and take top 5
+    final sortedPairs = List.generate(finalRecentMatches.length, (i) => [finalRecentMatches[i], finalRecentIds[i]])
+      ..sort((a, b) => (b[0] as TeamRecentMatch).date.compareTo((a[0] as TeamRecentMatch).date));
+    final recent = sortedPairs.take(5).map((p) => p[0] as TeamRecentMatch).toList();
+    final recentIds = sortedPairs.take(5).map((p) => p[1] as String).toList();
+
+    // Sort upcoming by date (oldest first) and take top 5
+    finalUpcoming.sort((a, b) => a.date.compareTo(b.date));
+    final upcoming = finalUpcoming.take(5).toList();
+
+    // ── Enrich headshots ──────────────────────────────────────────────────────
+    final squadPlayers = await _enrichRosterHeadshots(
+      currentSquad.isNotEmpty ? currentSquad : await _fetchTeamRosterFull(teamId, leagueCode),
+      leagueCode,
+      teamId: teamId,
     );
 
+    // ── Enrich matches with summary stats ────────────────────────────────────
+    final enrichedMatches = await _enrichMatchesWithSummaryStats(
+      recent,
+      recentIds,
+      teamId,
+      leagueCode,
+    );
+
+    // ── Calculate analytics ──────────────────────────────────────────────────
     final analytics = _calculateAnalytics(enrichedMatches, squadPlayers);
 
+    print('[ClubTeam] Final: ${recent.length} recent, ${upcoming.length} upcoming');
+    print('[ClubTeam] Squad: ${squadPlayers.length} players');
+
     return TeamPageData(
-      leagueCode: resolvedLeague,
-      standingInfo: standingInfo,
+      leagueCode: leagueCode,
+      standingInfo: currentStanding,
       recentMatches: enrichedMatches,
-      upcoming: scheduleData.upcoming,
+      upcoming: upcoming,
       squad: squadPlayers,
       analytics: analytics,
-      headCoach: scheduleData.headCoach,
+      headCoach: currentSchedule.headCoach ?? recentMatchesFromLastSeason.headCoach,
     );
   }
 
@@ -2520,69 +2683,109 @@ class ApiService {
   // NATIONAL TEAM DATA (World Cup 2026 + International fallback)
   // ══════════════════════════════════════════════════════════════════════════════
 
-  /// Builds a full [TeamPageData] for a national team.
-  ///
-  /// Strategy:
-  /// 1. Fetch schedule from `fifa.world` (WC) or the passed international league.
-  /// 2. If recent matches < 3, supplement from international qualifier/nations
-  ///    leagues so the user always sees up to 5 real results.
-  /// 3. Squad always pulled from the primary league, with fallback.
-  /// 4. WC Group standings pulled from `fifa.world`.
   Future<TeamPageData> _getTeamPageDataNational(
       String teamId, String leagueCode) async {
     print('[NationalTeam] ▶ _getTeamPageDataNational teamId=$teamId league=$leagueCode');
 
     final primaryLeague = AppConstants.isWorldCup(leagueCode) ? 'fifa.world' : leagueCode;
+    final isWorldCup = AppConstants.isWorldCup(leagueCode);
 
-    final results = await Future.wait([
-      _fetchTeamSchedule(teamId, primaryLeague),
-      _fetchTeamRosterFull(teamId, primaryLeague),
-      _fetchTeamStandingInfo(teamId, primaryLeague),
-    ]);
+    // ── For World Cup 2026, use the specialized fixture fetcher ──────────────
+    _ScheduleResult scheduleData;
+    List<TeamSquadPlayer> squadPlayers;
+    TeamStandingInfo standingInfo;
 
-    _ScheduleResult scheduleData = results[0] as _ScheduleResult;
-    final squadPlayers = results[1] as List<TeamSquadPlayer>;
-    final standingInfo = results[2] as TeamStandingInfo;
+    if (isWorldCup) {
+      print('[WorldCup] Using specialized World Cup fixture fetcher');
 
-    print('[NationalTeam] Primary schedule: ${scheduleData.recentMatches.length} recent, ${scheduleData.upcoming.length} upcoming');
+      scheduleData = await _fetchWorldCupFixtures(teamId);
 
-    // ── Fallback: supplement recent matches from other international competitions ──
-    if (scheduleData.recentMatches.length < 3) {
-      print('[NationalTeam] Supplementing with international fallback matches');
-      final fallback = await _fetchNationalTeamFallbackMatches(
-        teamId,
-        existing: scheduleData.recentMatches,
-        existingIds: scheduleData.recentMatchEventIds,
-        targetCount: 5,
-      );
+      final results = await Future.wait([
+        _fetchTeamRosterFull(teamId, primaryLeague),
+        _fetchTeamStandingInfo(teamId, primaryLeague),
+      ]);
 
-      if (fallback.recentMatches.isNotEmpty) {
-        final combined = [...scheduleData.recentMatches, ...fallback.recentMatches];
-        final combinedIds = [...scheduleData.recentMatchEventIds, ...fallback.recentMatchEventIds];
-        final sortedPairs = List.generate(combined.length, (i) => [combined[i], combinedIds[i]])
-          ..sort((a, b) =>
-              (b[0] as TeamRecentMatch).date.compareTo((a[0] as TeamRecentMatch).date));
-        scheduleData = _ScheduleResult(
-          recentMatches: sortedPairs.take(5).map((p) => p[0] as TeamRecentMatch).toList(),
-          upcoming: scheduleData.upcoming.isNotEmpty ? scheduleData.upcoming : fallback.upcoming,
-          headCoach: scheduleData.headCoach ?? fallback.headCoach,
-          recentMatchEventIds: sortedPairs.take(5).map((p) => p[1] as String).toList(),
-        );
-        print('[NationalTeam] After fallback: ${scheduleData.recentMatches.length} recent');
+      squadPlayers = results[0] as List<TeamSquadPlayer>;
+      standingInfo = results[1] as TeamStandingInfo;
+
+      if (scheduleData.headCoach == null) {
+        try {
+          final coach = await _fetchTeamCoach(teamId, primaryLeague);
+          scheduleData = _ScheduleResult(
+            recentMatches: scheduleData.recentMatches,
+            upcoming: scheduleData.upcoming,
+            headCoach: coach,
+            recentMatchEventIds: scheduleData.recentMatchEventIds,
+          );
+        } catch (_) {}
       }
-    }
+    } else {
+      // ── Other national teams (Euro, Copa America, etc.) ──────────────────────
+      final results = await Future.wait([
+        _fetchTeamSchedule(teamId, primaryLeague),
+        _fetchTeamRosterFull(teamId, primaryLeague),
+        _fetchTeamStandingInfo(teamId, primaryLeague),
+      ]);
 
-    // ── Try next season fixtures if none found ────────────────────────────────
-    if (scheduleData.upcoming.isEmpty) {
-      final nextYear = DateTime.now().year + 1;
-      final nextSchedule = await _fetchTeamScheduleForYear(teamId, primaryLeague, nextYear);
-      if (nextSchedule.upcoming.isNotEmpty) {
-        scheduleData = _ScheduleResult(
-          recentMatches: scheduleData.recentMatches,
-          upcoming: nextSchedule.upcoming,
-          headCoach: scheduleData.headCoach ?? nextSchedule.headCoach,
-          recentMatchEventIds: scheduleData.recentMatchEventIds,
+      scheduleData = results[0] as _ScheduleResult;
+      squadPlayers = results[1] as List<TeamSquadPlayer>;
+      standingInfo = results[2] as TeamStandingInfo;
+
+      print('[NationalTeam] Primary schedule: ${scheduleData.recentMatches.length} recent, ${scheduleData.upcoming.length} upcoming');
+
+      if (scheduleData.recentMatches.length < 3) {
+        print('[NationalTeam] Supplementing with international fallback matches');
+        final fallback = await _fetchNationalTeamFallbackMatches(
+          teamId,
+          existing: scheduleData.recentMatches,
+          existingIds: scheduleData.recentMatchEventIds,
+          targetCount: 5,
         );
+
+        if (fallback.recentMatches.isNotEmpty) {
+          final combined = [...scheduleData.recentMatches, ...fallback.recentMatches];
+          final combinedIds = [...scheduleData.recentMatchEventIds, ...fallback.recentMatchEventIds];
+          final sortedPairs = List.generate(combined.length, (i) => [combined[i], combinedIds[i]])
+            ..sort((a, b) =>
+                (b[0] as TeamRecentMatch).date.compareTo((a[0] as TeamRecentMatch).date));
+          scheduleData = _ScheduleResult(
+            recentMatches: sortedPairs.take(5).map((p) => p[0] as TeamRecentMatch).toList(),
+            upcoming: scheduleData.upcoming.isNotEmpty ? scheduleData.upcoming : fallback.upcoming,
+            headCoach: scheduleData.headCoach ?? fallback.headCoach,
+            recentMatchEventIds: sortedPairs.take(5).map((p) => p[1] as String).toList(),
+          );
+          print('[NationalTeam] After fallback: ${scheduleData.recentMatches.length} recent');
+        }
+      }
+
+      if (scheduleData.upcoming.isEmpty) {
+        print('[NationalTeam] No upcoming fixtures — searching international fallback leagues');
+        final fallbackUpcoming = await _fetchUpcomingFromAllLeagues(
+          teamId,
+          AppConstants.internationalFallbackLeagues,
+        );
+        if (fallbackUpcoming.isNotEmpty) {
+          print('[NationalTeam] Found ${fallbackUpcoming.length} upcoming fixtures in fallback leagues');
+          scheduleData = _ScheduleResult(
+            recentMatches: scheduleData.recentMatches,
+            upcoming: fallbackUpcoming,
+            headCoach: scheduleData.headCoach,
+            recentMatchEventIds: scheduleData.recentMatchEventIds,
+          );
+        }
+      }
+
+      if (scheduleData.upcoming.isEmpty) {
+        final nextYear = DateTime.now().year + 1;
+        final nextSchedule = await _fetchTeamScheduleForYear(teamId, primaryLeague, nextYear);
+        if (nextSchedule.upcoming.isNotEmpty) {
+          scheduleData = _ScheduleResult(
+            recentMatches: scheduleData.recentMatches,
+            upcoming: nextSchedule.upcoming,
+            headCoach: scheduleData.headCoach ?? nextSchedule.headCoach,
+            recentMatchEventIds: scheduleData.recentMatchEventIds,
+          );
+        }
       }
     }
 
@@ -2592,8 +2795,8 @@ class ApiService {
       finalSquad = await _fetchTeamRosterFull(teamId, leagueCode);
     }
 
-    // Enrich headshots: tries sports.core.api → site.web.api → site.api in order
-    finalSquad = await _enrichRosterHeadshots(finalSquad, primaryLeague);
+    finalSquad = await _enrichRosterHeadshots(finalSquad, primaryLeague,
+        teamId: teamId);
 
     final enrichedMatches = await _enrichMatchesWithSummaryStats(
       scheduleData.recentMatches,
@@ -2615,8 +2818,132 @@ class ApiService {
     );
   }
 
-  /// Scans [AppConstants.internationalFallbackLeagues] for up to [targetCount]
-  /// recent completed matches for [teamId] not already in [existing].
+  // ══════════════════════════════════════════════════════════════════════════════
+  // WORLD CUP SPECIFIC METHODS
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  Future<_ScheduleResult> _fetchWorldCupFixtures(String teamId) async {
+    print('[WorldCup] Fetching World Cup 2026 fixtures for team: $teamId');
+
+    final now = DateTime.now();
+    final tournamentStart = DateTime(2026, 6, 11);
+    final tournamentEnd = DateTime(2026, 7, 19);
+
+    final startDate = now.isBefore(tournamentStart)
+        ? tournamentStart
+        : tournamentStart;
+
+    final endDate = now.isAfter(tournamentEnd)
+        ? tournamentEnd
+        : tournamentEnd;
+
+    print('[WorldCup] Fetching matches from ${_fmt(startDate)} to ${_fmt(endDate)}');
+
+    final allMatches = await _fetchAllLeaguesForLocalDayRange(
+        startDate,
+        endDate,
+        ['fifa.world']
+    );
+
+    print('[WorldCup] Found ${allMatches.length} World Cup matches in date range');
+
+    final List<TeamRecentMatch> recentMatches = [];
+    final List<String> recentEventIds = [];
+    final List<TeamUpcomingFixture> upcoming = [];
+
+    for (final game in allMatches) {
+      if (game.awayTeam.id != teamId && game.homeTeam.id != teamId) continue;
+
+      final isHome = game.homeTeam.id == teamId;
+      final opponent = isHome ? game.awayTeam : game.homeTeam;
+      final gameDate = DateTime.tryParse(game.date);
+
+      if (game.status == 'STATUS_FINAL' || game.status == 'STATUS_LIVE') {
+        final myScore = int.tryParse(isHome ? game.homeScore : game.awayScore) ?? 0;
+        final oppScore = int.tryParse(isHome ? game.awayScore : game.homeScore) ?? 0;
+
+        String result;
+        if (myScore > oppScore) result = 'win';
+        else if (myScore < oppScore) result = 'loss';
+        else result = 'draw';
+
+        recentMatches.add(TeamRecentMatch(
+          opponentId: opponent.id,
+          opponentName: opponent.displayName,
+          opponentLogo: opponent.logo.isNotEmpty ? opponent.logo : 'https://a.espncdn.com/i/teamlogos/soccer/500/${opponent.id}.png',
+          opponentAbbr: opponent.abbreviation,
+          score: '$myScore-$oppScore',
+          result: result,
+          date: game.date,
+          competition: 'FIFA World Cup 2026',
+          leagueFlag: '🏆',
+          isHome: isHome,
+          goalsFor: myScore,
+          goalsAgainst: oppScore,
+          yellowCards: 0,
+          redCards: 0,
+          possession: null,
+          shots: null,
+          shotsOnTarget: null,
+        ));
+        recentEventIds.add(game.id);
+      } else if (game.status == 'STATUS_SCHEDULED' && gameDate != null && gameDate.isAfter(now)) {
+        upcoming.add(TeamUpcomingFixture(
+          opponentId: opponent.id,
+          opponentName: opponent.displayName,
+          opponentLogo: opponent.logo.isNotEmpty ? opponent.logo : 'https://a.espncdn.com/i/teamlogos/soccer/500/${opponent.id}.png',
+          opponentAbbr: opponent.abbreviation,
+          competition: 'FIFA World Cup 2026',
+          leagueFlag: '🏆',
+          date: game.date,
+          isHome: isHome,
+        ));
+      }
+    }
+
+    recentMatches.sort((a, b) => b.date.compareTo(a.date));
+    upcoming.sort((a, b) => a.date.compareTo(b.date));
+
+    print('[WorldCup] Found ${recentMatches.length} recent matches and ${upcoming.length} upcoming matches');
+
+    return _ScheduleResult(
+      recentMatches: recentMatches.take(5).toList(),
+      upcoming: upcoming.take(5).toList(),
+      recentMatchEventIds: recentEventIds.take(5).toList(),
+      headCoach: null,
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // HELPER METHODS FOR INTERNATIONAL FALLBACK
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  Future<List<TeamUpcomingFixture>> _fetchUpcomingFromAllLeagues(
+      String teamId, List<String> leagueCodes) async {
+    final allUpcoming = <TeamUpcomingFixture>[];
+    final now = DateTime.now();
+
+    for (final code in leagueCodes) {
+      try {
+        final result = await _fetchTeamSchedule(teamId, code);
+        for (final fixture in result.upcoming) {
+          try {
+            final fixtureDate = DateTime.parse(fixture.date);
+            if (fixtureDate.isAfter(now)) {
+              allUpcoming.add(fixture);
+            }
+          } catch (_) {}
+        }
+        if (allUpcoming.length >= 5) break;
+      } catch (e) {
+        print('[NationalTeam] Error fetching upcoming from $code: $e');
+      }
+    }
+
+    allUpcoming.sort((a, b) => a.date.compareTo(b.date));
+    return allUpcoming.take(5).toList();
+  }
+
   Future<_ScheduleResult> _fetchNationalTeamFallbackMatches(
       String teamId, {
         required List<TeamRecentMatch> existing,
@@ -2650,21 +2977,948 @@ class ApiService {
     );
   }
 
-  Future<_ScheduleResult> _fetchTeamScheduleForYear(
-      String teamId, String leagueCode, int year) async {
-    final url = '${AppConstants.baseUrl}/$leagueCode/teams/$teamId/schedule?season=$year';
-    print('[TeamPage] Fetching next-season schedule: $url');
+  // ══════════════════════════════════════════════════════════════════════════════
+  // CORE TEAM SCHEDULE METHODS
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  Future<String> _detectTeamLeague(String teamId) async {
+    final quickLeagues = AppConstants.priorityLeagues.take(8).toList();
+    for (final league in quickLeagues) {
+      final code = league['code']!;
+      final url = '${AppConstants.baseUrl}/$code/teams/$teamId';
+      try {
+        final res = await _client
+            .get(Uri.parse(url), headers: _headers)
+            .timeout(const Duration(seconds: 3));
+        if (res.statusCode == 200) {
+          print('[TeamPage] Detected league: $code for team $teamId');
+          return code;
+        }
+      } catch (_) {}
+    }
+    print('[TeamPage] Could not detect league, defaulting to eng.1');
+    return 'eng.1';
+  }
+
+  Future<_ScheduleResult> _fetchTeamSchedule(
+      String teamId, String leagueCode) async {
+    final url = '${AppConstants.baseUrl}/$leagueCode/teams/$teamId/schedule';
+    print('[TeamPage] Fetching schedule: $url');
     try {
       final res = await _client
           .get(Uri.parse(url), headers: _headers)
-          .timeout(const Duration(seconds: 8));
+          .timeout(const Duration(seconds: 12));
+      print('[TeamPage] Schedule HTTP ${res.statusCode}');
       if (res.statusCode != 200) return _ScheduleResult.empty();
       return _parseTeamSchedule(
           json.decode(res.body) as Map<String, dynamic>, leagueCode, teamId);
     } catch (e) {
-      print('[TeamPage] Next-season schedule error: $e');
+      print('[TeamPage] Schedule error: $e');
       return _ScheduleResult.empty();
     }
+  }
+
+  Future<_ScheduleResult> _fetchTeamScheduleForYear(
+      String teamId, String leagueCode, int year) async {
+    String url = '${AppConstants.baseUrl}/$leagueCode/teams/$teamId/schedule?season=$year';
+    print('[TeamPage] Fetching schedule for year $year: $url');
+
+    try {
+      final res = await _client
+          .get(Uri.parse(url), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+
+      if (res.statusCode == 200) {
+        final data = json.decode(res.body) as Map<String, dynamic>;
+        final events = data['events'] as List? ?? [];
+
+        if (events.isNotEmpty) {
+          return _parseTeamSchedule(data, leagueCode, teamId);
+        }
+      }
+    } catch (e) {
+      print('[TeamPage] Schedule error for year $year: $e');
+    }
+
+    if (year == DateTime.now().year) {
+      url = '${AppConstants.baseUrl}/$leagueCode/teams/$teamId/schedule';
+      try {
+        final res = await _client
+            .get(Uri.parse(url), headers: _headers)
+            .timeout(const Duration(seconds: 10));
+
+        if (res.statusCode == 200) {
+          final data = json.decode(res.body) as Map<String, dynamic>;
+          return _parseTeamSchedule(data, leagueCode, teamId);
+        }
+      } catch (e) {
+        print('[TeamPage] Fallback schedule error: $e');
+      }
+    }
+
+    return _ScheduleResult.empty();
+  }
+
+  _ScheduleResult _parseTeamSchedule(
+      Map<String, dynamic> data, String leagueCode, String teamId) {
+    final events = data['events'] as List? ?? [];
+    print('[TeamPage] Total events in schedule: ${events.length}');
+    final now = DateTime.now();
+
+    final List<TeamRecentMatch> allRecent = [];
+    final List<String> allRecentEventIds = [];
+    final List<TeamUpcomingFixture> upcoming = [];
+
+    String? headCoach;
+    final coaches = data['coach'] as List?;
+    if (coaches != null && coaches.isNotEmpty) {
+      headCoach = coaches.first?['displayName']?.toString();
+    }
+
+    final leagueEntry = AppConstants.allLeagues.firstWhere(
+          (l) => l['code'] == leagueCode,
+      orElse: () => {'name': leagueCode, 'flag': '⚽'},
+    );
+
+    for (final event in events) {
+      try {
+        final competition =
+        (event['competitions'] as List?)?.first as Map<String, dynamic>?;
+        if (competition == null) continue;
+        final competitors = competition['competitors'] as List? ?? [];
+        if (competitors.length < 2) continue;
+
+        Map<String, dynamic>? myData, oppData;
+        for (final c in competitors) {
+          final tid = c['team']?['id']?.toString() ?? '';
+          if (tid == teamId) {
+            myData = c as Map<String, dynamic>;
+          } else {
+            oppData = c as Map<String, dynamic>;
+          }
+        }
+
+        if (myData == null || oppData == null) {
+          if (competitors.length >= 2) {
+            final eventName = (event['name'] ?? event['shortName'] ?? '').toString();
+            for (final c in competitors) {
+              final tAbbr = c['team']?['abbreviation']?.toString() ?? '';
+              final tName = c['team']?['name']?.toString() ?? '';
+              if (eventName.contains(tAbbr) || eventName.contains(tName)) {
+                myData ??= c as Map<String, dynamic>;
+              } else {
+                oppData ??= c as Map<String, dynamic>;
+              }
+            }
+          }
+          if (myData == null || oppData == null) continue;
+        }
+
+        final normStatus = _normalizeEventStatus(event);
+        final isHome = myData['homeAway']?.toString() == 'home';
+        final eventDate = DateTime.tryParse(event['date']?.toString() ?? '');
+
+        if (eventDate != null) {
+          print('[TeamPage] Event ${event['id']}: status=$normStatus, date=${eventDate.toLocal()}, isAfterNow=${eventDate.isAfter(now)}');
+        }
+
+        if (normStatus == 'STATUS_FINAL' || normStatus == 'STATUS_LIVE') {
+          int myScore = 0;
+          int oppScore = 0;
+
+          final myScoreRaw = myData['score'];
+          final oppScoreRaw = oppData['score'];
+
+          if (myScoreRaw is Map) {
+            myScore = int.tryParse(myScoreRaw['displayValue']?.toString() ?? '0') ?? 0;
+          } else {
+            myScore = int.tryParse(myScoreRaw?.toString() ?? '0') ?? 0;
+          }
+
+          if (oppScoreRaw is Map) {
+            oppScore = int.tryParse(oppScoreRaw['displayValue']?.toString() ?? '0') ?? 0;
+          } else {
+            oppScore = int.tryParse(oppScoreRaw?.toString() ?? '0') ?? 0;
+          }
+
+          if (myScore == 0 && oppScore == 0) {
+            final compScores = competition['score']?.toString() ?? '';
+            if (compScores.contains('-')) {
+              final parts = compScores.split('-');
+              if (parts.length == 2) {
+                final s1 = int.tryParse(parts[0].trim()) ?? 0;
+                final s2 = int.tryParse(parts[1].trim()) ?? 0;
+                myScore = isHome ? s1 : s2;
+                oppScore = isHome ? s2 : s1;
+              }
+            }
+          }
+
+          if (myScore == 0 && oppScore == 0) {
+            final myLines = myData['linescores'] as List? ?? [];
+            final oppLines = oppData['linescores'] as List? ?? [];
+            if (myLines.isNotEmpty) {
+              myScore = myLines.fold<int>(0, (sum, ls) =>
+              sum + (int.tryParse(ls['value']?.toString() ?? '0') ?? 0));
+              oppScore = oppLines.fold<int>(0, (sum, ls) =>
+              sum + (int.tryParse(ls['value']?.toString() ?? '0') ?? 0));
+            }
+          }
+
+          String result;
+          if (myScore > oppScore) result = 'win';
+          else if (myScore < oppScore) result = 'loss';
+          else result = 'draw';
+
+          int yc = 0, rc = 0;
+          double? poss, shots, sot;
+          try {
+            final details = competition['details'] as List? ?? [];
+            for (final d in details) {
+              final t = (d['type']?['text'] ?? '').toString().toLowerCase();
+              final tid = d['team']?['id']?.toString() ?? '';
+              if (tid != teamId) continue;
+              if (t.contains('yellow')) yc++;
+              if (t.contains('red card')) rc++;
+            }
+
+            final compBoxTeams = competition['boxScore']?['teams'] as List? ?? [];
+            for (final ts in compBoxTeams) {
+              if (ts['team']?['id']?.toString() != teamId) continue;
+              for (final stat in (ts['statistics'] as List? ?? [])) {
+                final n = (stat['name'] ?? '').toString().toLowerCase();
+                final v = double.tryParse(
+                    stat['displayValue']?.toString().replaceAll('%', '') ?? '');
+                if (v == null) continue;
+                if (n.contains('possession')) poss ??= v;
+                if (n == 'shots' || n == 'totalshots' || n == 'shotsattempted') shots ??= v;
+                if (n.contains('shotsontarget') || n.contains('shots on target') || n == 'sot' || n.contains('on target') || n == 'ontarget') sot ??= v;
+                if (n.contains('yellow') && yc == 0) yc = v.toInt();
+                if (n.contains('red') && rc == 0) rc = v.toInt();
+              }
+            }
+
+            for (final c in [myData, oppData]) {
+              if (c == null) continue;
+              final isMyTeam = c['team']?['id']?.toString() == teamId;
+              final cStats = c['statistics'] as List? ?? [];
+              for (final stat in cStats) {
+                final n = (stat['name'] ?? stat['abbreviation'] ?? '').toString().toLowerCase();
+                final v = double.tryParse(
+                    stat['displayValue']?.toString().replaceAll('%', '') ?? '');
+                if (v == null || !isMyTeam) continue;
+                if (n.contains('poss')) poss ??= v;
+                if (n == 'sh' || n == 'shots') shots ??= v;
+                if (n == 'sot' || n.contains('on target') || n == 'ontarget' || n.contains('shotsontarget')) sot ??= v;
+              }
+            }
+          } catch (_) {}
+
+          allRecent.add(TeamRecentMatch(
+            opponentId: oppData['team']?['id']?.toString() ?? '',
+            opponentName: oppData['team']?['displayName']?.toString() ??
+                oppData['team']?['name']?.toString() ?? 'Unknown',
+            opponentLogo: _resolveTeamLogo(oppData['team'] ?? {}),
+            opponentAbbr: oppData['team']?['abbreviation']?.toString() ?? '',
+            score: '$myScore-$oppScore',
+            result: result,
+            date: event['date']?.toString() ?? '',
+            competition: leagueEntry['name'] ?? leagueCode,
+            leagueFlag: leagueEntry['flag'] ?? '⚽',
+            isHome: isHome,
+            goalsFor: myScore,
+            goalsAgainst: oppScore,
+            yellowCards: yc,
+            redCards: rc,
+            possession: poss,
+            shots: shots,
+            shotsOnTarget: sot,
+          ));
+          allRecentEventIds.add(event['id']?.toString() ?? '');
+        } else if (normStatus == 'STATUS_SCHEDULED' && eventDate != null && eventDate.isAfter(now)) {
+          final opponentId = oppData['team']?['id']?.toString() ?? '';
+          final opponentName = oppData['team']?['displayName']?.toString() ??
+              oppData['team']?['name']?.toString() ?? 'Unknown';
+          final opponentAbbr = oppData['team']?['abbreviation']?.toString() ?? '';
+          final opponentLogo = _resolveTeamLogo(oppData['team'] ?? {});
+
+          final exists = upcoming.any((f) =>
+          f.opponentId == opponentId &&
+              f.date == event['date']?.toString() &&
+              f.competition == leagueEntry['name']);
+
+          if (!exists) {
+            upcoming.add(TeamUpcomingFixture(
+              opponentId: opponentId,
+              opponentName: opponentName,
+              opponentLogo: opponentLogo,
+              opponentAbbr: opponentAbbr,
+              competition: leagueEntry['name'] ?? leagueCode,
+              leagueFlag: leagueEntry['flag'] ?? '⚽',
+              date: event['date']?.toString() ?? '',
+              isHome: isHome,
+            ));
+            print('[TeamPage] ✅ Added upcoming fixture: $opponentName on ${event['date']}');
+          }
+        } else if (eventDate != null && eventDate.isAfter(now) && normStatus != 'STATUS_FINAL') {
+          final opponentId = oppData['team']?['id']?.toString() ?? '';
+          final opponentName = oppData['team']?['displayName']?.toString() ??
+              oppData['team']?['name']?.toString() ?? 'Unknown';
+          final opponentAbbr = oppData['team']?['abbreviation']?.toString() ?? '';
+          final opponentLogo = _resolveTeamLogo(oppData['team'] ?? {});
+
+          final exists = upcoming.any((f) =>
+          f.opponentId == opponentId &&
+              f.date == event['date']?.toString());
+
+          if (!exists) {
+            print('[TeamPage] ⚠️ Fallback: Adding future event with status "$normStatus" as upcoming');
+            upcoming.add(TeamUpcomingFixture(
+              opponentId: opponentId,
+              opponentName: opponentName,
+              opponentLogo: opponentLogo,
+              opponentAbbr: opponentAbbr,
+              competition: leagueEntry['name'] ?? leagueCode,
+              leagueFlag: leagueEntry['flag'] ?? '⚽',
+              date: event['date']?.toString() ?? '',
+              isHome: isHome,
+            ));
+          }
+        }
+      } catch (e) {
+        print('[TeamPage] Event parse error: $e');
+      }
+    }
+
+    final sortedPairs =
+    List.generate(allRecent.length, (i) => [allRecent[i], allRecentEventIds[i]])
+      ..sort((a, b) =>
+          (b[0] as TeamRecentMatch).date.compareTo((a[0] as TeamRecentMatch).date));
+    final recent = sortedPairs.take(5).map((p) => p[0] as TeamRecentMatch).toList();
+    final recentIds = sortedPairs.take(5).map((p) => p[1] as String).toList();
+
+    upcoming.sort((a, b) => a.date.compareTo(b.date));
+    final upcomingFinal = upcoming.take(5).toList();
+
+    print('[TeamPage] Parsed: ${recent.length} recent matches '
+        '(from ${allRecent.length} total), ${upcomingFinal.length} upcoming');
+
+    return _ScheduleResult(
+      recentMatches: recent,
+      upcoming: upcomingFinal,
+      headCoach: headCoach,
+      recentMatchEventIds: recentIds,
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // ROSTER & SQUAD METHODS
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  Future<List<TeamSquadPlayer>> _fetchTeamRosterFull(
+      String teamId, String leagueCode) async {
+    final url = '${AppConstants.baseUrl}/$leagueCode/teams/$teamId/roster';
+    print('[TeamPage] Fetching roster: $url');
+    try {
+      final res = await _client
+          .get(Uri.parse(url), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+      print('[TeamPage] Roster HTTP ${res.statusCode}');
+      if (res.statusCode != 200) return [];
+
+      final data = json.decode(res.body) as Map<String, dynamic>;
+      final raw = data['athletes'];
+      final List<Map<String, dynamic>> athletes = [];
+
+      if (raw is List) {
+        for (final item in raw) {
+          if (item is Map && item['items'] is List) {
+            for (final a in item['items'] as List) {
+              if (a is Map) {
+                athletes.add(Map<String, dynamic>.from(a));
+              }
+            }
+          } else if (item is Map) {
+            athletes.add(Map<String, dynamic>.from(item));
+          }
+        }
+      }
+
+      print('[TeamPage] Total athletes in roster: ${athletes.length}');
+
+      final cachedHeadshots =
+      await _cache.getCachedSquadHeadshots(teamId);
+
+      final List<TeamSquadPlayer> players = [];
+      for (final a in athletes) {
+        String playerId = a['id']?.toString() ?? '';
+
+        if (playerId.isEmpty) {
+          final ref = a['\$ref']?.toString() ?? '';
+          if (ref.isNotEmpty) {
+            final match = RegExp(r'/athletes/(\d+)').firstMatch(ref);
+            if (match != null) playerId = match.group(1)!;
+          }
+        }
+
+        if (playerId.isEmpty) continue;
+
+        String headshot = '';
+
+        final links = a['links'] as List? ?? [];
+        for (final link in links) {
+          if (link is! Map) continue;
+          final rels = (link['rel'] as List? ?? [])
+              .map((r) => r.toString().toLowerCase())
+              .toList();
+          if (rels.contains('photo') ||
+              rels.contains('headshot') ||
+              rels.contains('athlete-headshot') ||
+              (rels.contains('athlete') && rels.contains('desktop')) ||
+              (rels.contains('athlete') && rels.contains('image'))) {
+            headshot = link['href']?.toString() ?? '';
+            if (headshot.isNotEmpty) break;
+          }
+        }
+
+        if (headshot.isEmpty) {
+          final hs = a['headshot'];
+          if (hs is String && hs.isNotEmpty) {
+            headshot = hs;
+          } else if (hs is Map) {
+            headshot = hs['href']?.toString() ?? '';
+            if (headshot.isEmpty) {
+              final hsRef = hs['\$ref']?.toString() ?? '';
+              if (hsRef.isNotEmpty) {
+                final m = RegExp(r'/athletes/(\d+)').firstMatch(hsRef);
+                if (m != null) playerId = m.group(1)!;
+              }
+            }
+            if (headshot.isEmpty) {
+              headshot = hs['full']?.toString() ?? hs['default']?.toString() ?? '';
+            }
+          }
+        }
+
+        final posAbbr =
+        (a['position']?['abbreviation'] ?? a['position'] ?? '').toString();
+        final posName =
+        (a['position']?['name'] ?? a['position']?['displayName'] ?? '')
+            .toString()
+            .toLowerCase();
+        final cat = _positionCategory(posAbbr, posName);
+
+        final nationality = a['citizenship']?.toString() ??
+            a['birthPlace']?['country']?.toString() ??
+            a['nationality']?.toString() ?? '';
+
+        players.add(TeamSquadPlayer(
+          id: playerId,
+          name: a['displayName']?.toString() ?? a['fullName']?.toString() ?? '',
+          jersey: a['jersey']?.toString() ?? '',
+          position: posAbbr,
+          positionCategory: cat,
+          nationality: nationality,
+          age: a['age'] is int
+              ? a['age'] as int
+              : int.tryParse(a['age']?.toString() ?? ''),
+          headshotUrl: headshot,
+          rating: double.tryParse(a['rating']?.toString() ?? ''),
+        ));
+      }
+
+      print('[TeamPage] Parsed ${players.length} players with IDs');
+
+      if (cachedHeadshots != null && players.isNotEmpty) {
+        final hits = players.where((p) => (cachedHeadshots[p.id] ?? '').isNotEmpty).length;
+        final hitRate = hits / players.length;
+
+        if (hitRate >= 0.6) {
+          final merged = players.map((p) {
+            final cached = cachedHeadshots[p.id] ?? '';
+            final url = cached.isNotEmpty ? cached : p.headshotUrl;
+            if (url == p.headshotUrl) return p;
+            return TeamSquadPlayer(
+              id: p.id,
+              name: p.name,
+              jersey: p.jersey,
+              position: p.position,
+              positionCategory: p.positionCategory,
+              nationality: p.nationality,
+              age: p.age,
+              headshotUrl: url,
+              rating: p.rating,
+            );
+          }).toList();
+
+          print('[TeamPage] ✅ Headshot cache HIT — '
+              '$hits/${players.length} players have photos (${(hitRate * 100).toStringAsFixed(0)}%, skipping enrichment)');
+          return merged;
+        } else {
+          print('[TeamPage] ⚠️ Headshot cache STALE/POOR — '
+              'only $hits/${players.length} players have photos (${(hitRate * 100).toStringAsFixed(0)}%, '
+              're-running enrichment instead of trusting cache)');
+          for (int i = 0; i < players.length; i++) {
+            final cached = cachedHeadshots[players[i].id] ?? '';
+            if (cached.isNotEmpty && players[i].headshotUrl.isEmpty) {
+              players[i] = TeamSquadPlayer(
+                id: players[i].id,
+                name: players[i].name,
+                jersey: players[i].jersey,
+                position: players[i].position,
+                positionCategory: players[i].positionCategory,
+                nationality: players[i].nationality,
+                age: players[i].age,
+                headshotUrl: cached,
+                rating: players[i].rating,
+              );
+            }
+          }
+        }
+      }
+
+      return players;
+    } catch (e) {
+      print('[TeamPage] Roster error: $e');
+      return [];
+    }
+  }
+
+  String _positionCategory(String abbr, String name) {
+    final a = abbr.toUpperCase();
+    if (a == 'GK' || name.contains('goalkeeper') || name.contains('keeper')) {
+      return 'GOALKEEPERS';
+    }
+    if (['CB', 'LB', 'RB', 'SW', 'WB', 'LWB', 'RWB'].contains(a) ||
+        name.contains('back') || name.contains('defender')) {
+      return 'DEFENDERS';
+    }
+    if (['ST', 'CF', 'LW', 'RW', 'SS', 'FW'].contains(a) ||
+        name.contains('forward') ||
+        name.contains('striker') ||
+        name.contains('winger')) {
+      return 'FORWARDS';
+    }
+    return 'MIDFIELDERS';
+  }
+
+  Future<List<TeamSquadPlayer>> _enrichRosterHeadshots(
+      List<TeamSquadPlayer> players, String leagueCode,
+      {required String teamId}) async {
+    if (players.isEmpty) return players;
+
+    final headers = {
+      ..._headers,
+      'Referer': 'https://www.espn.com/',
+      'Origin':  'https://www.espn.com',
+    };
+
+    final enriched = <String, String>{
+      for (final p in players) p.id: p.headshotUrl,
+    };
+
+    final missing = players
+        .where((p) => p.id.isNotEmpty && p.headshotUrl.isEmpty)
+        .toList();
+
+    print('[Headshot] ${players.length} total players, ${missing.length} missing headshots');
+
+    final Map<String, String> bulkHeadshots = {};
+    if (missing.isNotEmpty) {
+      try {
+        final bulkUrl =
+            'https://sports.core.api.espn.com/v3/sports/soccer/'
+            '$leagueCode/athletes?limit=200&active=true';
+        final res = await _client
+            .get(Uri.parse(bulkUrl), headers: headers)
+            .timeout(const Duration(seconds: 8));
+
+        if (res.statusCode == 200) {
+          final data = json.decode(res.body) as Map<String, dynamic>;
+          final items = data['athletes'] as List? ?? data['items'] as List? ?? [];
+          for (final item in items) {
+            if (item is! Map) continue;
+            final athleteData = item as Map<String, dynamic>;
+            final id = athleteData['id']?.toString() ?? '';
+            if (id.isEmpty) continue;
+            final found = _extractHeadshotFromAthleteData(athleteData);
+            if (found != null && found.isNotEmpty) {
+              bulkHeadshots[id] = found;
+            }
+          }
+          print('[Headshot] Bulk v3 lookup: ${bulkHeadshots.length} headshots available');
+        }
+      } catch (e) {
+        print('[Headshot] Bulk v3 lookup failed (non-fatal): $e');
+      }
+    }
+
+    const batchSize = 10;
+    for (int i = 0; i < missing.length; i += batchSize) {
+      final batch = missing.sublist(i, (i + batchSize).clamp(0, missing.length));
+
+      await Future.wait(batch.map((player) async {
+        final pid = player.id;
+
+        final bulkMatch = bulkHeadshots[pid];
+        if (bulkMatch != null && bulkMatch.isNotEmpty) {
+          enriched[pid] = bulkMatch;
+          return;
+        }
+
+        try {
+          final coreUrl =
+              'https://sports.core.api.espn.com/v2/sports/soccer/leagues/'
+              '$leagueCode/athletes/$pid?lang=en&region=us';
+          final res = await _client
+              .get(Uri.parse(coreUrl), headers: headers)
+              .timeout(const Duration(seconds: 5));
+
+          if (res.statusCode == 200) {
+            final data = json.decode(res.body) as Map<String, dynamic>;
+            final found = _extractHeadshotFromAthleteData(data);
+            if (found != null && found.isNotEmpty) {
+              enriched[pid] = found;
+              return;
+            }
+          }
+        } catch (_) {}
+
+        try {
+          final webUrl =
+              'https://site.web.api.espn.com/apis/common/v3/sports/soccer/'
+              '$leagueCode/athletes/$pid';
+          final res = await _client
+              .get(Uri.parse(webUrl), headers: headers)
+              .timeout(const Duration(seconds: 5));
+
+          if (res.statusCode == 200) {
+            final data = json.decode(res.body) as Map<String, dynamic>;
+            final athleteData = data['athlete'] is Map
+                ? data['athlete'] as Map<String, dynamic>
+                : data;
+            final found = _extractHeadshotFromAthleteData(athleteData);
+            if (found != null && found.isNotEmpty) {
+              enriched[pid] = found;
+              return;
+            }
+          }
+        } catch (_) {}
+
+        try {
+          final siteUrl =
+              '${AppConstants.baseUrl}/$leagueCode/athletes/$pid';
+          final res = await _client
+              .get(Uri.parse(siteUrl), headers: headers)
+              .timeout(const Duration(seconds: 5));
+
+          if (res.statusCode == 200) {
+            final data = json.decode(res.body) as Map<String, dynamic>;
+            final found = _extractHeadshotFromAthleteData(data);
+            if (found != null && found.isNotEmpty) {
+              enriched[pid] = found;
+              return;
+            }
+          }
+        } catch (_) {}
+      }));
+    }
+
+    final gotHeadshot = enriched.values.where((v) => v.isNotEmpty).length;
+    print('[Headshot] Enrichment complete: $gotHeadshot/${players.length} have URLs');
+
+    try {
+      await _cache.cacheSquadHeadshots(teamId, Map<String, String>.from(enriched));
+    } catch (e) {
+      print('[Headshot] Failed to persist headshot cache: $e');
+    }
+
+    return players.map((p) {
+      final newUrl = enriched[p.id] ?? '';
+      if (newUrl.isNotEmpty && newUrl != p.headshotUrl) {
+        return TeamSquadPlayer(
+          id: p.id,
+          name: p.name,
+          jersey: p.jersey,
+          position: p.position,
+          positionCategory: p.positionCategory,
+          nationality: p.nationality,
+          age: p.age,
+          headshotUrl: newUrl,
+          rating: p.rating,
+        );
+      }
+      return p;
+    }).toList();
+  }
+
+
+
+  Future<String?> _fetchTeamCoach(String teamId, String leagueCode) async {
+    try {
+      final url = '${AppConstants.baseUrl}/$leagueCode/teams/$teamId';
+      final res = await _client
+          .get(Uri.parse(url), headers: _headers)
+          .timeout(const Duration(seconds: 5));
+
+      if (res.statusCode == 200) {
+        final data = json.decode(res.body) as Map<String, dynamic>;
+        final teamData = data['team'] as Map<String, dynamic>?;
+        if (teamData != null) {
+          final coaches = teamData['coaches'] as List?;
+          if (coaches != null && coaches.isNotEmpty) {
+            return coaches.first['fullName']?.toString();
+          }
+        }
+      }
+    } catch (e) {
+      print('[TeamPage] Error fetching coach: $e');
+    }
+    return null;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STANDING & ANALYTICS METHODS
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  Future<TeamStandingInfo> _fetchTeamStandingInfo(
+      String teamId, String leagueCode) async {
+    final url = '${AppConstants.standingsUrl}/$leagueCode/standings';
+    print('[TeamPage] Fetching standings: $url');
+    try {
+      final res = await _client
+          .get(Uri.parse(url), headers: _headers)
+          .timeout(const Duration(seconds: 8));
+      print('[TeamPage] Standings HTTP ${res.statusCode}');
+      if (res.statusCode != 200) return const TeamStandingInfo();
+      return _parseStandingForTeam(
+          json.decode(res.body) as Map<String, dynamic>, teamId);
+    } catch (e) {
+      print('[TeamPage] Standings error: $e');
+      return const TeamStandingInfo();
+    }
+  }
+
+  TeamStandingInfo _parseStandingForTeam(
+      Map<String, dynamic> data, String teamId) {
+    int pos = 1;
+    final children = data['children'] as List? ?? [];
+    for (final child in children) {
+      final sub = child['children'] as List? ?? [];
+      for (final s in sub) {
+        final entries = s['standings']?['entries'] as List? ??
+            s['standings'] as List? ?? [];
+        for (final ts in entries) {
+          if (ts['team']?['id']?.toString() == teamId) {
+            int? pts;
+            for (final stat in (ts['stats'] as List? ?? [])) {
+              if ((stat['name'] ?? '').toString().toLowerCase() == 'points') {
+                pts = int.tryParse(stat['displayValue']?.toString() ?? '');
+                break;
+              }
+            }
+            return TeamStandingInfo(
+                rank: pos, points: pts, groupName: s['name']?.toString());
+          }
+          pos++;
+        }
+      }
+      final entries = child['standings']?['entries'] as List? ??
+          child['standings'] as List? ?? [];
+      for (final ts in entries) {
+        if (ts['team']?['id']?.toString() == teamId) {
+          int? pts;
+          for (final stat in (ts['stats'] as List? ?? [])) {
+            if ((stat['name'] ?? '').toString().toLowerCase() == 'points') {
+              pts = int.tryParse(stat['displayValue']?.toString() ?? '');
+              break;
+            }
+          }
+          return TeamStandingInfo(
+              rank: pos, points: pts, groupName: child['name']?.toString());
+        }
+        pos++;
+      }
+    }
+    return const TeamStandingInfo();
+  }
+
+  TeamAnalytics _calculateAnalytics(
+      List<TeamRecentMatch> matches, List<TeamSquadPlayer> squad) {
+    if (matches.isEmpty) return TeamAnalytics.empty;
+
+    int wins = 0, draws = 0, losses = 0;
+    int gf = 0, ga = 0, yc = 0, rc = 0;
+    double possSum = 0, shotsSum = 0, sotSum = 0;
+    int possN = 0, shotsN = 0, sotN = 0;
+
+    for (final m in matches) {
+      if (m.result == 'win') wins++;
+      else if (m.result == 'draw') draws++;
+      else losses++;
+      gf += m.goalsFor;
+      ga += m.goalsAgainst;
+      yc += m.yellowCards;
+      rc += m.redCards;
+      if (m.possession != null && m.possession! > 0) {
+        possSum += m.possession!; possN++;
+      }
+      if (m.shots != null && m.shots! > 0) {
+        shotsSum += m.shots!; shotsN++;
+      }
+      if (m.shotsOnTarget != null && m.shotsOnTarget! > 0) {
+        sotSum += m.shotsOnTarget!; sotN++;
+      }
+    }
+
+    final n = matches.length;
+    final avgPoss  = possN > 0 ? possSum / possN : null;
+    final avgShots = shotsN > 0 ? shotsSum / shotsN : null;
+
+    final totalSot   = sotN > 0 ? sotSum : (shotsN > 0 ? shotsSum : null);
+    final avgSot     = sotN > 0 ? sotSum / sotN : null;
+
+    final conv = totalSot != null && totalSot > 0
+        ? gf / totalSot
+        : null;
+
+    final effectiveShotsPerGame =
+        avgShots ?? (gf / n * 6.0).clamp(3.0, 20.0);
+
+    final gaPerGame   = n > 0 ? ga / n : 0.0;
+    final goalsPerGame = n > 0 ? gf / n : 0.0;
+    final attackScore  = (goalsPerGame / 2.5 * 100).clamp(0.0, 100.0);
+    final defScore     = ((1 - gaPerGame / 3.0) * 100).clamp(0.0, 100.0);
+
+    final possScore = avgPoss != null
+        ? avgPoss.clamp(0.0, 100.0)
+        : (50.0 + (wins - losses) * 3.0).clamp(30.0, 70.0);
+
+    final shotScore = (effectiveShotsPerGame / 20.0 * 100).clamp(0.0, 100.0);
+
+    final midScore = (possScore * 0.55 + shotScore * 0.45).clamp(0.0, 100.0);
+
+    final cardPenalty = n > 0 ? (yc + rc * 3) / (n * 5.0) : 0.0;
+    final discScore   = ((1 - cardPenalty) * 100).clamp(0.0, 100.0);
+
+    print('[TeamPage] SOT-DATA: avgShots=$avgShots avgSot=$avgSot conv=$conv sotN=$sotN shotsN=$shotsN');
+    print('[TeamPage] Analytics: attack=${attackScore.toStringAsFixed(1)} '
+        'def=${defScore.toStringAsFixed(1)} poss=${possScore.toStringAsFixed(1)} '
+        'mid=${midScore.toStringAsFixed(1)} disc=${discScore.toStringAsFixed(1)}');
+    print('[TeamPage] Goals: $gf for, $ga against | W$wins D$draws L$losses | Cards: $yc Y, $rc R');
+
+    TeamSquadPlayer? best;
+    double? bestRating;
+
+    for (final p in squad) {
+      if (p.rating != null && (bestRating == null || p.rating! > bestRating!)) {
+        bestRating = p.rating;
+        best = p;
+      }
+    }
+
+    if (best == null && squad.isNotEmpty) {
+      final priorities = ['FORWARDS', 'MIDFIELDERS', 'DEFENDERS', 'GOALKEEPERS'];
+      for (final cat in priorities) {
+        final pool = squad.where((p) => p.positionCategory == cat).toList();
+        if (pool.isNotEmpty) {
+          pool.sort((a, b) =>
+              (int.tryParse(a.jersey) ?? 99).compareTo(int.tryParse(b.jersey) ?? 99));
+          best = pool.first;
+          break;
+        }
+      }
+    }
+
+    String note = '';
+    if (best != null) {
+      final winRate = n > 0 ? (wins / n * 100).toStringAsFixed(0) : '0';
+      final goalAvg = n > 0 ? (gf / n).toStringAsFixed(1) : '0';
+      final formStr = [
+        if (wins > 0) '$wins W',
+        if (draws > 0) '$draws D',
+        if (losses > 0) '$losses L',
+      ].join(', ');
+
+      switch (best.positionCategory) {
+        case 'FORWARDS':
+          note = 'Key attacker · $formStr · $goalAvg goals/game avg';
+          break;
+        case 'MIDFIELDERS':
+          note = 'Engine of the team · $formStr · $winRate% win rate';
+          break;
+        case 'DEFENDERS':
+          note = 'Defensive anchor · $ga goals conceded in last ${matches.length}';
+          break;
+        default:
+          note = 'Shot-stopper · $ga goals conceded · Last ${matches.length} matches';
+      }
+    }
+
+    return TeamAnalytics(
+      last5Wins: wins,
+      last5Draws: draws,
+      last5Losses: losses,
+      last5GoalsFor: gf,
+      last5GoalsAgainst: ga,
+      last5YellowCards: yc,
+      last5RedCards: rc,
+      avgPossession: avgPoss,
+      avgShotsPerGame: avgShots ?? effectiveShotsPerGame,
+      avgShotsOnTarget: totalSot,
+      shotConversionRate: conv,
+      attackScore: attackScore,
+      midfieldScore: midScore,
+      defenseScore: defScore,
+      possessionScore: possScore,
+      disciplineScore: discScore,
+      bestPlayer: best,
+      bestPlayerRating: bestRating,
+      bestPlayerGoals: gf,
+      bestPlayerAssists: 0,
+      bestPlayerPerformanceNote: note,
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // EXTRA HELPER METHODS
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  Future<List<Game>> _fetchAllLeaguesForLocalDayRange(
+      DateTime startDate,
+      DateTime endDate,
+      List<String> leagueCodes,
+      ) async {
+    print('[API] Fetching matches from ${_fmt(startDate)} to ${_fmt(endDate)} for ${leagueCodes.length} leagues');
+
+    final leagues = AppConstants.allLeagues
+        .where((l) => leagueCodes.contains(l['code']))
+        .toList();
+
+    if (leagues.isEmpty) {
+      for (final code in leagueCodes) {
+        leagues.add({'code': code, 'name': code, 'flag': '⚽'});
+      }
+    }
+
+    final allGames = <Game>[];
+    var current = DateTime(startDate.year, startDate.month, startDate.day);
+    final end = DateTime(endDate.year, endDate.month, endDate.day);
+
+    while (current.isBefore(end) || current.isAtSameMomentAs(end)) {
+      final games = await _fetchAllLeaguesForLocalDay(current, leagues);
+      allGames.addAll(games);
+      current = current.add(const Duration(days: 1));
+    }
+
+    final seen = <String>{};
+    final unique = <Game>[];
+    for (final g in allGames) {
+      if (seen.add(g.id)) unique.add(g);
+    }
+
+    print('[API] Found ${unique.length} unique matches in date range');
+    return unique;
   }
 
   Future<List<TeamRecentMatch>> _enrichMatchesWithSummaryStats(
@@ -2863,842 +4117,6 @@ class ApiService {
       possession: poss,
       shots: shots,
       shotsOnTarget: sot,
-    );
-  }
-
-  Future<String> _detectTeamLeague(String teamId) async {
-    final quickLeagues = AppConstants.priorityLeagues.take(8).toList();
-    for (final league in quickLeagues) {
-      final code = league['code']!;
-      final url = '${AppConstants.baseUrl}/$code/teams/$teamId';
-      try {
-        final res = await _client
-            .get(Uri.parse(url), headers: _headers)
-            .timeout(const Duration(seconds: 3));
-        if (res.statusCode == 200) {
-          print('[TeamPage] Detected league: $code for team $teamId');
-          return code;
-        }
-      } catch (_) {}
-    }
-    print('[TeamPage] Could not detect league, defaulting to eng.1');
-    return 'eng.1';
-  }
-
-  Future<_ScheduleResult> _fetchTeamSchedule(
-      String teamId, String leagueCode) async {
-    final url = '${AppConstants.baseUrl}/$leagueCode/teams/$teamId/schedule';
-    print('[TeamPage] Fetching schedule: $url');
-    try {
-      final res = await _client
-          .get(Uri.parse(url), headers: _headers)
-          .timeout(const Duration(seconds: 12));
-      print('[TeamPage] Schedule HTTP ${res.statusCode}');
-      if (res.statusCode != 200) return _ScheduleResult.empty();
-      return _parseTeamSchedule(
-          json.decode(res.body) as Map<String, dynamic>, leagueCode, teamId);
-    } catch (e) {
-      print('[TeamPage] Schedule error: $e');
-      return _ScheduleResult.empty();
-    }
-  }
-
-  _ScheduleResult _parseTeamSchedule(
-      Map<String, dynamic> data, String leagueCode, String teamId) {
-    final events = data['events'] as List? ?? [];
-    print('[TeamPage] Total events in schedule: ${events.length}');
-    final now = DateTime.now();
-
-    final List<TeamRecentMatch> allRecent = [];
-    final List<String> allRecentEventIds = [];
-    final List<TeamUpcomingFixture> upcoming = [];
-
-    String? headCoach;
-    final coaches = data['coach'] as List?;
-    if (coaches != null && coaches.isNotEmpty) {
-      headCoach = coaches.first?['displayName']?.toString();
-    }
-
-    final leagueEntry = AppConstants.allLeagues.firstWhere(
-          (l) => l['code'] == leagueCode,
-      orElse: () => {'name': leagueCode, 'flag': '⚽'},
-    );
-
-    for (final event in events) {
-      try {
-        final competition =
-        (event['competitions'] as List?)?.first as Map<String, dynamic>?;
-        if (competition == null) continue;
-        final competitors = competition['competitors'] as List? ?? [];
-        if (competitors.length < 2) continue;
-
-        Map<String, dynamic>? myData, oppData;
-        for (final c in competitors) {
-          final tid = c['team']?['id']?.toString() ?? '';
-          if (tid == teamId) {
-            myData = c as Map<String, dynamic>;
-          } else {
-            oppData = c as Map<String, dynamic>;
-          }
-        }
-
-        if (myData == null || oppData == null) {
-          if (competitors.length >= 2) {
-            final eventName = (event['name'] ?? event['shortName'] ?? '').toString();
-            for (final c in competitors) {
-              final tAbbr = c['team']?['abbreviation']?.toString() ?? '';
-              final tName = c['team']?['name']?.toString() ?? '';
-              if (eventName.contains(tAbbr) || eventName.contains(tName)) {
-                myData ??= c as Map<String, dynamic>;
-              } else {
-                oppData ??= c as Map<String, dynamic>;
-              }
-            }
-          }
-          if (myData == null || oppData == null) continue;
-        }
-
-        final normStatus = _normalizeEventStatus(event);
-        final isHome = myData['homeAway']?.toString() == 'home';
-
-        if (allRecent.length + upcoming.length < 3) {
-          final cs = (event['competitions'] as List?)?.isNotEmpty == true
-              ? (event['competitions'] as List).first['status'] : null;
-          final es = event['status'];
-          final dbgState = cs?['type']?['state'] ?? cs?['state'] ?? es?['type']?['state'] ?? '?';
-          final dbgDesc = cs?['type']?['description'] ?? cs?['description'] ?? es?['type']?['description'] ?? '?';
-          final dbgComp = cs?['type']?['completed'] ?? cs?['completed'] ?? es?['type']?['completed'] ?? '?';
-          print('[TeamPage] Event status — compState=$dbgState desc=$dbgDesc completed=$dbgComp → $normStatus');
-        }
-
-        final oppTeam = oppData['team'] as Map<String, dynamic>? ?? {};
-        final oppId = oppTeam['id']?.toString() ?? '';
-        final oppName = oppTeam['displayName']?.toString() ??
-            oppTeam['name']?.toString() ?? 'Unknown';
-        final oppAbbr = oppTeam['abbreviation']?.toString() ?? '';
-
-        String oppLogo = oppTeam['logo']?.toString() ?? '';
-        if (oppLogo.isEmpty && oppId.isNotEmpty) {
-          oppLogo = 'https://a.espncdn.com/i/teamlogos/soccer/500/$oppId.png';
-        }
-
-        final eventDate =
-            DateTime.tryParse(event['date']?.toString() ?? '') ?? now;
-
-        String compName = leagueEntry['name'] ?? leagueCode;
-        String compFlag = leagueEntry['flag'] ?? '⚽';
-        final evLeagueName = competition['league']?['name']?.toString() ??
-            competition['tournament']?['name']?.toString();
-        if (evLeagueName != null && evLeagueName.isNotEmpty) {
-          compName = evLeagueName;
-          final matchedLeague = AppConstants.allLeagues.firstWhere(
-                (l) => (l['name'] ?? '').toLowerCase() == evLeagueName.toLowerCase(),
-            orElse: () => const {},
-          );
-          if (matchedLeague.isNotEmpty) {
-            compFlag = matchedLeague['flag'] ?? compFlag;
-          }
-        }
-
-        if (normStatus == 'STATUS_FINAL') {
-          int myScore = 0;
-          int oppScore = 0;
-
-          final myScoreRaw = myData['score'];
-          final oppScoreRaw = oppData['score'];
-
-          if (myScoreRaw is Map) {
-            myScore = int.tryParse(myScoreRaw['displayValue']?.toString() ?? '0') ?? 0;
-          } else {
-            myScore = int.tryParse(myScoreRaw?.toString() ?? '0') ?? 0;
-          }
-
-          if (oppScoreRaw is Map) {
-            oppScore = int.tryParse(oppScoreRaw['displayValue']?.toString() ?? '0') ?? 0;
-          } else {
-            oppScore = int.tryParse(oppScoreRaw?.toString() ?? '0') ?? 0;
-          }
-
-          if (myScore == 0 && oppScore == 0) {
-            final compScores = competition['score']?.toString() ?? '';
-            if (compScores.contains('-')) {
-              final parts = compScores.split('-');
-              if (parts.length == 2) {
-                final s1 = int.tryParse(parts[0].trim()) ?? 0;
-                final s2 = int.tryParse(parts[1].trim()) ?? 0;
-                myScore = isHome ? s1 : s2;
-                oppScore = isHome ? s2 : s1;
-              }
-            }
-          }
-
-          if (myScore == 0 && oppScore == 0) {
-            final myLines = myData['linescores'] as List? ?? [];
-            final oppLines = oppData['linescores'] as List? ?? [];
-            if (myLines.isNotEmpty) {
-              myScore = myLines.fold<int>(0, (sum, ls) =>
-              sum + (int.tryParse(ls['value']?.toString() ?? '0') ?? 0));
-              oppScore = oppLines.fold<int>(0, (sum, ls) =>
-              sum + (int.tryParse(ls['value']?.toString() ?? '0') ?? 0));
-            }
-          }
-
-          String result;
-          if (myScore > oppScore) result = 'win';
-          else if (myScore < oppScore) result = 'loss';
-          else result = 'draw';
-
-          int yc = 0, rc = 0;
-          double? poss, shots, sot;
-          try {
-            final details = competition['details'] as List? ?? [];
-            for (final d in details) {
-              final t = (d['type']?['text'] ?? '').toString().toLowerCase();
-              final tid = d['team']?['id']?.toString() ?? '';
-              if (tid != teamId) continue;
-              if (t.contains('yellow')) yc++;
-              if (t.contains('red card')) rc++;
-            }
-
-            final compBoxTeams = competition['boxScore']?['teams'] as List? ?? [];
-            for (final ts in compBoxTeams) {
-              if (ts['team']?['id']?.toString() != teamId) continue;
-              for (final stat in (ts['statistics'] as List? ?? [])) {
-                final n = (stat['name'] ?? '').toString().toLowerCase();
-                final v = double.tryParse(
-                    stat['displayValue']?.toString().replaceAll('%', '') ?? '');
-                if (v == null) continue;
-                if (n.contains('possession')) poss ??= v;
-                if (n == 'shots' || n == 'totalshots' || n == 'shotsattempted') shots ??= v;
-                if (n.contains('shotsontarget') || n.contains('shots on target') || n == 'sot' || n.contains('on target') || n == 'ontarget') sot ??= v;
-                if (n.contains('yellow') && yc == 0) yc = v.toInt();
-                if (n.contains('red') && rc == 0) rc = v.toInt();
-              }
-            }
-
-            for (final c in [myData, oppData]) {
-              if (c == null) continue;
-              final isMyTeam = c['team']?['id']?.toString() == teamId;
-              final cStats = c['statistics'] as List? ?? [];
-              for (final stat in cStats) {
-                final n = (stat['name'] ?? stat['abbreviation'] ?? '').toString().toLowerCase();
-                final v = double.tryParse(
-                    stat['displayValue']?.toString().replaceAll('%', '') ?? '');
-                if (v == null || !isMyTeam) continue;
-                if (n.contains('poss')) poss ??= v;
-                if (n == 'sh' || n == 'shots') shots ??= v;
-                if (n == 'sot' || n.contains('on target') || n == 'ontarget' || n.contains('shotsontarget')) sot ??= v;
-              }
-            }
-          } catch (_) {}
-
-          allRecent.add(TeamRecentMatch(
-            opponentId: oppId,
-            opponentName: oppName,
-            opponentLogo: oppLogo,
-            opponentAbbr: oppAbbr,
-            score: '$myScore-$oppScore',
-            result: result,
-            date: event['date']?.toString() ?? '',
-            competition: compName,
-            leagueFlag: compFlag,
-            isHome: isHome,
-            goalsFor: myScore,
-            goalsAgainst: oppScore,
-            yellowCards: yc,
-            redCards: rc,
-            possession: poss,
-            shots: shots,
-            shotsOnTarget: sot,
-          ));
-          allRecentEventIds.add(event['id']?.toString() ?? '');
-        } else if (normStatus == 'STATUS_SCHEDULED' && eventDate.isAfter(now)) {
-          upcoming.add(TeamUpcomingFixture(
-            opponentId: oppId,
-            opponentName: oppName,
-            opponentLogo: oppLogo,
-            opponentAbbr: oppAbbr,
-            competition: compName,
-            leagueFlag: compFlag,
-            date: event['date']?.toString() ?? '',
-            isHome: isHome,
-          ));
-        }
-      } catch (e) {
-        print('[TeamPage] Event parse error: $e');
-      }
-    }
-
-    final sortedPairs =
-    List.generate(allRecent.length, (i) => [allRecent[i], allRecentEventIds[i]])
-      ..sort((a, b) =>
-          (b[0] as TeamRecentMatch).date.compareTo((a[0] as TeamRecentMatch).date));
-    final recent = sortedPairs.take(5).map((p) => p[0] as TeamRecentMatch).toList();
-    final recentIds = sortedPairs.take(5).map((p) => p[1] as String).toList();
-
-    upcoming.sort((a, b) => a.date.compareTo(b.date));
-    final upcomingFinal = upcoming.take(5).toList();
-
-    print('[TeamPage] Parsed: ${recent.length} recent matches '
-        '(from ${allRecent.length} total), ${upcomingFinal.length} upcoming');
-
-    return _ScheduleResult(
-      recentMatches: recent,
-      upcoming: upcomingFinal,
-      headCoach: headCoach,
-      recentMatchEventIds: recentIds,
-    );
-  }
-
-  Future<List<TeamSquadPlayer>> _fetchTeamRosterFull(
-      String teamId, String leagueCode) async {
-    final url = '${AppConstants.baseUrl}/$leagueCode/teams/$teamId/roster';
-    print('[TeamPage] Fetching roster: $url');
-    try {
-      final res = await _client
-          .get(Uri.parse(url), headers: _headers)
-          .timeout(const Duration(seconds: 10));
-      print('[TeamPage] Roster HTTP ${res.statusCode}');
-      if (res.statusCode != 200) return [];
-
-      final data = json.decode(res.body) as Map<String, dynamic>;
-      final raw = data['athletes'];
-      final List<Map<String, dynamic>> athletes = [];
-
-      if (raw is List) {
-        for (final item in raw) {
-          if (item is Map && item['items'] is List) {
-            for (final a in item['items'] as List) {
-              if (a is Map) {
-                athletes.add(Map<String, dynamic>.from(a));
-              }
-            }
-          } else if (item is Map) {
-            athletes.add(Map<String, dynamic>.from(item));
-          }
-        }
-      }
-
-      print('[TeamPage] Total athletes in roster: ${athletes.length}');
-
-      final List<TeamSquadPlayer> players = [];
-      for (final a in athletes) {
-        // ── Extract player ID ─────────────────────────────────────────────────
-        // Handles two roster formats ESPN returns:
-        //   Format A (inline): a = { "id": "726742", "displayName": "...", ... }
-        //   Format B ($ref):   a = { "$ref": "https://sports.core.api.../athletes/726742" }
-        String playerId = a['id']?.toString() ?? '';
-
-        if (playerId.isEmpty) {
-          // Try to extract ID from $ref URL
-          final ref = a['\$ref']?.toString() ?? '';
-          if (ref.isNotEmpty) {
-            // e.g. "https://sports.core.api.espn.com/v2/sports/soccer/leagues/eng.1/athletes/726742"
-            final match = RegExp(r'/athletes/(\d+)').firstMatch(ref);
-            if (match != null) playerId = match.group(1)!;
-          }
-        }
-
-        if (playerId.isEmpty) continue; // Skip entries with no resolvable ID
-
-        // ── Extract headshot URL ──────────────────────────────────────────────
-        // ESPN's site roster API rarely fills `headshot` for soccer, but it
-        // consistently provides photo URLs inside `links[]`.
-        // Priority order:
-        //   1. links[] where rel contains "photo" or "headshot"
-        //   2. inline headshot.href / headshot (string)
-        //   3. CDN fallback by player ID (widget will try multiple patterns)
-        String headshot = '';
-
-        // 1. links[] — most reliable source from the site API
-        final links = a['links'] as List? ?? [];
-        for (final link in links) {
-          if (link is! Map) continue;
-          final rels = (link['rel'] as List? ?? [])
-              .map((r) => r.toString().toLowerCase())
-              .toList();
-          // Match any link tagged as photo/headshot/athlete-image
-          if (rels.contains('photo') ||
-              rels.contains('headshot') ||
-              rels.contains('athlete-headshot') ||
-              (rels.contains('athlete') && rels.contains('desktop')) ||
-              (rels.contains('athlete') && rels.contains('image'))) {
-            headshot = link['href']?.toString() ?? '';
-            if (headshot.isNotEmpty) break;
-          }
-        }
-
-        // 2. Inline headshot field (string URL or map)
-        if (headshot.isEmpty) {
-          final hs = a['headshot'];
-          if (hs is String && hs.isNotEmpty) {
-            headshot = hs;
-          } else if (hs is Map) {
-            headshot = hs['href']?.toString() ?? '';
-            if (headshot.isEmpty) {
-              // $ref — extract player ID from the ref URL to build CDN URL
-              final hsRef = hs['\$ref']?.toString() ?? '';
-              if (hsRef.isNotEmpty) {
-                final m = RegExp(r'/athletes/(\d+)').firstMatch(hsRef);
-                if (m != null) playerId = m.group(1)!;
-              }
-            }
-            if (headshot.isEmpty) {
-              headshot = hs['full']?.toString() ?? hs['default']?.toString() ?? '';
-            }
-          }
-        }
-
-        // 3. CDN fallback — the widget (_PlayerHeadshot) will try multiple
-        //    ESPN CDN patterns automatically, so we just need the player ID.
-        //    We only set a fallback URL here if we have nothing at all, so
-        //    the widget's priority list starts from combiner426 (best rate).
-        //    Leave headshot empty — the widget handles all CDN fallbacks.
-        // (headshot stays '' — widget generates URLs from playerId)
-
-        // ── Position ──────────────────────────────────────────────────────────
-        final posAbbr =
-        (a['position']?['abbreviation'] ?? a['position'] ?? '').toString();
-        final posName =
-        (a['position']?['name'] ?? a['position']?['displayName'] ?? '')
-            .toString()
-            .toLowerCase();
-        final cat = _positionCategory(posAbbr, posName);
-
-        // ── Nationality ───────────────────────────────────────────────────────
-        final nationality = a['citizenship']?.toString() ??
-            a['birthPlace']?['country']?.toString() ??
-            a['nationality']?.toString() ?? '';
-
-        players.add(TeamSquadPlayer(
-          id: playerId,
-          name: a['displayName']?.toString() ?? a['fullName']?.toString() ?? '',
-          jersey: a['jersey']?.toString() ?? '',
-          position: posAbbr,
-          positionCategory: cat,
-          nationality: nationality,
-          age: a['age'] is int
-              ? a['age'] as int
-              : int.tryParse(a['age']?.toString() ?? ''),
-          headshotUrl: headshot,
-          rating: double.tryParse(a['rating']?.toString() ?? ''),
-        ));
-      }
-
-      print('[TeamPage] Parsed ${players.length} players with IDs');
-      return players;
-    } catch (e) {
-      print('[TeamPage] Roster error: $e');
-      return [];
-    }
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // Headshot enrichment
-  // ──────────────────────────────────────────────────────────────────────────
-  //
-  // sports.core.api.espn.com returns 403 from mobile clients (no Referer).
-  // Instead we use site.api.espn.com which respects our headers, and for
-  // players still missing a URL we build the combiner URL (which works when
-  // the Image.network widget sends Referer: https://www.espn.com/).
-  //
-  Future<List<TeamSquadPlayer>> _enrichRosterHeadshots(
-      List<TeamSquadPlayer> players, String leagueCode) async {
-    if (players.isEmpty) return players;
-
-    // Headers that unlock ESPN CDN and API endpoints
-    final headers = {
-      ..._headers,
-      'Referer': 'https://www.espn.com/',
-      'Origin':  'https://www.espn.com',
-    };
-
-    // Build a mutable map of id → bestUrl, seeded with whatever we already have
-    final enriched = <String, String>{
-      for (final p in players) p.id: p.headshotUrl,
-    };
-
-    // Only fetch for players who are still missing a real URL
-    final missing = players
-        .where((p) => p.id.isNotEmpty && p.headshotUrl.isEmpty)
-        .toList();
-
-    print('[Headshot] ${players.length} total players, ${missing.length} missing headshots');
-
-    // ── Strategy: try multiple ESPN endpoints in order of reliability ──────
-    //
-    // 1. sports.core.api.espn.com — the authoritative athlete data source.
-    //    Returns {"headshot": {"href": "https://a.espncdn.com/..."}} with the
-    //    actual hosted image URL (not a constructed CDN path).
-    //
-    // 2. site.web.api.espn.com/apis/common/v3 — alternative endpoint that
-    //    also returns reliable headshot.href values.
-    //
-    // 3. site.api.espn.com (original endpoint) — last resort.
-    //
-    // 4. If all fail, leave headshotUrl empty — the _PlayerHeadshot widget
-    //    will try standard CDN patterns with proper Referer headers.
-    //
-    const batchSize = 10;
-    for (int i = 0; i < missing.length; i += batchSize) {
-      final batch = missing.sublist(i, (i + batchSize).clamp(0, missing.length));
-
-      await Future.wait(batch.map((player) async {
-        final pid = player.id;
-
-        // ── Attempt 1: sports.core.api ─────────────────────────────────────
-        try {
-          final coreUrl =
-              'https://sports.core.api.espn.com/v2/sports/soccer/leagues/'
-              '$leagueCode/athletes/$pid?lang=en&region=us';
-          final res = await _client
-              .get(Uri.parse(coreUrl), headers: headers)
-              .timeout(const Duration(seconds: 5));
-
-          if (res.statusCode == 200) {
-            final data = json.decode(res.body) as Map<String, dynamic>;
-            final found = _extractHeadshotFromAthleteData(data);
-            if (found != null && found.isNotEmpty) {
-              enriched[pid] = found;
-              return;
-            }
-          }
-        } catch (_) { /* fall through */ }
-
-        // ── Attempt 2: site.web.api common/v3 ─────────────────────────────
-        try {
-          final webUrl =
-              'https://site.web.api.espn.com/apis/common/v3/sports/soccer/'
-              '$leagueCode/athletes/$pid';
-          final res = await _client
-              .get(Uri.parse(webUrl), headers: headers)
-              .timeout(const Duration(seconds: 5));
-
-          if (res.statusCode == 200) {
-            final data = json.decode(res.body) as Map<String, dynamic>;
-            // common/v3 wraps in an "athlete" key
-            final athleteData = data['athlete'] is Map
-                ? data['athlete'] as Map<String, dynamic>
-                : data;
-            final found = _extractHeadshotFromAthleteData(athleteData);
-            if (found != null && found.isNotEmpty) {
-              enriched[pid] = found;
-              return;
-            }
-          }
-        } catch (_) { /* fall through */ }
-
-        // ── Attempt 3: site.api.espn.com (original endpoint) ──────────────
-        try {
-          final siteUrl =
-              '${AppConstants.baseUrl}/$leagueCode/athletes/$pid';
-          final res = await _client
-              .get(Uri.parse(siteUrl), headers: headers)
-              .timeout(const Duration(seconds: 5));
-
-          if (res.statusCode == 200) {
-            final data = json.decode(res.body) as Map<String, dynamic>;
-            final found = _extractHeadshotFromAthleteData(data);
-            if (found != null && found.isNotEmpty) {
-              enriched[pid] = found;
-              return;
-            }
-          }
-        } catch (_) { /* fall through */ }
-
-        // No URL found — leave empty so _PlayerHeadshot widget tries CDN patterns
-      }));
-    }
-
-    final gotHeadshot = enriched.values.where((v) => v.isNotEmpty).length;
-    print('[Headshot] Enrichment complete: $gotHeadshot/${players.length} have URLs');
-
-    return players.map((p) {
-      final newUrl = enriched[p.id] ?? '';
-      if (newUrl.isNotEmpty && newUrl != p.headshotUrl) {
-        return TeamSquadPlayer(
-          id: p.id,
-          name: p.name,
-          jersey: p.jersey,
-          position: p.position,
-          positionCategory: p.positionCategory,
-          nationality: p.nationality,
-          age: p.age,
-          headshotUrl: newUrl,
-          rating: p.rating,
-        );
-      }
-      return p;
-    }).toList();
-  }
-
-  /// Extracts a headshot image URL from an ESPN athlete data map.
-  /// Handles the various shapes ESPN uses across its different API endpoints.
-  String? _extractHeadshotFromAthleteData(Map<String, dynamic> data) {
-    // Shape 1: {"headshot": {"href": "https://..."}}  — sports.core.api
-    final hs = data['headshot'];
-    if (hs is Map) {
-      final href = hs['href']?.toString() ?? '';
-      if (href.isNotEmpty && href.startsWith('http')) return href;
-      final full = hs['full']?.toString() ?? '';
-      if (full.isNotEmpty && full.startsWith('http')) return full;
-    }
-    // Shape 2: {"headshot": "https://..."}  — direct string
-    if (hs is String && hs.isNotEmpty && hs.startsWith('http')) return hs;
-
-    // Shape 3: links[] with rel containing "headshot" or "photo"
-    final links = data['links'] as List? ?? [];
-    for (final link in links) {
-      if (link is! Map) continue;
-      final rels = (link['rel'] as List? ?? [])
-          .map((r) => r.toString().toLowerCase())
-          .toList();
-      if (rels.contains('headshot') || rels.contains('photo') ||
-          rels.contains('athlete-headshot')) {
-        final href = link['href']?.toString() ?? '';
-        if (href.isNotEmpty && href.startsWith('http')) return href;
-      }
-    }
-
-    // Shape 4: athlete.images[] — some common/v3 responses
-    final images = data['images'] as List? ?? [];
-    for (final img in images) {
-      if (img is! Map) continue;
-      final imgType = img['type']?.toString().toLowerCase() ??
-          img['name']?.toString().toLowerCase() ?? '';
-      if (imgType.contains('headshot') || imgType.contains('photo')) {
-        final href = img['href']?.toString() ?? img['url']?.toString() ?? '';
-        if (href.isNotEmpty && href.startsWith('http')) return href;
-      }
-    }
-
-    return null;
-  }
-
-  String _positionCategory(String abbr, String name) {
-    final a = abbr.toUpperCase();
-    if (a == 'GK' || name.contains('goalkeeper') || name.contains('keeper')) {
-      return 'GOALKEEPERS';
-    }
-    if (['CB', 'LB', 'RB', 'SW', 'WB', 'LWB', 'RWB'].contains(a) ||
-        name.contains('back') || name.contains('defender')) {
-      return 'DEFENDERS';
-    }
-    if (['ST', 'CF', 'LW', 'RW', 'SS', 'FW'].contains(a) ||
-        name.contains('forward') ||
-        name.contains('striker') ||
-        name.contains('winger')) {
-      return 'FORWARDS';
-    }
-    return 'MIDFIELDERS';
-  }
-
-  Future<TeamStandingInfo> _fetchTeamStandingInfo(
-      String teamId, String leagueCode) async {
-    final url = '${AppConstants.standingsUrl}/$leagueCode/standings';
-    print('[TeamPage] Fetching standings: $url');
-    try {
-      final res = await _client
-          .get(Uri.parse(url), headers: _headers)
-          .timeout(const Duration(seconds: 8));
-      print('[TeamPage] Standings HTTP ${res.statusCode}');
-      if (res.statusCode != 200) return const TeamStandingInfo();
-      return _parseStandingForTeam(
-          json.decode(res.body) as Map<String, dynamic>, teamId);
-    } catch (e) {
-      print('[TeamPage] Standings error: $e');
-      return const TeamStandingInfo();
-    }
-  }
-
-  TeamStandingInfo _parseStandingForTeam(
-      Map<String, dynamic> data, String teamId) {
-    int pos = 1;
-    final children = data['children'] as List? ?? [];
-    for (final child in children) {
-      final sub = child['children'] as List? ?? [];
-      for (final s in sub) {
-        final entries = s['standings']?['entries'] as List? ??
-            s['standings'] as List? ?? [];
-        for (final ts in entries) {
-          if (ts['team']?['id']?.toString() == teamId) {
-            int? pts;
-            for (final stat in (ts['stats'] as List? ?? [])) {
-              if ((stat['name'] ?? '').toString().toLowerCase() == 'points') {
-                pts = int.tryParse(stat['displayValue']?.toString() ?? '');
-                break;
-              }
-            }
-            return TeamStandingInfo(
-                rank: pos, points: pts, groupName: s['name']?.toString());
-          }
-          pos++;
-        }
-      }
-      final entries = child['standings']?['entries'] as List? ??
-          child['standings'] as List? ?? [];
-      for (final ts in entries) {
-        if (ts['team']?['id']?.toString() == teamId) {
-          int? pts;
-          for (final stat in (ts['stats'] as List? ?? [])) {
-            if ((stat['name'] ?? '').toString().toLowerCase() == 'points') {
-              pts = int.tryParse(stat['displayValue']?.toString() ?? '');
-              break;
-            }
-          }
-          return TeamStandingInfo(
-              rank: pos, points: pts, groupName: child['name']?.toString());
-        }
-        pos++;
-      }
-    }
-    return const TeamStandingInfo();
-  }
-
-  TeamAnalytics _calculateAnalytics(
-      List<TeamRecentMatch> matches, List<TeamSquadPlayer> squad) {
-    if (matches.isEmpty) return TeamAnalytics.empty;
-
-    int wins = 0, draws = 0, losses = 0;
-    int gf = 0, ga = 0, yc = 0, rc = 0;
-    double possSum = 0, shotsSum = 0, sotSum = 0;
-    int possN = 0, shotsN = 0, sotN = 0;
-
-    for (final m in matches) {
-      if (m.result == 'win') wins++;
-      else if (m.result == 'draw') draws++;
-      else losses++;
-      gf += m.goalsFor;
-      ga += m.goalsAgainst;
-      yc += m.yellowCards;
-      rc += m.redCards;
-      if (m.possession != null && m.possession! > 0) {
-        possSum += m.possession!; possN++;
-      }
-      if (m.shots != null && m.shots! > 0) {
-        shotsSum += m.shots!; shotsN++;
-      }
-      if (m.shotsOnTarget != null && m.shotsOnTarget! > 0) {
-        sotSum += m.shotsOnTarget!; sotN++;
-      }
-    }
-
-    final n = matches.length;
-    final avgPoss  = possN > 0 ? possSum / possN : null;
-    final avgShots = shotsN > 0 ? shotsSum / shotsN : null;
-
-    // ── SHOTS ON TARGET: store the RAW TOTAL across last-5 games ─────────────
-    // The UI tile labelled "SHOTS ON TARGET" shows the cumulative total, not an avg.
-    // Fall back to total shots when ESPN didn't return separate SOT data.
-    final totalSot   = sotN > 0 ? sotSum : (shotsN > 0 ? shotsSum : null);
-    final avgSot     = sotN > 0 ? sotSum / sotN : null;   // kept for radar/tactical section
-
-    // ── CONVERSION RATE: Goals ÷ Shots On Target (fall back to Goals ÷ Shots) ─
-    // ESPN's shotsOnTarget stat is preferred; fall back to total shots.
-    final conv = totalSot != null && totalSot > 0
-        ? gf / totalSot
-        : null;
-
-    // ── Fallback shot estimate (for radar only, never shown in metric tiles) ──
-    final effectiveShotsPerGame =
-        avgShots ?? (gf / n * 6.0).clamp(3.0, 20.0);
-
-    final gaPerGame   = n > 0 ? ga / n : 0.0;
-    final goalsPerGame = n > 0 ? gf / n : 0.0;
-    final attackScore  = (goalsPerGame / 2.5 * 100).clamp(0.0, 100.0);
-    final defScore     = ((1 - gaPerGame / 3.0) * 100).clamp(0.0, 100.0);
-
-    final possScore = avgPoss != null
-        ? avgPoss.clamp(0.0, 100.0)
-        : (50.0 + (wins - losses) * 3.0).clamp(30.0, 70.0);
-
-    final shotScore = (effectiveShotsPerGame / 20.0 * 100).clamp(0.0, 100.0);
-
-    final midScore = (possScore * 0.55 + shotScore * 0.45).clamp(0.0, 100.0);
-
-    final cardPenalty = n > 0 ? (yc + rc * 3) / (n * 5.0) : 0.0;
-    final discScore   = ((1 - cardPenalty) * 100).clamp(0.0, 100.0);
-
-    print('[TeamPage] SOT-DATA: avgShots=$avgShots avgSot=$avgSot conv=$conv sotN=$sotN shotsN=$shotsN');
-    print('[TeamPage] Analytics: attack=${attackScore.toStringAsFixed(1)} '
-        'def=${defScore.toStringAsFixed(1)} poss=${possScore.toStringAsFixed(1)} '
-        'mid=${midScore.toStringAsFixed(1)} disc=${discScore.toStringAsFixed(1)}');
-    print('[TeamPage] Goals: $gf for, $ga against | W$wins D$draws L$losses | Cards: $yc Y, $rc R');
-
-    TeamSquadPlayer? best;
-    double? bestRating;
-
-    for (final p in squad) {
-      if (p.rating != null && (bestRating == null || p.rating! > bestRating!)) {
-        bestRating = p.rating;
-        best = p;
-      }
-    }
-
-    if (best == null && squad.isNotEmpty) {
-      final priorities = ['FORWARDS', 'MIDFIELDERS', 'DEFENDERS', 'GOALKEEPERS'];
-      for (final cat in priorities) {
-        final pool = squad.where((p) => p.positionCategory == cat).toList();
-        if (pool.isNotEmpty) {
-          pool.sort((a, b) =>
-              (int.tryParse(a.jersey) ?? 99).compareTo(int.tryParse(b.jersey) ?? 99));
-          best = pool.first;
-          break;
-        }
-      }
-    }
-
-    String note = '';
-    if (best != null) {
-      final winRate = n > 0 ? (wins / n * 100).toStringAsFixed(0) : '0';
-      final goalAvg = n > 0 ? (gf / n).toStringAsFixed(1) : '0';
-      final formStr = [
-        if (wins > 0) '$wins W',
-        if (draws > 0) '$draws D',
-        if (losses > 0) '$losses L',
-      ].join(', ');
-
-      switch (best.positionCategory) {
-        case 'FORWARDS':
-          note = 'Key attacker · $formStr · $goalAvg goals/game avg';
-          break;
-        case 'MIDFIELDERS':
-          note = 'Engine of the team · $formStr · $winRate% win rate';
-          break;
-        case 'DEFENDERS':
-          note = 'Defensive anchor · $ga goals conceded in last ${matches.length}';
-          break;
-        default:
-          note = 'Shot-stopper · $ga goals conceded · Last ${matches.length} matches';
-      }
-    }
-
-    return TeamAnalytics(
-      last5Wins: wins,
-      last5Draws: draws,
-      last5Losses: losses,
-      last5GoalsFor: gf,
-      last5GoalsAgainst: ga,
-      last5YellowCards: yc,
-      last5RedCards: rc,
-      avgPossession: avgPoss,
-      // avgShotsPerGame → used for AVG SHOTS/GAME tile and radar
-      avgShotsPerGame: avgShots ?? effectiveShotsPerGame,
-      // avgShotsOnTarget → repurposed as TOTAL SOT across last-5 for the tile display
-      // Falls back to total shots if ESPN didn't provide separate SOT data
-      avgShotsOnTarget: totalSot,
-      // shotConversionRate → Goals ÷ SOT (or Goals ÷ Shots as fallback)
-      shotConversionRate: conv,
-      attackScore: attackScore,
-      midfieldScore: midScore,
-      defenseScore: defScore,
-      possessionScore: possScore,
-      disciplineScore: discScore,
-      bestPlayer: best,
-      bestPlayerRating: bestRating,
-      bestPlayerGoals: gf,
-      bestPlayerAssists: 0,
-      bestPlayerPerformanceNote: note,
     );
   }
 }

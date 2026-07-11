@@ -47,18 +47,21 @@ class _GameCardState extends State<GameCard> {
     _currentGame = widget.game;
     _tick();
 
-    if (widget.game.status == 'STATUS_SCHEDULED') {
+    // Start countdown timer for upcoming matches
+    if (_currentGame.isUpcoming) {
       _timer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (mounted) setState(() => _tick());
       });
-    } else if (widget.game.status == 'STATUS_LIVE') {
-      // For live matches: refresh game data every 3 seconds to get updated clock from API
+    }
+
+    // Start refresh timer for live matches
+    if (_currentGame.isLive) {
       _startLiveRefreshTimer();
     }
   }
 
   void _startLiveRefreshTimer() {
-    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
       if (!mounted) return;
 
       try {
@@ -77,7 +80,6 @@ class _GameCardState extends State<GameCard> {
   }
 
   Future<Game?> _getFreshGameData(String gameId) async {
-    // Try to get from provider's existing games
     if (!mounted) return null;
 
     // Use Provider.of with listen: false to avoid rebuilds
@@ -100,7 +102,7 @@ class _GameCardState extends State<GameCard> {
   }
 
   void _tick() {
-    if (_currentGame.status == 'STATUS_SCHEDULED') {
+    if (_currentGame.isUpcoming) {
       try {
         final kickOff = DateTime.parse(_currentGame.date).toLocal();
         final diff = kickOff.difference(DateTime.now());
@@ -142,16 +144,16 @@ class _GameCardState extends State<GameCard> {
   String get _liveClock {
     final clock = _currentGame.clock;
     if (clock.isEmpty) return 'LIVE';
-
     // Return exact clock from ESPN API (e.g., "45+1", "73", "90+3", "HT")
     return "$clock'";
   }
 
   @override
   Widget build(BuildContext context) {
-    final isLive = _currentGame.status == 'STATUS_LIVE';
-    final isDone = _currentGame.status == 'STATUS_FINAL';
-    final isUpcoming = _currentGame.status == 'STATUS_SCHEDULED';
+    // Use the improved live detection from the Game model
+    final isLive = _currentGame.isLive;
+    final isDone = _currentGame.isFinal;
+    final isUpcoming = _currentGame.isUpcoming;
     final matchNote = _currentGame.shortDetail.trim();
 
     final venueLine = _currentGame.venue.fullName.isNotEmpty
@@ -196,7 +198,7 @@ class _GameCardState extends State<GameCard> {
                   else if (isDone)
                     _Badge('FT', bg: const Color(0xFFF1F3F8), fg: _C.muted)
                   else
-                    _Badge(_localKickOff, bg: _C.blueLight, fg: _C.blue),
+                    _Badge(_localKickOff, bg: _C.blueLight, fg: _C.blue)
                 ],
               ),
               const SizedBox(height: 11),
@@ -221,10 +223,11 @@ class _GameCardState extends State<GameCard> {
                     isLive: isLive,
                     isDone: isDone,
                     isUpcoming: isUpcoming,
-                    liveClock: _liveClock,  // Uses API clock data
+                    liveClock: _liveClock,
                     kickOffTime: _localKickOff,
                     awayScore: _currentGame.awayScore,
                     homeScore: _currentGame.homeScore,
+                    clock: _currentGame.clock, // Pass the clock separately
                   ),
                   Expanded(
                     child: _TeamCol(
@@ -442,6 +445,7 @@ class _CentreCol extends StatelessWidget {
   final String kickOffTime;
   final String awayScore;
   final String homeScore;
+  final String clock; // Added this parameter
 
   const _CentreCol({
     required this.isLive,
@@ -451,6 +455,7 @@ class _CentreCol extends StatelessWidget {
     required this.kickOffTime,
     required this.awayScore,
     required this.homeScore,
+    required this.clock, // Make it required
   });
 
   @override
@@ -478,15 +483,26 @@ class _CentreCol extends StatelessWidget {
                         fontSize: 28, fontWeight: FontWeight.w900, color: _C.liveRed)),
               ],
             ),
-            // Shows EXACT clock from ESPN API: "45+1'", "73'", "90+3'", etc.
-            if (liveClock != 'LIVE')
+            // Show the clock if available - using the passed clock parameter
+            if (clock.isNotEmpty && clock != '0:00')
               Padding(
                 padding: const EdgeInsets.only(top: 3),
                 child: Text(
-                  liveClock,
+                  "$clock'",
                   style: const TextStyle(
                       fontSize: 13, fontWeight: FontWeight.w900,
                       color: _C.liveRed, letterSpacing: 0.3),
+                ),
+              ),
+            // If no clock but we know it's live, show "LIVE"
+            if (clock.isEmpty || clock == '0:00')
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Text(
+                  'LIVE',
+                  style: const TextStyle(
+                      fontSize: 11, fontWeight: FontWeight.w800,
+                      color: _C.liveRed, letterSpacing: 0.5),
                 ),
               ),
           ] else if (isDone) ...[

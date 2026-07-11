@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:livescore/services/sport_service.dart';
 import 'package:livescore/services/preferences_service.dart';
@@ -7,6 +9,7 @@ import 'package:livescore/models/league_leader_model.dart';
 import 'package:livescore/models/news_model.dart';
 import 'package:livescore/models/team_model.dart';
 import 'package:livescore/models/player_model.dart';
+import 'package:livescore/models/search_model.dart';
 import 'package:livescore/utils/constants.dart';
 
 // ── Football keyword filter ───────────────────────────────────────────────────
@@ -59,6 +62,15 @@ class AppProvider extends ChangeNotifier {
   bool _isFetchingNews = false;
   bool _isFetchingTeams = false;
   bool _isMounted = true;
+
+  // ─── SEARCH STATE ────────────────────────────────────────────────────────────
+  bool _isSearching = false;
+  SearchResponse _searchResults = SearchResponse();
+  String _searchQuery = '';
+
+  bool get isSearching => _isSearching;
+  SearchResponse get searchResults => _searchResults;
+  String get searchQuery => _searchQuery;
 
   @override
   void dispose() {
@@ -620,7 +632,45 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  // Add to AppProvider class
 
+// ─── SEARCH WITH DEBOUNCE ─────────────────────────────────────────────────────
+
+  Timer? _searchDebounceTimer;
+
+  Future<void> searchWithDebounce(String query, {Duration delay = const Duration(milliseconds: 500)}) async {
+    _searchDebounceTimer?.cancel();
+    _searchDebounceTimer = Timer(delay, () {
+      search(query);
+    });
+  }
+
+// Update the existing search method to cancel ongoing requests
+  Future<void> search(String query) async {
+    if (query.trim().isEmpty) {
+      _searchQuery = '';
+      _searchResults = SearchResponse();
+      _isSearching = false;
+      notifyListeners();
+      return;
+    }
+
+    _searchQuery = query;
+    _isSearching = true;
+    notifyListeners();
+
+    try {
+      final results = await _sportService.search(query);
+      _searchResults = results;
+      _isSearching = false;
+      notifyListeners();
+    } catch (e) {
+      print('[AppProvider] Search error: $e');
+      _searchResults = SearchResponse();
+      _isSearching = false;
+      notifyListeners();
+    }
+  }
 
   Future<void> setCurrentLeague(String leagueCode) async {
     if (_currentLeagueCode == leagueCode) return;
@@ -634,5 +684,15 @@ class AppProvider extends ChangeNotifier {
       fetchStandings(forceRefresh: true),
       fetchAllTeamsConcurrent(),
     ]);
+  }
+
+  // ─── SEARCH METHODS ──────────────────────────────────────────────────────────
+
+
+  void clearSearch() {
+    _searchQuery = '';
+    _searchResults = SearchResponse();
+    _isSearching = false;
+    notifyListeners();
   }
 }

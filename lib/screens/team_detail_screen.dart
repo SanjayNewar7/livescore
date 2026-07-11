@@ -1865,9 +1865,12 @@ class _PlayerHeadshotState extends State<_PlayerHeadshot> {
     //
     // 2. combiner square crop — good for small circular avatars
     //
-    // 3. combinate — newer CDN path
+    // 3. combiner with no size/crop params — sometimes resolves when the
+    //    sized variants 404, since it requests the combiner's raw passthrough
     //
-    // 4. legacy direct PNG — older CDN, lower coverage for recent players
+    // 4. combinate — newer CDN path
+    //
+    // 5. legacy direct PNG — older CDN, lower coverage for recent players
     //
     final combiner426 =
         'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$pid.png'
@@ -1876,6 +1879,9 @@ class _PlayerHeadshotState extends State<_PlayerHeadshot> {
     final combiner350 =
         'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$pid.png'
         '&w=350&h=254&scale=crop&location=origin';
+
+    final combinerRaw =
+        'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$pid.png';
 
     final combinate =
         'https://a.espncdn.com/combinate/i/headshots/soccer/players/full/$pid.png';
@@ -1886,7 +1892,7 @@ class _PlayerHeadshotState extends State<_PlayerHeadshot> {
     // De-duplicate preserving order — api URL goes first
     final seen   = <String>{};
     final result = <String>[];
-    for (final url in [apiUrl, combiner426, combiner350, combinate, legacy]) {
+    for (final url in [apiUrl, combiner426, combiner350, combinerRaw, combinate, legacy]) {
       if (url.isNotEmpty && seen.add(url)) result.add(url);
     }
     return result;
