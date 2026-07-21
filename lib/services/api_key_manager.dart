@@ -1,3 +1,4 @@
+// lib/services/api_key_manager.dart
 import 'package:livescore/utils/constants.dart';
 
 class ApiKeyManager {
@@ -5,79 +6,116 @@ class ApiKeyManager {
   factory ApiKeyManager() => _instance;
   ApiKeyManager._internal();
 
-  final List<String> _keys = AppConstants.apiFootballKeys;
-  int _currentIndex = 0;
-  final Map<String, DateTime> _rateLimitReset = {};
-  final Map<String, int> _dailyRequests = {};
-  final Map<String, DateTime> _lastRequestTime = {};
-  final Map<String, int> _minuteRequests = {};
-  final Map<String, DateTime> _minuteReset = {};
+  // ─── SINGLE API KEY ──────────────────────────────────────────────────────
+  // Using only one API key to avoid suspension issues
+  final String _apiKey = AppConstants.apiFootballKey;
 
-  /// Get the next available API key
+  // Rate limit tracking
+  int _dailyRequests = 0;
+  int _minuteRequests = 0;
+  DateTime? _dailyResetTime;
+  DateTime? _minuteResetTime;
+  DateTime? _lastRequestTime;
+
+  static const int _dailyLimit = 100;
+  static const int _minuteLimit = 10;
+  static const Duration _cooldown = Duration(milliseconds: 500);
+
+  /// Get the API key if rate limits allow
   String getNextKey() {
-    if (_keys.isEmpty) {
-      throw Exception('No API keys configured');
-    }
-
-    // Try to find a key that hasn't hit its rate limits
-    for (int i = 0; i < _keys.length * 2; i++) {
-      final key = _keys[_currentIndex];
-      _currentIndex = (_currentIndex + 1) % _keys.length;
-
-      if (_canUseKey(key)) {
-        print('[ApiKeyManager] Using key: ${key.substring(0, 8)}...');
-        return key;
-      }
-    }
-
-    // If all keys are rate limited, wait 1 second and try again
-    print('[ApiKeyManager] All keys rate limited, waiting 1 second...');
-    Future.delayed(const Duration(seconds: 1));
-    return _keys.first;
-  }
-
-  /// Check if a key can be used
-  bool _canUseKey(String key) {
     final now = DateTime.now();
 
-    // Check daily limit (100 requests per day)
-    final dailyRequests = _dailyRequests[key] ?? 0;
-    if (dailyRequests >= 100) {
-      // Check if reset time has passed (next day)
-      final resetTime = _rateLimitReset[key];
-      if (resetTime != null && now.isAfter(resetTime)) {
+    // Check daily limit
+    if (_dailyRequests >= _dailyLimit) {
+      if (_dailyResetTime != null && now.isAfter(_dailyResetTime!)) {
         // Reset daily count
-        _dailyRequests[key] = 0;
-        _rateLimitReset[key] = now.add(const Duration(days: 1));
-        _minuteRequests[key] = 0;
-        _minuteReset[key] = now.add(const Duration(minutes: 1));
-        print('[ApiKeyManager] Key ${key.substring(0, 8)}... daily limit reset');
-        return true;
+        _dailyRequests = 0;
+        _dailyResetTime = now.add(const Duration(days: 1));
+        _minuteRequests = 0;
+        _minuteResetTime = now.add(const Duration(minutes: 1));
+        print('[ApiKeyManager] Daily limit reset');
+      } else {
+        print('[ApiKeyManager] ⚠️ Daily limit reached ($_dailyLimit/$_dailyLimit)');
+        // Wait and retry
+        Future.delayed(const Duration(seconds: 2));
+        return _apiKey;
       }
-      print('[ApiKeyManager] Key ${key.substring(0, 8)}... daily limit reached (100/100)');
-      return false;
     }
 
-    // Check minute limit (10 requests per minute)
-    final minuteRequests = _minuteRequests[key] ?? 0;
-    if (minuteRequests >= 10) {
-      final resetTime = _minuteReset[key];
-      if (resetTime != null && now.isAfter(resetTime)) {
+    // Check minute limit
+    if (_minuteRequests >= _minuteLimit) {
+      if (_minuteResetTime != null && now.isAfter(_minuteResetTime!)) {
         // Reset minute count
-        _minuteRequests[key] = 0;
-        _minuteReset[key] = now.add(const Duration(minutes: 1));
-        print('[ApiKeyManager] Key ${key.substring(0, 8)}... minute limit reset');
+        _minuteRequests = 0;
+        _minuteResetTime = now.add(const Duration(minutes: 1));
+        print('[ApiKeyManager] Minute limit reset');
+      } else {
+        final waitSeconds = _minuteResetTime != null
+            ? _minuteResetTime!.difference(now).inSeconds + 1
+            : 10;
+        print('[ApiKeyManager] ⚠️ Minute limit reached. Wait $waitSeconds seconds');
+        // Wait and retry
+        Future.delayed(Duration(seconds: waitSeconds));
+        return _apiKey;
+      }
+    }
+
+    // Check cooldown
+    if (_lastRequestTime != null) {
+      final diff = now.difference(_lastRequestTime!);
+      if (diff < _cooldown) {
+        return _apiKey;
+      }
+    }
+
+    print('[ApiKeyManager] Using API key (minute: $_minuteRequests/$_minuteLimit, daily: $_dailyRequests/$_dailyLimit)');
+    return _apiKey;
+  }
+
+  /// Mark a request as made
+  void markRequest(String key) {
+    final now = DateTime.now();
+    _dailyRequests++;
+    _minuteRequests++;
+    _lastRequestTime = now;
+
+    if (_dailyResetTime == null) {
+      _dailyResetTime = now.add(const Duration(days: 1));
+    }
+    if (_minuteResetTime == null) {
+      _minuteResetTime = now.add(const Duration(minutes: 1));
+    }
+
+    print('[ApiKeyManager] 📊 Request marked: daily=$_dailyRequests/$_dailyLimit, minute=$_minuteRequests/$_minuteLimit');
+  }
+
+  /// Check if the key can be used
+  bool canUseKey() {
+    final now = DateTime.now();
+
+    if (_dailyRequests >= _dailyLimit) {
+      if (_dailyResetTime != null && now.isAfter(_dailyResetTime!)) {
+        _dailyRequests = 0;
+        _dailyResetTime = now.add(const Duration(days: 1));
+        _minuteRequests = 0;
+        _minuteResetTime = now.add(const Duration(minutes: 1));
         return true;
       }
-      print('[ApiKeyManager] Key ${key.substring(0, 8)}... minute limit reached (10/10)');
       return false;
     }
 
-    // Check cooldown between requests (minimum 500ms)
-    final lastRequest = _lastRequestTime[key];
-    if (lastRequest != null) {
-      final diff = now.difference(lastRequest);
-      if (diff.inMilliseconds < 500) {
+    if (_minuteRequests >= _minuteLimit) {
+      if (_minuteResetTime != null && now.isAfter(_minuteResetTime!)) {
+        _minuteRequests = 0;
+        _minuteResetTime = now.add(const Duration(minutes: 1));
+        return true;
+      }
+      return false;
+    }
+
+    if (_lastRequestTime != null) {
+      final diff = now.difference(_lastRequestTime!);
+      if (diff < _cooldown) {
         return false;
       }
     }
@@ -85,44 +123,35 @@ class ApiKeyManager {
     return true;
   }
 
-  /// Mark a request as made for a specific key
-  void markRequest(String key) {
-    final now = DateTime.now();
-    _dailyRequests[key] = (_dailyRequests[key] ?? 0) + 1;
-    _minuteRequests[key] = (_minuteRequests[key] ?? 0) + 1;
-    _lastRequestTime[key] = now;
-
-    // Set daily reset time if not set
-    if (!_rateLimitReset.containsKey(key)) {
-      _rateLimitReset[key] = now.add(const Duration(days: 1));
+  /// Get the time until rate limit resets
+  Duration getTimeUntilReset() {
+    if (_minuteResetTime != null) {
+      final diff = _minuteResetTime!.difference(DateTime.now());
+      if (diff.isNegative) return Duration.zero;
+      return diff;
     }
-
-    // Set minute reset time if not set
-    if (!_minuteReset.containsKey(key)) {
-      _minuteReset[key] = now.add(const Duration(minutes: 1));
-    }
+    return const Duration(seconds: 10);
   }
 
-  /// Get current usage stats for debugging
-  Map<String, Map<String, dynamic>> getUsageStats() {
-    final stats = <String, Map<String, dynamic>>{};
-    for (final key in _keys) {
-      stats[key] = {
-        'daily': _dailyRequests[key] ?? 0,
-        'minute': _minuteRequests[key] ?? 0,
-        'dailyLimit': 100,
-        'minuteLimit': 10,
-      };
-    }
-    return stats;
+  /// Get usage stats for debugging
+  Map<String, dynamic> getUsageStats() {
+    return {
+      'dailyRequests': _dailyRequests,
+      'dailyLimit': _dailyLimit,
+      'minuteRequests': _minuteRequests,
+      'minuteLimit': _minuteLimit,
+      'canUse': canUseKey(),
+      'resetIn': getTimeUntilReset().inSeconds,
+    };
   }
 
-  /// Reset usage for all keys (for testing)
+  /// Reset usage (for testing)
   void resetUsage() {
-    _dailyRequests.clear();
-    _rateLimitReset.clear();
-    _lastRequestTime.clear();
-    _minuteRequests.clear();
-    _minuteReset.clear();
+    _dailyRequests = 0;
+    _minuteRequests = 0;
+    _dailyResetTime = null;
+    _minuteResetTime = null;
+    _lastRequestTime = null;
+    print('[ApiKeyManager] Usage reset');
   }
 }

@@ -7,6 +7,8 @@ import 'package:livescore/screens/splash_screen.dart';
 import 'package:livescore/utils/theme.dart';
 import 'package:livescore/services/cache_service.dart';
 import 'package:livescore/services/preferences_service.dart';
+import 'package:livescore/services/profile_service.dart';
+import 'package:livescore/services/quiz_service.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:livescore/screens/home_screen.dart';
 import 'package:livescore/screens/teams_screen.dart';
@@ -19,10 +21,16 @@ void main() async {
 
   try {
     await Hive.initFlutter();
+
+    // ─── Initialize all services ──────────────────────────────────────────
     await CacheService().init();
     await PreferencesService().init();
+    await ProfileService().init();
+    await QuizService().init();
+
+    print('[Main] All services initialized successfully');
   } catch (e) {
-    print('Initialization error: $e');
+    print('[Main] Initialization error: $e');
   }
 
   runApp(const MyApp());
@@ -89,7 +97,8 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// Main navigation wrapper to persist bottom nav state
+// ─── Main Navigation Wrapper ──────────────────────────────────────────────────
+
 class MainNavigationWrapper extends StatefulWidget {
   const MainNavigationWrapper({super.key});
 
@@ -104,12 +113,12 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   @override
   void initState() {
     super.initState();
-    _screens = [
-      const HomeScreen(),
-      const TeamsScreen(),
-      const StandingsScreen(),
-      const NewsScreen(),
-      const SettingsScreen(),
+    _screens = const [
+      HomeScreen(),
+      TeamsScreen(),
+      StandingsScreen(),
+      NewsScreen(),
+      SettingsScreen(),
     ];
   }
 
@@ -129,11 +138,26 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
           });
         },
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.sports_soccer_rounded), label: 'Matches'),
-          BottomNavigationBarItem(icon: Icon(Icons.people_rounded), label: 'Teams'),
-          BottomNavigationBarItem(icon: Icon(Icons.emoji_events_rounded), label: 'Standings'),
-          BottomNavigationBarItem(icon: Icon(Icons.newspaper_rounded), label: 'News'),
-          BottomNavigationBarItem(icon: Icon(Icons.person_rounded), label: 'Profile'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.sports_soccer_rounded),
+            label: 'Matches',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.people_rounded),
+            label: 'Teams',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.emoji_events_rounded),
+            label: 'Standings',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.newspaper_rounded),
+            label: 'News',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person_rounded),
+            label: 'Profile',
+          ),
         ],
         selectedItemColor: const Color(0xFF1A62C8),
         unselectedItemColor: const Color(0xFF6B7A96),
@@ -152,7 +176,8 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   }
 }
 
-// Wrapper for network error banner
+// ─── Network Error Wrapper ────────────────────────────────────────────────────
+
 class _NetworkErrorWrapper extends StatelessWidget {
   final Widget? child;
 
@@ -164,7 +189,7 @@ class _NetworkErrorWrapper extends StatelessWidget {
       body: Stack(
         children: [
           if (child != null) child!,
-          Positioned(
+          const Positioned(
             bottom: 0,
             left: 0,
             right: 0,
@@ -176,8 +201,11 @@ class _NetworkErrorWrapper extends StatelessWidget {
   }
 }
 
-// Network status banner that shows at bottom when offline
+// ─── Network Status Banner ────────────────────────────────────────────────────
+
 class _NetworkStatusBanner extends StatefulWidget {
+  const _NetworkStatusBanner();
+
   @override
   State<_NetworkStatusBanner> createState() => _NetworkStatusBannerState();
 }
@@ -198,7 +226,6 @@ class _NetworkStatusBannerState extends State<_NetworkStatusBanner> {
         _isOffline = result == ConnectivityResult.none;
       });
 
-      // Only show snackbar when going offline, not when coming back online
       if (_isOffline && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -208,7 +235,6 @@ class _NetworkStatusBannerState extends State<_NetworkStatusBanner> {
           ),
         );
       }
-      // Removed the "Back online!" snackbar
     });
   }
 

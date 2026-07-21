@@ -44,6 +44,8 @@ class ApiService {
   final Map<String, int> _leaguePriorityCache = {};
   final CacheService _cache = CacheService();
 
+  String _currentLeagueCode = 'eng.1';
+
   Map<String, String> get _headers => {
     'Content-Type': 'application/json',
     'Accept': 'application/json, image/*',
@@ -1329,6 +1331,10 @@ class ApiService {
     return standings;
   }
 
+// In api_service.dart - update getLeagueLeaders method
+
+// lib/services/api_service.dart
+
   Future<LeagueLeaders> getLeagueLeaders(String leagueCode, {String? season, int limit = 5}) async {
     final leagueId = AppConstants.apiFootballLeagueIds[leagueCode];
     if (leagueId == null) {
@@ -1342,7 +1348,9 @@ class ApiService {
       return LeagueLeaders.empty;
     }
 
+    // ✅ Use the season function that caps at 2024 for free plan
     final seasonYear = AppConstants.apiFootballSeasonFor(leagueCode, season: season);
+    print('[Leaders] Using season: $seasonYear (max supported: ${AppConstants.apiFootballMaxSeason})');
 
     print('[Leaders] Fetching leaders for $leagueCode (apiFootball league=$leagueId, season=$seasonYear)');
 
@@ -1375,19 +1383,23 @@ class ApiService {
     );
   }
 
+// lib/services/api_service.dart
+
   Future<List<LeaderEntry>> _fetchApiFootballLeaders(
       String statKey, int leagueId, int season, int limit) async {
     final url = '${AppConstants.apiFootballBaseUrl}/players/$statKey'
         '?league=$leagueId&season=$season';
 
     try {
+      print('[Leaders] Fetching $statKey for league=$leagueId season=$season');
+
       final res = await _client.get(
         Uri.parse(url),
         headers: {'x-apisports-key': AppConstants.apiFootballKey},
       ).timeout(const Duration(seconds: 8));
 
       if (res.statusCode != 200) {
-        print('[Leaders] $statKey HTTP ${res.statusCode} for league=$leagueId season=$season: ${res.body}');
+        print('[Leaders] $statKey HTTP ${res.statusCode} for league=$leagueId season=$season');
         return [];
       }
 
@@ -1395,10 +1407,6 @@ class ApiService {
 
       final errors = data['errors'];
       if (errors is Map && errors.isNotEmpty) {
-        // Common causes when this fires for a valid league/season combo:
-        // the free API-Football plan doesn't include that season yet, or
-        // the daily 100-request quota has been hit. Both surface here as
-        // a non-empty `errors` map rather than an HTTP error.
         print('[Leaders] $statKey API error for league=$leagueId season=$season: $errors');
         return [];
       } else if (errors is List && errors.isNotEmpty) {
@@ -1408,9 +1416,6 @@ class ApiService {
 
       final rawList = data['response'] as List? ?? [];
       if (rawList.isEmpty) {
-        // No `errors`, but also no data: usually means this competition/
-        // season has no recorded stats yet (e.g. group stage hasn't
-        // produced qualifying data) or isn't covered on the current plan.
         print('[Leaders] $statKey empty response for league=$leagueId season=$season '
             '(results=${data['results']})');
       }
@@ -1699,77 +1704,742 @@ class ApiService {
     return [];
   }
 
-  Future<MatchLineup?> getMatchLineup(String gameId) async {
-    final orderedLeagues = [
+
+// ─── PLAYER DETAILS ──────────────────────────────────────────────────────────
+
+  /// Fetch detailed player information from ESPN API
+  /// Fetch detailed player information from ESPN API
+  Future<Player> getPlayerDetails(String playerId, {String? leagueCode}) async {
+    final league = leagueCode ?? _currentLeagueCode;
+
+    // Try multiple endpoints
+    final endpoints = [
+      // ESPN Core API - most complete
+      'https://sports.core.api.espn.com/v2/sports/soccer/leagues/$league/athletes/$playerId?lang=en&region=us',
+
+      // ESPN Site API - alternative
+      '${AppConstants.baseUrl}/$league/athletes/$playerId',
+
+      // ESPN Common API - fallback
+      'https://site.web.api.espn.com/apis/common/v3/sports/soccer/$league/athletes/$playerId',
+    ];
+
+    for (final url in endpoints) {
+      try {
+        print('[PlayerDetails] Trying: $url');
+        final res = await _client
+            .get(Uri.parse(url), headers: _headers)
+            .timeout(const Duration(seconds: 8));
+
+        if (res.statusCode == 200) {
+          final data = json.decode(res.body) as Map<String, dynamic>;
+          final player = _parsePlayerFromApi(data, league);
+          if (player.id.isNotEmpty) {
+            print('[PlayerDetails] ✅ Found player: ${player.displayName}');
+            return player;
+          }
+        }
+      } catch (e) {
+        print('[PlayerDetails] Error with $url: $e');
+        continue;
+      }
+    }
+
+    // Fallback: Try to get from team roster
+    try {
+      final teamId = await _getPlayerTeamId(playerId, league);
+      if (teamId.isNotEmpty) {
+        final roster = await getTeamRoster(teamId, league);
+        final match = roster.firstWhere(
+              (p) => p.id == playerId,
+          orElse: () => Player(
+            id: playerId,
+            fullName: '',
+            displayName: '',
+            headshot: '',
+            jersey: '',
+            position: '',
+            teamId: '',
+            teamName: '',
+            height: 0,
+            weight: 0,
+            age: 0,
+            college: '',
+            statistics: {},
+          ),
+        );
+        if (match.id.isNotEmpty) return match;
+      }
+    } catch (_) {}
+
+    throw Exception('Player details not found for ID: $playerId');
+  }
+
+  /// Parse player from ESPN API response
+  /// Parse player from ESPN API response - ESPN ONLY
+  Player _parsePlayerFromApi(Map<String, dynamic> data, String leagueCode) {
+    // Handle different response structures
+    final athlete = data['athlete'] as Map<String, dynamic>? ?? data;
+    final player = athlete['player'] as Map<String, dynamic>? ?? athlete;
+
+    final id = player['id']?.toString() ?? '';
+    final fullName = player['displayName']?.toString() ??
+        player['fullName']?.toString() ??
+        player['name']?.toString() ??
+        '';
+    final displayName = player['displayName']?.toString() ?? fullName;
+
+    // ─── Headshot ──────────────────────────────────────────────────────────────
+    String headshot = '';
+    final headshotData = _extractHeadshotFromAthleteData(player);
+    if (headshotData != null && headshotData.isNotEmpty) {
+      headshot = headshotData;
+    }
+
+    final jersey = player['jersey']?.toString() ?? player['number']?.toString() ?? '';
+
+    // ─── Position ──────────────────────────────────────────────────────────────
+    String position = '';
+    final pos = player['position'];
+    if (pos != null) {
+      if (pos is Map) {
+        position = pos['abbreviation']?.toString() ?? pos['name']?.toString() ?? '';
+      } else {
+        position = pos.toString();
+      }
+    }
+    if (position.isEmpty) {
+      final positionName = player['positionName']?.toString() ?? '';
+      if (positionName.isNotEmpty) position = positionName;
+    }
+
+    // ─── Position Full Name ──────────────────────────────────────────────────
+    String positionFullName = '';
+    if (pos is Map) {
+      positionFullName = pos['name']?.toString() ?? '';
+    }
+
+    // ─── Team ──────────────────────────────────────────────────────────────────
+    String teamId = '';
+    String teamName = '';
+    final team = player['team'] as Map<String, dynamic>?;
+    if (team != null) {
+      teamId = team['id']?.toString() ?? '';
+      teamName = team['displayName']?.toString() ?? team['name']?.toString() ?? '';
+    }
+
+    // ─── Height ───────────────────────────────────────────────────────────────
+    int height = 0;
+    String heightDisplay = '';
+    final rawHeight = player['height'];
+    if (rawHeight != null) {
+      if (rawHeight is Map) {
+        heightDisplay = rawHeight['displayValue']?.toString() ?? '';
+        final rawValue = rawHeight['value']?.toString() ?? '';
+        if (rawValue.isNotEmpty) {
+          height = int.tryParse(rawValue) ?? 0;
+        }
+      } else {
+        height = int.tryParse(rawHeight.toString().replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+      }
+    }
+
+    // ─── Weight ───────────────────────────────────────────────────────────────
+    int weight = 0;
+    String weightDisplay = '';
+    final rawWeight = player['weight'];
+    if (rawWeight != null) {
+      if (rawWeight is Map) {
+        weightDisplay = rawWeight['displayValue']?.toString() ?? '';
+        final rawValue = rawWeight['value']?.toString() ?? '';
+        if (rawValue.isNotEmpty) {
+          weight = int.tryParse(rawValue) ?? 0;
+        }
+      } else {
+        weight = int.tryParse(rawWeight.toString().replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+      }
+    }
+
+    // ─── Age ──────────────────────────────────────────────────────────────────
+    int age = 0;
+    final rawAge = player['age'];
+    if (rawAge != null) {
+      if (rawAge is Map) {
+        age = int.tryParse(rawAge['value']?.toString() ?? rawAge['displayValue']?.toString() ?? '0') ?? 0;
+      } else {
+        age = int.tryParse(rawAge.toString()) ?? 0;
+      }
+    }
+
+    // ─── BIRTH PLACE (Country, City, State) ──────────────────────────────────
+    String birthPlace = '';
+    String nationality = '';
+    final birthplace = player['birthPlace'] as Map<String, dynamic>?;
+    if (birthplace != null) {
+      final city = birthplace['city']?.toString() ?? '';
+      final state = birthplace['state']?.toString() ?? '';
+      final country = birthplace['country']?.toString() ?? '';
+
+      // Build full birth place
+      final parts = <String>[];
+      if (city.isNotEmpty) parts.add(city);
+      if (state.isNotEmpty) parts.add(state);
+      if (country.isNotEmpty) parts.add(country);
+      birthPlace = parts.join(', ');
+
+      // Use country as nationality
+      nationality = country;
+    }
+
+    // ─── BIRTH DATE ───────────────────────────────────────────────────────────
+    String birthDate = '';
+    final rawBirthDate = player['birthDate'] ?? player['dateOfBirth'];
+    if (rawBirthDate != null) {
+      if (rawBirthDate is Map) {
+        birthDate = rawBirthDate['displayValue']?.toString() ??
+            rawBirthDate['value']?.toString() ??
+            rawBirthDate['date']?.toString() ?? '';
+      } else {
+        birthDate = rawBirthDate.toString();
+      }
+    }
+
+    // ─── EXPERIENCE (Years Pro) ──────────────────────────────────────────────
+    String experience = '';
+    final rawExperience = player['experience'];
+    if (rawExperience != null) {
+      if (rawExperience is Map) {
+        experience = rawExperience['displayValue']?.toString() ??
+            rawExperience['value']?.toString() ?? '';
+      } else {
+        experience = rawExperience.toString();
+      }
+    }
+
+    // ─── STATUS (Active/Inactive) ────────────────────────────────────────────
+    String status = 'Active';
+    final rawStatus = player['status'] as Map<String, dynamic>?;
+    if (rawStatus != null) {
+      status = rawStatus['displayName']?.toString() ??
+          rawStatus['name']?.toString() ??
+          rawStatus['type']?.toString() ??
+          'Active';
+    }
+
+    // ─── DRAFT INFO ───────────────────────────────────────────────────────────
+    String draftInfo = '';
+    final draft = player['draft'] as Map<String, dynamic>?;
+    if (draft != null) {
+      final year = draft['year']?.toString() ?? '';
+      final round = draft['round']?.toString() ?? '';
+      final pick = draft['pick']?.toString() ?? '';
+      final teamName = draft['team']?['name']?.toString() ?? '';
+
+      if (year.isNotEmpty) {
+        draftInfo = 'Drafted $year';
+        if (round.isNotEmpty) draftInfo += ' • Round $round';
+        if (pick.isNotEmpty) draftInfo += ' • Pick $pick';
+        if (teamName.isNotEmpty) draftInfo += ' • $teamName';
+      }
+    }
+
+    // ─── COLLEGE (if available - sometimes for international players) ──────
+    String college = '';
+    final collegeData = player['college'] as Map<String, dynamic>?;
+    if (collegeData != null) {
+      college = collegeData['displayName']?.toString() ??
+          collegeData['name']?.toString() ?? '';
+    }
+
+    // ─── Statistics ──────────────────────────────────────────────────────────
+    Map<String, dynamic> statistics = {};
+    final statsData = player['statistics'] as List? ?? [];
+    for (final stat in statsData) {
+      if (stat is Map) {
+        final name = stat['name']?.toString() ?? '';
+        final value = stat['value'] ?? stat['displayValue'] ?? 0;
+        if (name.isNotEmpty) {
+          statistics[name] = value;
+        }
+      }
+    }
+
+    // ─── Season Stats ──────────────────────────────────────────────────────
+    Map<String, dynamic>? seasonStats;
+    final seasonData = player['seasonStats'] as List? ?? [];
+    if (seasonData.isNotEmpty) {
+      seasonStats = {};
+      for (final stat in seasonData) {
+        if (stat is Map) {
+          final name = stat['name']?.toString() ?? '';
+          final value = stat['value'] ?? stat['displayValue'] ?? 0;
+          if (name.isNotEmpty) {
+            seasonStats![name] = value;
+          }
+        }
+      }
+    }
+
+    // ─── Career Stats ──────────────────────────────────────────────────────
+    List<Map<String, dynamic>>? careerStats;
+    final careerData = player['careerStats'] as List? ?? [];
+    if (careerData.isNotEmpty) {
+      careerStats = [];
+      for (final season in careerData) {
+        if (season is Map) {
+          final seasonMap = <String, dynamic>{};
+          final statsList = season['statistics'] as List? ?? [];
+          for (final stat in statsList) {
+            if (stat is Map) {
+              final name = stat['name']?.toString() ?? '';
+              final value = stat['value'] ?? stat['displayValue'] ?? 0;
+              if (name.isNotEmpty) {
+                seasonMap[name] = value;
+              }
+            }
+          }
+          if (seasonMap.isNotEmpty) {
+            seasonMap['season'] = season['season']?.toString() ?? '';
+            seasonMap['team'] = season['team']?.toString() ?? '';
+            careerStats!.add(seasonMap);
+          }
+        }
+      }
+    }
+
+    // ─── Injury Status ──────────────────────────────────────────────────────
+    String? injuryStatus;
+    final injuries = player['injuries'] as List? ?? [];
+    if (injuries.isNotEmpty) {
+      final latest = injuries.first as Map<String, dynamic>?;
+      if (latest != null) {
+        injuryStatus = latest['status']?.toString() ??
+            latest['type']?.toString() ??
+            latest['description']?.toString();
+      }
+    }
+
+    // ─── Market Value ──────────────────────────────────────────────────────
+    double? marketValue;
+    final marketData = player['marketValue'] as Map<String, dynamic>?;
+    if (marketData != null) {
+      final displayValue = marketData['displayValue']?.toString() ?? '';
+      if (displayValue.isNotEmpty) {
+        marketValue = double.tryParse(displayValue.replaceAll(RegExp(r'[^0-9.]'), ''));
+      }
+    }
+
+    // ─── Contract Info ──────────────────────────────────────────────────────
+    String? contractExpiry;
+    final contractData = player['contract'] as Map<String, dynamic>?;
+    if (contractData != null) {
+      contractExpiry = contractData['expiry']?.toString() ??
+          contractData['endDate']?.toString() ??
+          contractData['displayValue']?.toString();
+    }
+
+    return Player(
+      id: id,
+      fullName: fullName,
+      displayName: displayName,
+      headshot: headshot,
+      jersey: jersey,
+      position: position,
+      teamId: teamId,
+      teamName: teamName,
+      height: height,
+      weight: weight,
+      age: age,
+      college: college,
+      statistics: statistics,
+      injuryStatus: injuryStatus,
+      // ─── NEW FIELDS ──────────────────────────────────────────────────────
+      nationality: nationality.isNotEmpty ? nationality : null,
+      birthDate: birthDate.isNotEmpty ? birthDate : null,
+      foot: null, // Not available from ESPN
+      preferredPosition: positionFullName.isNotEmpty ? positionFullName : null,
+      marketValue: marketValue,
+      contractExpiry: contractExpiry,
+      seasonStats: seasonStats,
+      careerStats: careerStats,
+    );
+  }
+
+  /// Get the team ID for a player
+  Future<String> _getPlayerTeamId(String playerId, String leagueCode) async {
+    try {
+      final url = '${AppConstants.baseUrl}/$leagueCode/athletes/$playerId';
+      final res = await _client
+          .get(Uri.parse(url), headers: _headers)
+          .timeout(const Duration(seconds: 5));
+
+      if (res.statusCode == 200) {
+        final data = json.decode(res.body) as Map<String, dynamic>;
+        final team = data['team'] as Map<String, dynamic>?;
+        if (team != null) {
+          return team['id']?.toString() ?? '';
+        }
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  Future<MatchLineup?> getMatchLineup(String gameId, {String? leagueCode}) async {
+    // First, try the specific league if provided, then all others
+    List<Map<String, String>> leaguesToTry = [];
+
+    // If a league code is provided, try it first
+    if (leagueCode != null && leagueCode.isNotEmpty) {
+      final league = AppConstants.allLeagues.firstWhere(
+            (l) => l['code'] == leagueCode,
+        orElse: () => {'code': leagueCode, 'name': leagueCode, 'flag': '⚽'},
+      );
+      leaguesToTry.add(league);
+    }
+
+    // Then try all other leagues
+    leaguesToTry.addAll([
       ...AppConstants.internationalLeagues,
       ...AppConstants.priorityLeagues,
       ...AppConstants.majorClubCompetitions,
       ...AppConstants.backgroundLeagues,
-    ];
+    ]);
 
-    for (final league in orderedLeagues) {
-      final url =
-          '${AppConstants.baseUrl}/${league['code']}/summary?event=$gameId';
+    // Remove duplicates
+    final seen = <String>{};
+    leaguesToTry = leaguesToTry.where((l) => seen.add(l['code']!)).toList();
+
+    for (final league in leaguesToTry) {
+      // Use /summary endpoint - this contains the ratings data
+      final url = '${AppConstants.baseUrl}/${league['code']}/summary?event=$gameId';
+      print('[Lineup] Trying: $url');
+
       try {
         final res = await _client
             .get(Uri.parse(url), headers: _headers)
             .timeout(const Duration(seconds: 8));
-        if (res.statusCode != 200) continue;
+
+        if (res.statusCode != 200) {
+          print('[Lineup] HTTP ${res.statusCode} for ${league['code']}');
+          continue;
+        }
 
         final data = json.decode(res.body) as Map<String, dynamic>;
 
-        final hasHeader   = data['header'] != null;
-        final hasBoxscore = data['boxscore'] != null;
-        if (!hasHeader && !hasBoxscore) continue;
+        final boxscore = data['boxscore'] as Map<String, dynamic>?;
+        if (boxscore == null || boxscore.isEmpty) {
+          print('[Lineup] No boxscore data for ${league['code']}');
+          continue;
+        }
+
+        print('[Lineup] ✅ Found boxscore data in ${league['code']}');
+        print('[Lineup] Boxscore keys: ${boxscore.keys}');
 
         List<LineupPlayer> homePlayers = [];
         List<LineupPlayer> awayPlayers = [];
         String homeFormation = '';
         String awayFormation = '';
 
-        final boxscorePlayers =
-            data['boxscore']?['players'] as List? ?? [];
+        // ─── Parse from boxscore ────────────────────────────────────────────
+        // The boxscore can have 'players' or 'teams' array
+        final players = boxscore['players'] as List? ?? [];
+        final teamsRaw = boxscore['teams'];
+        List<dynamic> teamEntries = [];
 
-        for (final teamData in boxscorePlayers) {
+        if (teamsRaw is Map<String, dynamic>) {
+          final entries = teamsRaw['entries'] as List? ?? [];
+          teamEntries = entries;
+        } else if (teamsRaw is List) {
+          teamEntries = teamsRaw;
+        }
+
+        // ─── Parse from players array ──────────────────────────────────────
+        for (final teamData in players) {
+          if (teamData is! Map) continue;
+
           final isHome = teamData['homeAway']?.toString() == 'home';
+          print('[Lineup] Parsing ${isHome ? "HOME" : "AWAY"} team from players');
+
           final formation = teamData['formation']?.toString() ?? '';
           if (isHome && formation.isNotEmpty) homeFormation = formation;
           if (!isHome && formation.isNotEmpty) awayFormation = formation;
 
           final statistics = teamData['statistics'] as List? ?? [];
-          for (final group in statistics) {
-            final athletes = group['athletes'] as List? ?? [];
-            for (final a in athletes) {
-              final p = _parseLineupAthlete(a, isHome: isHome);
-              if (p != null) {
-                if (isHome) homePlayers.add(p);
-                else awayPlayers.add(p);
+
+          for (final statGroup in statistics) {
+            if (statGroup is! Map) continue;
+
+            final athletes = statGroup['athletes'] as List? ?? [];
+
+            for (final athleteData in athletes) {
+              if (athleteData is! Map) continue;
+
+              final athlete = athleteData['athlete'] as Map<String, dynamic>? ?? athleteData;
+
+              final id = athlete['id']?.toString() ?? '';
+              final fullName = athlete['displayName']?.toString()
+                  ?? athlete['fullName']?.toString()
+                  ?? athlete['name']?.toString()
+                  ?? '';
+              if (fullName.isEmpty) continue;
+
+              final shortName = athlete['shortName']?.toString() ??
+                  athlete['displayName']?.toString() ??
+                  '';
+              final number = athlete['jersey']?.toString() ??
+                  athlete['number']?.toString() ??
+                  '';
+              final position = athlete['position']?['abbreviation']?.toString()
+                  ?? athlete['position']?.toString()
+                  ?? '';
+
+              bool starter = athleteData['starter'] == true ||
+                  athlete['starter'] == true ||
+                  athleteData['starting'] == true ||
+                  athlete['starting'] == true;
+
+              // ─── Extract rating ────────────────────────────────────────
+              double? rating;
+
+              // Most important: Check athleteData['stats'] for rating
+              if (athleteData['stats'] != null) {
+                final stats = athleteData['stats'] as List? ?? [];
+                for (final stat in stats) {
+                  if (stat is Map) {
+                    final statName = stat['name']?.toString().toLowerCase() ?? '';
+                    final displayName = stat['displayName']?.toString().toLowerCase() ?? '';
+                    final abbreviation = stat['abbreviation']?.toString().toLowerCase() ?? '';
+
+                    if (statName.contains('rating') ||
+                        statName == 'player rating' ||
+                        statName == 'matchrating' ||
+                        statName == 'overallrating' ||
+                        displayName.contains('rating') ||
+                        abbreviation == 'rtg' ||
+                        abbreviation == 'rat') {
+                      final val = stat['displayValue']?.toString() ??
+                          stat['value']?.toString() ??
+                          '';
+                      if (val.isNotEmpty) {
+                        final parsed = double.tryParse(val);
+                        if (parsed != null && parsed > 0 && parsed <= 10.5) {
+                          rating = parsed;
+                          print('[Lineup] ✅ Found rating for $fullName: $rating');
+                          break;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+
+              // Check direct rating fields
+              if (rating == null && athleteData['rating'] != null) {
+                final parsed = double.tryParse(athleteData['rating'].toString());
+                if (parsed != null && parsed > 0 && parsed <= 10.5) {
+                  rating = parsed;
+                  print('[Lineup] ✅ Found rating for $fullName: $rating (direct)');
+                }
+              }
+              if (rating == null && athlete['rating'] != null) {
+                final parsed = double.tryParse(athlete['rating'].toString());
+                if (parsed != null && parsed > 0 && parsed <= 10.5) {
+                  rating = parsed;
+                  print('[Lineup] ✅ Found rating for $fullName: $rating (athlete)');
+                }
+              }
+
+              String headshot = '';
+              final rawHs = athlete['headshot'] ?? athleteData['headshot'];
+              if (rawHs is String) {
+                headshot = rawHs;
+              } else if (rawHs is Map) {
+                headshot = rawHs['href']?.toString() ??
+                    rawHs['full']?.toString() ??
+                    rawHs['default']?.toString() ??
+                    '';
+              }
+              if (headshot.isEmpty && id.isNotEmpty) {
+                headshot = 'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$id.png&w=96&h=70&cb=1';
+              }
+
+              final player = LineupPlayer(
+                id: id,
+                name: fullName,
+                shortName: _abbreviateName(shortName),
+                number: number,
+                position: position,
+                isStarter: starter,
+                isHome: isHome,
+                headshot: headshot,
+                rating: rating,
+              );
+
+              if (isHome) {
+                homePlayers.add(player);
+              } else {
+                awayPlayers.add(player);
               }
             }
           }
-
-          final roster = teamData['roster'] as List? ?? [];
-          for (final a in roster) {
-            final p = _parseLineupAthlete(a, isHome: isHome);
-            if (p != null) {
-              if (isHome) homePlayers.add(p);
-              else awayPlayers.add(p);
-            }
-          }
         }
 
-        final rootRosters = data['rosters'] as List? ?? [];
-        for (final teamData in rootRosters) {
-          final isHome = teamData['homeAway']?.toString() == 'home';
-          final formation = teamData['formation']?.toString() ?? '';
+        // ─── Parse from teams.entries ──────────────────────────────────────
+        for (final teamEntry in teamEntries) {
+          if (teamEntry is! Map) continue;
+
+          final team = teamEntry['team'] as Map<String, dynamic>?;
+          bool isHome = false;
+          if (team != null) {
+            isHome = team['homeAway']?.toString() == 'home' ||
+                team['isHome'] == true ||
+                teamEntry['homeAway']?.toString() == 'home';
+          }
+          final teamName = team?['displayName']?.toString() ??
+              team?['name']?.toString() ??
+              'Unknown';
+          print('[Lineup] Parsing ${isHome ? "HOME" : "AWAY"} team from teams: $teamName');
+
+          final formation = teamEntry['formation']?.toString() ?? '';
           if (isHome && formation.isNotEmpty) homeFormation = formation;
           if (!isHome && formation.isNotEmpty) awayFormation = formation;
 
-          final entries = teamData['roster'] as List?
-              ?? teamData['athletes'] as List?
-              ?? [];
-          for (final a in entries) {
-            final p = _parseLineupAthlete(a, isHome: isHome);
+          final statistics = teamEntry['statistics'] as List? ?? [];
+
+          for (final statGroup in statistics) {
+            if (statGroup is! Map) continue;
+
+            final athletes = statGroup['athletes'] as List? ?? [];
+
+            for (final athleteData in athletes) {
+              if (athleteData is! Map) continue;
+
+              final athlete = athleteData['athlete'] as Map<String, dynamic>? ?? athleteData;
+
+              final id = athlete['id']?.toString() ?? '';
+              final fullName = athlete['displayName']?.toString()
+                  ?? athlete['fullName']?.toString()
+                  ?? athlete['name']?.toString()
+                  ?? '';
+              if (fullName.isEmpty) continue;
+
+              final shortName = athlete['shortName']?.toString() ??
+                  athlete['displayName']?.toString() ??
+                  '';
+              final number = athlete['jersey']?.toString() ??
+                  athlete['number']?.toString() ??
+                  '';
+              final position = athlete['position']?['abbreviation']?.toString()
+                  ?? athlete['position']?.toString()
+                  ?? '';
+
+              bool starter = athleteData['starter'] == true ||
+                  athlete['starter'] == true ||
+                  athleteData['starting'] == true ||
+                  athlete['starting'] == true;
+
+              double? rating;
+
+              // Most important: Check athleteData['stats'] for rating
+              if (athleteData['stats'] != null) {
+                final stats = athleteData['stats'] as List? ?? [];
+                for (final stat in stats) {
+                  if (stat is Map) {
+                    final statName = stat['name']?.toString().toLowerCase() ?? '';
+                    final displayName = stat['displayName']?.toString().toLowerCase() ?? '';
+
+                    if (statName.contains('rating') ||
+                        statName == 'player rating' ||
+                        statName == 'matchrating' ||
+                        displayName.contains('rating')) {
+                      final val = stat['displayValue']?.toString() ??
+                          stat['value']?.toString() ??
+                          '';
+                      if (val.isNotEmpty) {
+                        final parsed = double.tryParse(val);
+                        if (parsed != null && parsed > 0 && parsed <= 10.5) {
+                          rating = parsed;
+                          print('[Lineup] ✅ Found rating for $fullName: $rating');
+                          break;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+
+              if (rating == null && athleteData['rating'] != null) {
+                final parsed = double.tryParse(athleteData['rating'].toString());
+                if (parsed != null && parsed > 0 && parsed <= 10.5) {
+                  rating = parsed;
+                }
+              }
+              if (rating == null && athlete['rating'] != null) {
+                final parsed = double.tryParse(athlete['rating'].toString());
+                if (parsed != null && parsed > 0 && parsed <= 10.5) {
+                  rating = parsed;
+                }
+              }
+
+              String headshot = '';
+              final rawHs = athlete['headshot'] ?? athleteData['headshot'];
+              if (rawHs is String) {
+                headshot = rawHs;
+              } else if (rawHs is Map) {
+                headshot = rawHs['href']?.toString() ??
+                    rawHs['full']?.toString() ??
+                    rawHs['default']?.toString() ??
+                    '';
+              }
+              if (headshot.isEmpty && id.isNotEmpty) {
+                headshot = 'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$id.png&w=96&h=70&cb=1';
+              }
+
+              final player = LineupPlayer(
+                id: id,
+                name: fullName,
+                shortName: _abbreviateName(shortName),
+                number: number,
+                position: position,
+                isStarter: starter,
+                isHome: isHome,
+                headshot: headshot,
+                rating: rating,
+              );
+
+              if (isHome) {
+                // Avoid duplicates
+                if (!homePlayers.any((p) => p.id == player.id)) {
+                  homePlayers.add(player);
+                }
+              } else {
+                if (!awayPlayers.any((p) => p.id == player.id)) {
+                  awayPlayers.add(player);
+                }
+              }
+            }
+          }
+        }
+
+        // ─── Also try parsing from root roster ──────────────────────────────
+        final roster = data['rosters'] as List? ?? [];
+        for (final teamData in roster) {
+          if (teamData is! Map) continue;
+
+          final isHome = teamData['homeAway']?.toString() == 'home';
+          final entries = teamData['roster'] as List? ?? [];
+
+          for (final entry in entries) {
+            if (entry is! Map) continue;
+
+            final athlete = entry['athlete'] as Map<String, dynamic>? ?? entry;
+
+            final existingIds = isHome
+                ? homePlayers.map((p) => p.id).toSet()
+                : awayPlayers.map((p) => p.id).toSet();
+            if (existingIds.contains(athlete['id']?.toString() ?? '')) continue;
+
+            final p = _parseLineupAthlete(entry, isHome: isHome);
             if (p != null) {
               if (isHome) homePlayers.add(p);
               else awayPlayers.add(p);
@@ -1777,24 +2447,35 @@ class ApiService {
           }
         }
 
+        // ─── Remove duplicates and sort ──────────────────────────────────
         homePlayers = _dedup(homePlayers);
         awayPlayers = _dedup(awayPlayers);
 
         homePlayers = _sortLineup(homePlayers);
         awayPlayers = _sortLineup(awayPlayers);
 
-        if (homePlayers.isEmpty && awayPlayers.isEmpty) continue;
+        print('[Lineup] ✅ SUCCESS: Found ${homePlayers.length} home players (${homePlayers.where((p) => p.isStarter).length} starters), ${awayPlayers.length} away players (${awayPlayers.where((p) => p.isStarter).length} starters)');
 
-        return MatchLineup(
-          homeFormation: homeFormation,
-          awayFormation: awayFormation,
-          homePlayers: homePlayers,
-          awayPlayers: awayPlayers,
-        );
-      } catch (_) {
+        final homeWithRatings = homePlayers.where((p) => p.rating != null).length;
+        final awayWithRatings = awayPlayers.where((p) => p.rating != null).length;
+        print('[Lineup] Home players with ratings: $homeWithRatings/${homePlayers.length}');
+        print('[Lineup] Away players with ratings: $awayWithRatings/${awayPlayers.length}');
+
+        if (homePlayers.isNotEmpty || awayPlayers.isNotEmpty) {
+          return MatchLineup(
+            homeFormation: homeFormation,
+            awayFormation: awayFormation,
+            homePlayers: homePlayers,
+            awayPlayers: awayPlayers,
+          );
+        }
+      } catch (e) {
+        print('[Lineup] Error: $e');
         continue;
       }
     }
+
+    print('[Lineup] ❌ No lineup data found for game $gameId');
     return null;
   }
 
@@ -1821,9 +2502,170 @@ class ApiService {
             ?? athlete['position']?.toString()
             ?? '';
 
-    final starter = a['starter'] == true
-        || a['active'] == true
-        || a['didPlay'] == true;
+    // ─── Starter detection ──────────────────────────────────────────────────
+    bool starter = false;
+
+    if (athlete['starter'] == true || athlete['starter'] == 'true') {
+      starter = true;
+    } else if (a['starter'] == true || a['starter'] == 'true') {
+      starter = true;
+    } else if (a['starting'] == true || a['starting'] == 'true') {
+      starter = true;
+    } else if (a['statistics'] != null && (a['statistics'] as List).isNotEmpty) {
+      final stats = a['statistics'] as List? ?? [];
+      for (final statGroup in stats) {
+        if (statGroup is Map) {
+          final athletes = statGroup['athletes'] as List? ?? [];
+          for (final ath in athletes) {
+            if (ath is Map) {
+              if (ath['athlete']?['id']?.toString() == id) {
+                starter = true;
+                break;
+              }
+            }
+          }
+        }
+        if (starter) break;
+      }
+    }
+
+    // ─── RATING EXTRACTION - HANDLES ALL ESPN FORMATS ──────────────────────
+    double? rating;
+
+    // 1. Check direct rating on athlete
+    if (athlete['rating'] != null) {
+      rating = double.tryParse(athlete['rating'].toString());
+    }
+
+    // 2. Check rating on the parent data
+    if (rating == null && a['rating'] != null) {
+      rating = double.tryParse(a['rating'].toString());
+    }
+
+    // 3. Check for rating in the 'stats' array (MOST COMMON LOCATION)
+    if (rating == null && a['stats'] != null) {
+      final stats = a['stats'] as List? ?? [];
+      for (final stat in stats) {
+        if (stat is Map) {
+          final statName = stat['name']?.toString().toLowerCase() ?? '';
+          final displayName = stat['displayName']?.toString().toLowerCase() ?? '';
+
+          if (statName.contains('rating') ||
+              statName == 'player rating' ||
+              statName == 'matchrating' ||
+              displayName.contains('rating')) {
+            final val = stat['displayValue']?.toString() ??
+                stat['value']?.toString() ?? '';
+            if (val.isNotEmpty) {
+              rating = double.tryParse(val);
+              if (rating != null) {
+                print('[Lineup] ✅ Found rating for $fullName: $rating (from stats array)');
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 4. Check in athlete's own stats
+    if (rating == null && athlete['stats'] != null) {
+      final stats = athlete['stats'] as List? ?? [];
+      for (final stat in stats) {
+        if (stat is Map) {
+          final statName = stat['name']?.toString().toLowerCase() ?? '';
+          if (statName.contains('rating')) {
+            final val = stat['displayValue']?.toString() ?? stat['value']?.toString() ?? '';
+            if (val.isNotEmpty) {
+              rating = double.tryParse(val);
+              if (rating != null) {
+                print('[Lineup] ✅ Found rating for $fullName: $rating (from athlete stats)');
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 5. Check in statistics array (if present)
+    if (rating == null && a['statistics'] != null) {
+      final stats = a['statistics'] as List? ?? [];
+      for (final statGroup in stats) {
+        if (statGroup is Map) {
+          // Check stats directly on the group
+          final groupStats = statGroup['stats'] as List? ?? [];
+          for (final stat in groupStats) {
+            if (stat is Map) {
+              final statName = stat['name']?.toString().toLowerCase() ?? '';
+              if (statName.contains('rating')) {
+                final val = stat['displayValue']?.toString() ?? stat['value']?.toString() ?? '';
+                if (val.isNotEmpty) {
+                  rating = double.tryParse(val);
+                  if (rating != null) {
+                    print('[Lineup] ✅ Found rating for $fullName: $rating (from statistics group)');
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          if (rating != null) break;
+
+          // Check athletes in the statistics group
+          final athletes = statGroup['athletes'] as List? ?? [];
+          for (final ath in athletes) {
+            if (ath is Map) {
+              final athStats = ath['stats'] as List? ?? [];
+              for (final stat in athStats) {
+                if (stat is Map) {
+                  final statName = stat['name']?.toString().toLowerCase() ?? '';
+                  if (statName.contains('rating')) {
+                    final val = stat['displayValue']?.toString() ?? stat['value']?.toString() ?? '';
+                    if (val.isNotEmpty) {
+                      rating = double.tryParse(val);
+                      if (rating != null) {
+                        print('[Lineup] ✅ Found rating for $fullName: $rating (from athlete in statistics group)');
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+              if (rating != null) break;
+            }
+          }
+        }
+        if (rating != null) break;
+      }
+    }
+
+    // 6. Try the `playerRating` field
+    if (rating == null && a['playerRating'] != null) {
+      rating = double.tryParse(a['playerRating'].toString());
+    }
+
+    // 7. Try `rating` in the athlete's `statistics` object
+    if (rating == null && a['statistics'] != null) {
+      // Some APIs put rating directly in the statistics object
+      final statsList = a['statistics'] as List? ?? [];
+      for (final statObj in statsList) {
+        if (statObj is Map && statObj['rating'] != null) {
+          rating = double.tryParse(statObj['rating'].toString());
+          if (rating != null) break;
+        }
+      }
+    }
+
+    // ─── Debug: Log if we found a rating ──────────────────────────────────
+    if (rating != null) {
+      print('[Lineup] ✅ Rating for $fullName: $rating');
+    } else {
+      // Only log for the first few players to avoid spam
+      if (id.isNotEmpty && id.length > 3) {
+        // print('[Lineup] ⚠️ No rating found for $fullName');
+      }
+    }
 
     String headshot = '';
     final rawHs = athlete['headshot'] ?? a['headshot'];
@@ -1833,13 +2675,8 @@ class ApiService {
       headshot = (rawHs['href'] ?? rawHs['full'] ?? rawHs['default'] ?? '').toString();
     }
     if (headshot.isEmpty && id.isNotEmpty) {
-      headshot =
-      'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$id.png&w=96&h=70&cb=1';
+      headshot = 'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$id.png&w=96&h=70&cb=1';
     }
-
-    final double? rating = (a['rating'] != null)
-        ? double.tryParse(a['rating'].toString())
-        : null;
 
     return LineupPlayer(
       id: id,
@@ -1852,6 +2689,30 @@ class ApiService {
       headshot: headshot,
       rating: rating,
     );
+  }
+
+  // In getMatchLineup method, after parsing players, ensure substitutes are included:
+
+// Add this helper method to properly extract all players including substitutes
+  List<LineupPlayer> _parseRosterPlayers(List<dynamic> roster, bool isHome) {
+    final List<LineupPlayer> players = [];
+    for (final a in roster) {
+      if (a is! Map) continue;
+
+      // Get the athlete data
+      final athlete = a['athlete'] as Map<String, dynamic>? ?? a;
+
+      // Check if this is a substitute (starter: false)
+      final isStarter = a['starter'] == true ||
+          a['starting'] == true ||
+          athlete['starter'] == true;
+
+      final p = _parseLineupAthlete(a, isHome: isHome);
+      if (p != null) {
+        players.add(p);
+      }
+    }
+    return players;
   }
 
   List<LineupPlayer> _dedup(List<LineupPlayer> players) {
@@ -1876,10 +2737,13 @@ class ApiService {
       }
     }
 
-    final starters = players.where((p) => p.isStarter).toList()
+    // Separate starters and substitutes properly
+    final starters = players.where((p) => p.isStarter == true).toList()
       ..sort((a, b) => posOrder(a.position).compareTo(posOrder(b.position)));
-    final subs = players.where((p) => !p.isStarter).toList()
+
+    final subs = players.where((p) => p.isStarter == false).toList()
       ..sort((a, b) => posOrder(a.position).compareTo(posOrder(b.position)));
+
     return [...starters, ...subs];
   }
 
@@ -1887,6 +2751,82 @@ class ApiService {
     final parts = name.trim().split(' ');
     if (parts.length == 1) return name;
     return '${parts.first[0]}. ${parts.last}';
+  }
+
+  // ─── Rating deep-scan helpers ────────────────────────────────────────────
+  static const Set<String> _ratingKeyNames = {
+    'rating',
+    'rtg',
+    'rat',
+    'player rating',
+    'playerrating',
+    'matchrating',
+    'overallrating',
+  };
+
+  bool _looksLikeRatingKey(String raw) {
+    final s = raw.toLowerCase().trim();
+    if (_ratingKeyNames.contains(s)) return true;
+    // avoid over-matching unrelated fields like "ratingCount" / "ratingsUrl"
+    return s == 'rating' || (s.contains('rating') && !s.contains('count') && !s.contains('url'));
+  }
+
+  /// A sane numeric range for ESPN-style 0–10 (or occasionally 0–100) match
+  /// ratings, used to reject false positives (e.g. a "rating" field that's
+  /// actually a jersey number or an unrelated id).
+  bool _isPlausibleRating(double v) => v > 0 && v <= 10.5;
+
+  /// Recursively scans a player's raw JSON subtree for a rating value.
+  /// Handles both the "named stat" shape:
+  ///   {"name": "rating", "displayValue": "7.4"}
+  /// and the "positional" shape ESPN commonly uses for box score stats:
+  ///   {"keys": ["rating", ...], "stats": ["7.4", ...]}
+  ///   {"labels": ["RTG", ...], "stats": ["7.4", ...]}
+  double? _deepFindRating(dynamic node, {int depth = 0}) {
+    if (depth > 6 || node == null) return null;
+
+    if (node is Map) {
+      // 1. Positional shape: keys/labels array aligned with a stats array.
+      final keys = (node['keys'] as List?) ?? (node['names'] as List?);
+      final labels = node['labels'] as List?;
+      final positionalNames = keys ?? labels;
+      final statsArr = node['stats'];
+      if (positionalNames != null && statsArr is List) {
+        for (int i = 0; i < positionalNames.length && i < statsArr.length; i++) {
+          if (_looksLikeRatingKey(positionalNames[i].toString())) {
+            final v = double.tryParse(statsArr[i].toString());
+            if (v != null && _isPlausibleRating(v)) return v;
+          }
+        }
+      }
+
+      // 2. Named-map shape: {"name"/"abbreviation"/"displayName": "...", "displayValue"/"value": "..."}
+      final nameKey = (node['name'] ?? node['abbreviation'] ?? node['displayName'])?.toString();
+      if (nameKey != null && _looksLikeRatingKey(nameKey)) {
+        final v = double.tryParse((node['displayValue'] ?? node['value'] ?? '').toString());
+        if (v != null && _isPlausibleRating(v)) return v;
+      }
+
+      // 3. Direct field on this map, e.g. {"rating": "7.4"} or {"playerRating": 7.4}
+      for (final k in node.keys) {
+        if (k is String && _looksLikeRatingKey(k) && node[k] != null && node[k] is! Map && node[k] is! List) {
+          final v = double.tryParse(node[k].toString());
+          if (v != null && _isPlausibleRating(v)) return v;
+        }
+      }
+
+      // 4. Recurse into nested values.
+      for (final entry in node.entries) {
+        final result = _deepFindRating(entry.value, depth: depth + 1);
+        if (result != null) return result;
+      }
+    } else if (node is List) {
+      for (final item in node) {
+        final result = _deepFindRating(item, depth: depth + 1);
+        if (result != null) return result;
+      }
+    }
+    return null;
   }
 
   Future<List<NewsArticle>> getNewsBatch({
@@ -2120,328 +3060,247 @@ class ApiService {
     }
   }
 
+// In api_service.dart - update _searchTeamsApiFootball
+
+// lib/services/api_service.dart
+
   /// Search teams using API-Football
   Future<List<SearchResult>> _searchTeamsApiFootball(String query) async {
     final List<SearchResult> results = [];
     final Set<String> seenIds = {};
 
-    final keyManager = ApiKeyManager();
+    final apiKey = AppConstants.apiFootballKey;
+
+    // ✅ FIX: Only search if query is at least 3 characters
+    if (query.trim().length < 3) {
+      print('[SearchTeams] Query too short (min 3 chars)');
+      return results;
+    }
 
     print('[SearchTeams] Searching for: "$query"');
 
-    for (int attempt = 0; attempt < 3; attempt++) {
-      try {
-        final apiKey = keyManager.getNextKey();
+    try {
+      final url = '${AppConstants.apiFootballBaseUrl}/teams?search=$query';
+      print('[SearchTeams] Requesting: $url');
 
-        final url = '${AppConstants.apiFootballBaseUrl}/teams?search=$query';
+      final res = await _client.get(
+        Uri.parse(url),
+        headers: {'x-apisports-key': apiKey},
+      ).timeout(const Duration(seconds: 10));
 
-        print('[SearchTeams] Requesting: $url');
+      if (res.statusCode == 200) {
+        final data = json.decode(res.body) as Map<String, dynamic>;
 
-        final res = await _client.get(
-          Uri.parse(url),
-          headers: {'x-apisports-key': apiKey},
-        ).timeout(const Duration(seconds: 10));
+        if (data['errors'] != null && data['errors'].isNotEmpty) {
+          print('[SearchTeams] API error: ${data['errors']}');
+          return results;
+        }
 
-        keyManager.markRequest(apiKey);
+        final response = data['response'] as List? ?? [];
+        print('[SearchTeams] Found ${response.length} raw results');
 
-        print('[SearchTeams] Response status: ${res.statusCode}');
+        for (final teamData in response) {
+          if (teamData is! Map) continue;
+          final team = teamData['team'] as Map<String, dynamic>?;
+          if (team == null) continue;
 
-        if (res.statusCode == 200) {
-          final data = json.decode(res.body) as Map<String, dynamic>;
+          final id = team['id']?.toString() ?? '';
+          if (id.isEmpty || seenIds.contains(id)) continue;
 
-          if (data['errors'] != null && data['errors'].isNotEmpty) {
-            print('[SearchTeams] API error: ${data['errors']}');
+          final name = team['name']?.toString() ?? '';
+          final displayName = team['name']?.toString() ?? '';
+          final abbreviation = team['code']?.toString() ?? '';
+          final logo = team['logo']?.toString() ?? '';
+
+          if (!name.toLowerCase().contains(query.toLowerCase())) {
             continue;
           }
 
-          final response = data['response'] as List? ?? [];
-          print('[SearchTeams] Found ${response.length} raw results');
+          seenIds.add(id);
 
-          for (final teamData in response) {
-            if (teamData is! Map) continue;
-            final team = teamData['team'] as Map<String, dynamic>?;
-
-            if (team == null) continue;
-
-            final id = team['id']?.toString() ?? '';
-            if (id.isEmpty || seenIds.contains(id)) continue;
-
-            final name = team['name']?.toString() ?? '';
-            final displayName = team['name']?.toString() ?? '';
-            final abbreviation = team['code']?.toString() ?? '';
-            final logo = team['logo']?.toString() ?? '';
-
-            // Check if query matches the name (case insensitive)
-            if (!name.toLowerCase().contains(query.toLowerCase())) {
-              continue;
+          // Try to find league for this team
+          String leagueName = '';
+          String leagueCode = '';
+          for (final league in AppConstants.allLeagues) {
+            if (name.toLowerCase().contains(league['name']!.toLowerCase().split(' ').first.toLowerCase())) {
+              leagueName = league['name']!;
+              leagueCode = league['code']!;
+              break;
             }
-
-            seenIds.add(id);
-
-            // Try to find league for this team from constants
-            String leagueName = '';
-            String leagueCode = '';
-            for (final league in AppConstants.allLeagues) {
-              if (name.toLowerCase().contains(league['name']!.toLowerCase().split(' ').first.toLowerCase())) {
-                leagueName = league['name']!;
-                leagueCode = league['code']!;
-                break;
-              }
-            }
-
-            results.add(SearchResult(
-              id: id,
-              name: name,
-              displayName: displayName,
-              type: 'team',
-              imageUrl: logo.isNotEmpty ? logo : null,
-              leagueName: leagueName,
-              leagueCode: leagueCode,
-              abbreviation: abbreviation,
-            ));
-
-            print('[SearchTeams] Added: $name');
           }
-          break; // Success
-        } else if (res.statusCode == 429) {
-          print('[SearchTeams] Rate limit hit, trying next key...');
-          continue;
-        } else {
-          print('[SearchTeams] API error: ${res.statusCode}');
-          break;
+
+          results.add(SearchResult(
+            id: id,
+            name: name,
+            displayName: displayName,
+            type: 'team',
+            imageUrl: logo.isNotEmpty ? logo : null,
+            leagueName: leagueName,
+            leagueCode: leagueCode,
+            abbreviation: abbreviation,
+          ));
+
+          print('[SearchTeams] ✅ Added: $name');
         }
-      } catch (e) {
-        print('[SearchTeams] Exception: $e');
+      } else if (res.statusCode == 429) {
+        print('[SearchTeams] ⚠️ Rate limit hit');
+      } else {
+        print('[SearchTeams] API error: ${res.statusCode}');
       }
+    } catch (e) {
+      print('[SearchTeams] Exception: $e');
     }
 
     return results;
   }
+
+// Update _searchPlayersApiFootball similarly
+// In _searchPlayersApiFootball method
+
+// lib/services/api_service.dart
+
+// Update _searchPlayersApiFootball method
+
+// lib/services/api_service.dart
+
+// ─── SEARCH PLAYERS - FIXED ──────────────────────────────────────────────────
 
   /// Search players using API-Football by searching across multiple leagues
   Future<List<SearchResult>> _searchPlayersApiFootball(String query) async {
     final List<SearchResult> results = [];
     final Set<String> seenIds = {};
 
-    final keyManager = ApiKeyManager();
+    final apiKey = AppConstants.apiFootballKey;
 
     print('[SearchPlayers] Searching for: "$query"');
 
-    // Common league IDs to search for players
-    // 39 = Premier League, 140 = La Liga, 135 = Serie A, 78 = Bundesliga, 61 = Ligue 1
-    // 2 = Champions League, 3 = Europa League
-    // 71 = Brasileirão, 253 = MLS, 128 = Argentina, 94 = Portugal, 88 = Netherlands
-    final leagueIds = [39, 140, 135, 78, 61, 2, 3, 71, 253, 128, 94, 88, 203, 144, 179];
-
-    // Use current season (2024 or 2025)
-    final currentYear = DateTime.now().year;
-    final season = currentYear >= 7 ? currentYear : currentYear - 1;
-
-    for (final leagueId in leagueIds) {
-      if (results.length >= 30) break; // Limit results to 30
-
-      for (int attempt = 0; attempt < 2; attempt++) {
-        try {
-          final apiKey = keyManager.getNextKey();
-
-          // Search players by name with league filter
-          // Note: API-Football requires league or team with search
-          final url = '${AppConstants.apiFootballBaseUrl}/players?league=$leagueId&season=$season&search=$query&limit=20';
-
-          print('[SearchPlayers] Searching league $leagueId for "$query"');
-
-          final res = await _client.get(
-            Uri.parse(url),
-            headers: {'x-apisports-key': apiKey},
-          ).timeout(const Duration(seconds: 8));
-
-          keyManager.markRequest(apiKey);
-
-          if (res.statusCode == 200) {
-            final data = json.decode(res.body) as Map<String, dynamic>;
-
-            if (data['errors'] != null && data['errors'].isNotEmpty) {
-              print('[SearchPlayers] League $leagueId error: ${data['errors']}');
-              break;
-            }
-
-            final response = data['response'] as List? ?? [];
-
-            if (response.isNotEmpty) {
-              print('[SearchPlayers] League $leagueId found ${response.length} players');
-            }
-
-            for (final playerData in response) {
-              if (results.length >= 30) break;
-              if (playerData is! Map) continue;
-
-              final player = playerData['player'] as Map<String, dynamic>?;
-              if (player == null) continue;
-
-              final id = player['id']?.toString() ?? '';
-              if (id.isEmpty || seenIds.contains(id)) continue;
-
-              final name = player['name']?.toString() ?? '';
-              final firstname = player['firstname']?.toString() ?? '';
-              final lastname = player['lastname']?.toString() ?? '';
-              final displayName = '$firstname $lastname'.trim();
-
-              // Double-check name match
-              final searchableText = '$name $firstname $lastname'.toLowerCase();
-              if (!searchableText.contains(query.toLowerCase())) {
-                continue;
-              }
-
-              seenIds.add(id);
-
-              String position = '';
-              String headshot = player['photo']?.toString() ?? '';
-              String nationality = player['nationality']?.toString() ?? '';
-              int? age = player['age'] as int?;
-
-              final statistics = playerData['statistics'] as List? ?? [];
-              String teamName = '';
-              if (statistics.isNotEmpty) {
-                final firstStat = statistics.first as Map<String, dynamic>;
-                final team = firstStat['team'] as Map<String, dynamic>?;
-                if (team != null) {
-                  teamName = team['name']?.toString() ?? '';
-                }
-                final games = firstStat['games'] as Map<String, dynamic>?;
-                if (games != null) {
-                  position = games['position']?.toString() ?? '';
-                }
-              }
-
-              results.add(SearchResult(
-                id: id,
-                name: name.isNotEmpty ? name : displayName,
-                displayName: displayName.isNotEmpty ? displayName : name,
-                type: 'player',
-                imageUrl: headshot.isNotEmpty ? headshot : null,
-                teamName: teamName,
-                teamId: '',
-                position: position,
-                jerseyNumber: '',
-                abbreviation: '',
-                nationality: nationality,
-                age: age,
-                rating: null,
-              ));
-
-              print('[SearchPlayers] Added: $displayName ($position) from ${teamName.isNotEmpty ? teamName : 'Unknown Team'}');
-            }
-            break; // Success, move to next league
-          } else if (res.statusCode == 429) {
-            print('[SearchPlayers] Rate limit hit, trying next key...');
-            continue;
-          } else {
-            print('[SearchPlayers] League $leagueId API error: ${res.statusCode}');
-            break;
-          }
-        } catch (e) {
-          print('[SearchPlayers] Exception for league $leagueId: $e');
-        }
-      }
+    // ✅ FIX: Only search if query is at least 3 characters
+    if (query.trim().length < 3) {
+      print('[SearchPlayers] Query too short (min 3 chars)');
+      return results;
     }
 
-    // If we didn't find many results, try searching without the search parameter
-    // and filter manually (some leagues don't support search with league)
-    if (results.length < 5) {
-      print('[SearchPlayers] Few results found, trying fallback search...');
+    // ✅ FIX: Use 2024 season (max supported by free plan)
+    final season = 2024;  // Hardcoded to 2024 for free plan
+    print('[SearchPlayers] Using season: $season');
 
-      for (final leagueId in leagueIds.take(5)) {
-        if (results.length >= 20) break;
+    // ✅ FIX: Search fewer leagues to avoid rate limit
+    final leagueIds = [
+      39,   // Premier League
+      140,  // La Liga
+      135,  // Serie A
+      78,   // Bundesliga
+      61,   // Ligue 1
+      2,    // Champions League
+    ];
 
-        try {
-          final apiKey = keyManager.getNextKey();
+    // ✅ FIX: Add delay between requests
+    int requestCount = 0;
 
-          // Get players from league without search parameter
-          final url = '${AppConstants.apiFootballBaseUrl}/players?league=$leagueId&season=$season&limit=30';
+    for (final leagueId in leagueIds) {
+      if (results.length >= 30) break;
 
-          final res = await _client.get(
-            Uri.parse(url),
-            headers: {'x-apisports-key': apiKey},
-          ).timeout(const Duration(seconds: 8));
+      // Rate limiting: Wait between requests
+      if (requestCount > 0) {
+        await Future.delayed(const Duration(milliseconds: 1500));
+      }
+      requestCount++;
 
-          keyManager.markRequest(apiKey);
+      try {
+        // ✅ FIX: Remove limit parameter (causing errors)
+        final url = '${AppConstants.apiFootballBaseUrl}/players?league=$leagueId&season=$season&search=$query';
+        print('[SearchPlayers] Searching league $leagueId');
 
-          if (res.statusCode == 200) {
-            final data = json.decode(res.body) as Map<String, dynamic>;
+        final res = await _client.get(
+          Uri.parse(url),
+          headers: {'x-apisports-key': apiKey},
+        ).timeout(const Duration(seconds: 8));
 
-            if (data['errors'] != null && data['errors'].isNotEmpty) {
+        if (res.statusCode == 200) {
+          final data = json.decode(res.body) as Map<String, dynamic>;
+
+          // Check for errors
+          if (data['errors'] != null && data['errors'].isNotEmpty) {
+            print('[SearchPlayers] League $leagueId error: ${data['errors']}');
+            continue;
+          }
+
+          final response = data['response'] as List? ?? [];
+          print('[SearchPlayers] League $leagueId found ${response.length} players');
+
+          for (final playerData in response) {
+            if (results.length >= 30) break;
+            if (playerData is! Map) continue;
+
+            final player = playerData['player'] as Map<String, dynamic>?;
+            if (player == null) continue;
+
+            final id = player['id']?.toString() ?? '';
+            if (id.isEmpty || seenIds.contains(id)) continue;
+
+            final name = player['name']?.toString() ?? '';
+            final firstname = player['firstname']?.toString() ?? '';
+            final lastname = player['lastname']?.toString() ?? '';
+            final displayName = '$firstname $lastname'.trim();
+
+            // Double-check name match
+            final searchableText = '$name $firstname $lastname'.toLowerCase();
+            if (!searchableText.contains(query.toLowerCase())) {
               continue;
             }
 
-            final response = data['response'] as List? ?? [];
+            seenIds.add(id);
 
-            for (final playerData in response) {
-              if (results.length >= 20) break;
-              if (playerData is! Map) continue;
+            String position = '';
+            String headshot = player['photo']?.toString() ?? '';
+            String nationality = player['nationality']?.toString() ?? '';
+            int? age = player['age'] as int?;
 
-              final player = playerData['player'] as Map<String, dynamic>?;
-              if (player == null) continue;
-
-              final id = player['id']?.toString() ?? '';
-              if (id.isEmpty || seenIds.contains(id)) continue;
-
-              final name = player['name']?.toString() ?? '';
-              final firstname = player['firstname']?.toString() ?? '';
-              final lastname = player['lastname']?.toString() ?? '';
-              final displayName = '$firstname $lastname'.trim();
-
-              final searchableText = '$name $firstname $lastname'.toLowerCase();
-              if (!searchableText.contains(query.toLowerCase())) {
-                continue;
+            final statistics = playerData['statistics'] as List? ?? [];
+            String teamName = '';
+            if (statistics.isNotEmpty) {
+              final firstStat = statistics.first as Map<String, dynamic>;
+              final team = firstStat['team'] as Map<String, dynamic>?;
+              if (team != null) {
+                teamName = team['name']?.toString() ?? '';
               }
-
-              seenIds.add(id);
-
-              String position = '';
-              String headshot = player['photo']?.toString() ?? '';
-              String nationality = player['nationality']?.toString() ?? '';
-              int? age = player['age'] as int?;
-
-              final statistics = playerData['statistics'] as List? ?? [];
-              String teamName = '';
-              if (statistics.isNotEmpty) {
-                final firstStat = statistics.first as Map<String, dynamic>;
-                final team = firstStat['team'] as Map<String, dynamic>?;
-                if (team != null) {
-                  teamName = team['name']?.toString() ?? '';
-                }
-                final games = firstStat['games'] as Map<String, dynamic>?;
-                if (games != null) {
-                  position = games['position']?.toString() ?? '';
-                }
+              final games = firstStat['games'] as Map<String, dynamic>?;
+              if (games != null) {
+                position = games['position']?.toString() ?? '';
               }
-
-              results.add(SearchResult(
-                id: id,
-                name: name.isNotEmpty ? name : displayName,
-                displayName: displayName.isNotEmpty ? displayName : name,
-                type: 'player',
-                imageUrl: headshot.isNotEmpty ? headshot : null,
-                teamName: teamName,
-                teamId: '',
-                position: position,
-                jerseyNumber: '',
-                abbreviation: '',
-                nationality: nationality,
-                age: age,
-                rating: null,
-              ));
-
-              print('[SearchPlayers] Fallback Added: $displayName');
             }
+
+            results.add(SearchResult(
+              id: id,
+              name: name.isNotEmpty ? name : displayName,
+              displayName: displayName.isNotEmpty ? displayName : name,
+              type: 'player',
+              imageUrl: headshot.isNotEmpty ? headshot : null,
+              teamName: teamName,
+              teamId: '',
+              position: position,
+              jerseyNumber: '',
+              abbreviation: '',
+              nationality: nationality,
+              age: age,
+              rating: null,
+            ));
+
+            print('[SearchPlayers] ✅ Added: $displayName');
           }
-        } catch (e) {
-          print('[SearchPlayers] Fallback exception: $e');
+        } else if (res.statusCode == 429) {
+          print('[SearchPlayers] ⚠️ Rate limit hit for league $leagueId');
+          await Future.delayed(const Duration(seconds: 3));
+          continue;
+        } else {
+          print('[SearchPlayers] League $leagueId HTTP ${res.statusCode}');
         }
+      } catch (e) {
+        print('[SearchPlayers] Exception for league $leagueId: $e');
       }
     }
 
-    print('[SearchPlayers] Total found: ${results.length} players');
+    print('[SearchPlayers] ✅ Total found: ${results.length} players');
     return results;
   }
 

@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:livescore/models/game_model.dart';
 import 'package:livescore/models/standing_model.dart';
+import 'package:livescore/screens/players_screen.dart';
 import 'package:livescore/services/sport_service.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/utils/helpers.dart';
@@ -195,6 +196,14 @@ class _GameDetailScreenState extends State<GameDetailScreen>
     super.initState();
     _tabController = TabController(length: 6, vsync: this);
     _refresh();
+
+    if (_isUpcoming) {
+      try {
+        final kickoff = DateTime.parse(widget.game.date);
+        final diff = kickoff.difference(DateTime.now());
+        _countdown = diff.isNegative ? Duration.zero : diff;
+      } catch (_) {}
+    }
 
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
@@ -518,7 +527,12 @@ class _GameDetailScreenState extends State<GameDetailScreen>
                     children: [
                       _MatchTab(game: widget.game, detail: detail),
                       _StatsTab(game: widget.game, detail: detail, isUpcoming: _isUpcoming, countdown: _countdown, liveTick: _liveTick),
-                      _LineupTab(lineupFuture: _lineupFuture, game: widget.game, isUpcoming: _isUpcoming),
+                      _LineupTab(
+                        lineupFuture: _lineupFuture,
+                        game: widget.game,
+                        isUpcoming: _isUpcoming,
+                        countdown: _countdown,
+                      ),
                       _AnalyticsTab(
                         analyticsFuture: _analyticsFuture,
                         game: widget.game,
@@ -1106,9 +1120,9 @@ class _StatsTabState extends State<_StatsTab> {
     'crosses',            // 6. Total crosses
     'accurateCrosses',    // 7. Accurate crosses
     'fouls',              // 8. Fouls
-    'offsides',           // 9. Offsides
-    'yellowCards',        // 10. Yellow cards
-    'redCards',           // 11. Red cards
+    'offsides',            // 9. Offsides
+    'yellowCards',         // 10. Yellow cards
+    'redCards',             // 11. Red cards
   ];
 
   // Extra stats for "See more"
@@ -1480,7 +1494,19 @@ class _LineupTab extends StatelessWidget {
   final Future<MatchLineup?> lineupFuture;
   final Game game;
   final bool isUpcoming;
-  const _LineupTab({required this.lineupFuture, required this.game, required this.isUpcoming});
+  final Duration countdown;
+  const _LineupTab({
+    required this.lineupFuture,
+    required this.game,
+    required this.isUpcoming,
+    this.countdown = Duration.zero,
+  });
+
+  // ESPN (and most providers) only publish confirmed lineups roughly
+  // 10-15 minutes before kickoff. Before that window there's genuinely
+  // nothing to show yet, so we tell the user when to check back instead
+  // of implying the data failed to load.
+  static const _lineupAnnounceWindow = Duration(minutes: 15);
 
   @override
   Widget build(BuildContext context) {
@@ -1492,9 +1518,21 @@ class _LineupTab extends StatelessWidget {
         }
         final lineup = snap.data;
         if (lineup == null || (lineup.homePlayers.isEmpty && lineup.awayPlayers.isEmpty)) {
-          return _NoDataWidget(
+          if (isUpcoming && countdown > _lineupAnnounceWindow) {
+            return const _NoDataWidget(
+              icon: Icons.schedule_rounded,
+              message: 'Lineup not available yet\nit will be available 10–15 min before the match starts',
+            );
+          }
+          if (isUpcoming) {
+            return const _NoDataWidget(
+              icon: Icons.people_alt_rounded,
+              message: 'Lineups are being finalized\ncheck back in a few minutes',
+            );
+          }
+          return const _NoDataWidget(
             icon: Icons.people_alt_rounded,
-            message: 'Lineup not yet announced',
+            message: 'Lineup not available for this match',
           );
         }
         return _LineupView(lineup: lineup, game: game, isUpcoming: isUpcoming);
@@ -1618,21 +1656,6 @@ class _LineupViewState extends State<_LineupView> {
               ),
             ),
           ]),
-
-          if (widget.isUpcoming) ...[
-            const SizedBox(height: 10),
-            _card(Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: const [
-                Icon(Icons.info_outline_rounded, color: _C.blue, size: 14),
-                SizedBox(width: 6),
-                Text(
-                  'Player ratings appear after the match',
-                  style: TextStyle(color: _C.muted, fontSize: 12),
-                ),
-              ],
-            )),
-          ],
         ] else ...[
           SubstitutesSection(homeTeam: homeLineup, awayTeam: awayLineup),
         ],
@@ -1640,11 +1663,21 @@ class _LineupViewState extends State<_LineupView> {
     );
   }
 
+// In game_detail_screen.dart, replace the _showPlayerSheet method:
+
   void _showPlayerSheet(BuildContext context, PitchPlayer player) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _PlayerBottomSheet(player: player),
+    // Navigate to full player screen
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PlayerScreen(
+          player: player,
+          game: widget.game,
+          teamInfo: player.isHome
+              ? widget.game.homeTeam
+              : widget.game.awayTeam,
+        ),
+      ),
     );
   }
 }
@@ -2249,12 +2282,6 @@ class _StandingsRow extends StatelessWidget {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 6 — ANALYTICS
-// ═══════════════════════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 6 — ANALYTICS
-// ═══════════════════════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
 //  TAB 6 — ANALYTICS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3536,7 +3563,14 @@ class _NoDataWidget extends StatelessWidget {
     return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
       Icon(icon, color: _C.muted, size: 52),
       const SizedBox(height: 12),
-      Text(message, style: const TextStyle(color: _C.muted, fontSize: 14)),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: _C.muted, fontSize: 14, height: 1.4),
+        ),
+      ),
     ]));
   }
 }

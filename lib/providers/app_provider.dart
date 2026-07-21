@@ -68,6 +68,11 @@ class AppProvider extends ChangeNotifier {
   SearchResponse _searchResults = SearchResponse();
   String _searchQuery = '';
 
+  // ─── SEARCH CACHE ────────────────────────────────────────────────────────────
+  final Map<String, SearchResponse> _searchCache = {};
+  static const Duration _searchCacheDuration = Duration(minutes: 5);
+  final Map<String, DateTime> _searchCacheTimestamps = {};
+
   bool get isSearching => _isSearching;
   SearchResponse get searchResults => _searchResults;
   String get searchQuery => _searchQuery;
@@ -145,7 +150,6 @@ class AppProvider extends ChangeNotifier {
   bool hasReachedThreeDayLimit() {
     if (_paginatedNews.isEmpty) return false;
 
-    // Find the oldest article (by published date)
     NewsArticle? oldest;
     for (final article in _paginatedNews) {
       try {
@@ -219,8 +223,6 @@ class AppProvider extends ChangeNotifier {
   }
 
   // ─── NEWS: Two-phase loading for better performance ─────────────────────────────────
-  // Phase 1: Load first 25 articles quickly (shows immediately)
-  // Phase 2: Load remaining articles in background (no UI indicator)
 
   Future<void> fetchNewsConcurrent({bool forceRefresh = false, int page = 1}) async {
     if (_isFetchingNews) return;
@@ -259,7 +261,6 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  // Kept for compatibility - no pagination
   Future<void> loadMoreNews() async {
     print('[News] No pagination support - all articles loaded at once');
     _hasMoreNews = false;
@@ -270,7 +271,6 @@ class AppProvider extends ChangeNotifier {
     await fetchNewsConcurrent(forceRefresh: true, page: 1);
   }
 
-  /// Silent background refresh — updates articles at the top
   Future<void> silentRefreshNews() async {
     if (_isFetchingNews) return;
 
@@ -519,8 +519,6 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  // Add or verify this method exists in AppProvider class:
-
   Future<List<Standing>> fetchStandingsDirect(String leagueCode, {String? season}) async {
     try {
       _sportService.setLeague(leagueCode);
@@ -632,9 +630,7 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  // Add to AppProvider class
-
-// ─── SEARCH WITH DEBOUNCE ─────────────────────────────────────────────────────
+  // ─── SEARCH WITH CACHING ────────────────────────────────────────────────────
 
   Timer? _searchDebounceTimer;
 
@@ -645,7 +641,7 @@ class AppProvider extends ChangeNotifier {
     });
   }
 
-// Update the existing search method to cancel ongoing requests
+  /// Search with caching to reduce API calls
   Future<void> search(String query) async {
     if (query.trim().isEmpty) {
       _searchQuery = '';
@@ -655,22 +651,78 @@ class AppProvider extends ChangeNotifier {
       return;
     }
 
+    final cacheKey = query.trim().toLowerCase();
+
+    // ─── Check Cache ──────────────────────────────────────────────────────────
+    if (_searchCache.containsKey(cacheKey)) {
+      final cached = _searchCache[cacheKey]!;
+      final timestamp = _searchCacheTimestamps[cacheKey];
+
+      if (timestamp != null) {
+        final age = DateTime.now().difference(timestamp);
+        if (age < _searchCacheDuration) {
+          print('[AppProvider] ✅ Using cached search result for: $query');
+          _searchQuery = query;
+          _searchResults = cached;
+          _isSearching = false;
+          notifyListeners();
+          return;
+        } else {
+          // Cache expired
+          _searchCache.remove(cacheKey);
+          _searchCacheTimestamps.remove(cacheKey);
+          print('[AppProvider] Cache expired for: $query');
+        }
+      }
+    }
+
     _searchQuery = query;
     _isSearching = true;
     notifyListeners();
 
     try {
+      print('[AppProvider] 🔍 Performing fresh search for: $query');
       final results = await _sportService.search(query);
+
+      // ─── Cache Results ──────────────────────────────────────────────────────
+      if (results.isNotEmpty) {
+        _searchCache[cacheKey] = results;
+        _searchCacheTimestamps[cacheKey] = DateTime.now();
+
+        // Clean old cache entries (keep last 20)
+        if (_searchCache.length > 20) {
+          final keys = _searchCache.keys.toList();
+          // Sort by timestamp (oldest first)
+          keys.sort((a, b) {
+            final t1 = _searchCacheTimestamps[a] ?? DateTime.now();
+            final t2 = _searchCacheTimestamps[b] ?? DateTime.now();
+            return t1.compareTo(t2);
+          });
+          // Remove oldest entries
+          for (int i = 0; i < keys.length - 20; i++) {
+            _searchCache.remove(keys[i]);
+            _searchCacheTimestamps.remove(keys[i]);
+          }
+          print('[AppProvider] 🧹 Cleaned search cache, kept 20 entries');
+        }
+      }
+
       _searchResults = results;
       _isSearching = false;
       notifyListeners();
     } catch (e) {
-      print('[AppProvider] Search error: $e');
+      print('[AppProvider] ❌ Search error: $e');
       _searchResults = SearchResponse();
       _isSearching = false;
       notifyListeners();
     }
   }
+
+  // lib/providers/app_provider.dart
+
+// Add this method to handle search with better error handling
+
+
 
   Future<void> setCurrentLeague(String leagueCode) async {
     if (_currentLeagueCode == leagueCode) return;
@@ -686,13 +738,18 @@ class AppProvider extends ChangeNotifier {
     ]);
   }
 
-  // ─── SEARCH METHODS ──────────────────────────────────────────────────────────
-
-
   void clearSearch() {
     _searchQuery = '';
     _searchResults = SearchResponse();
     _isSearching = false;
+    // Don't clear cache on clear
     notifyListeners();
+  }
+
+  /// Clear search cache manually (for testing or logout)
+  void clearSearchCache() {
+    _searchCache.clear();
+    _searchCacheTimestamps.clear();
+    print('[AppProvider] 🧹 Search cache cleared');
   }
 }

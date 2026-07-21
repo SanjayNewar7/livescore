@@ -29,8 +29,6 @@ class SportService {
       _api.getAllLeagues();
 
   // ─── NEWS WITH TWO-PHASE LOADING ─────────────────────────────────────────────────
-  // Phase 1: Load first 25 articles quickly (cached)
-  // Phase 2: Load remaining 25 articles in background
   Future<List<NewsArticle>> getNewsWithTwoPhase({
     String? league,
     bool forceRefresh = false,
@@ -39,19 +37,16 @@ class SportService {
   }) async {
     final cacheKeyFirstBatch = 'news_${league ?? 'all'}_first25';
 
-    // Check cache for first batch
     if (!forceRefresh) {
       try {
         final cached = await _cache.getCachedNews(category: cacheKeyFirstBatch);
         if (cached != null && cached.isNotEmpty) {
           print('[SportService] Cache hit: ${cached.length} news articles (first batch)');
 
-          // Return cached first batch immediately
           if (onPhase1Complete != null) {
             onPhase1Complete(cached);
           }
 
-          // Still fetch fresh data in background
           _fetchFullNewsInBackground(league, onPhase2Complete);
           return cached;
         }
@@ -60,14 +55,11 @@ class SportService {
       }
     }
 
-    // No cache or force refresh - fetch phase 1 then phase 2
     try {
-      // PHASE 1: Load first 25 articles quickly
       print('[SportService] Phase 1: Fetching first 25 articles...');
       final firstBatch = await _api.getNewsBatch(league: league, limit: 25);
       final footballFirst = firstBatch.where(_isFootballArticle).toList();
 
-      // Cache first batch only
       if (footballFirst.isNotEmpty) {
         await _cache.cacheNews(footballFirst, category: cacheKeyFirstBatch);
       }
@@ -76,7 +68,6 @@ class SportService {
         onPhase1Complete(footballFirst);
       }
 
-      // PHASE 2: Load remaining articles in background
       _fetchFullNewsInBackground(league, onPhase2Complete);
 
       return footballFirst;
@@ -101,7 +92,6 @@ class SportService {
       print('[SportService] Phase 2: Fetching remaining articles in background...');
       final secondBatch = await _api.getNewsBatch(league: league, limit: 50);
 
-      // Get cached first batch to combine
       final cacheKeyFirstBatch = 'news_${league ?? 'all'}_first25';
       final cachedFirst = await _cache.getCachedNews(category: cacheKeyFirstBatch);
       final existingIds = cachedFirst?.map((a) => a.id).toSet() ?? {};
@@ -391,7 +381,6 @@ class SportService {
       return leaders;
     } catch (e) {
       print('Error fetching league leaders: $e');
-      // Fall back to a stale cache entry rather than nothing, if one exists.
       final stale = await _cache.getCachedLeagueLeaders(leagueCode: cacheKey);
       return stale ?? LeagueLeaders.empty;
     }
@@ -432,6 +421,14 @@ class SportService {
     return updated;
   }
 
+  // ─── PLAYER DETAILS ──────────────────────────────────────────────────────
+
+  /// Get detailed player information from ESPN API
+  Future<Player> getPlayerDetails(String playerId, {String? leagueCode}) async {
+    final league = leagueCode ?? _currentLeagueCode;
+    return await _api.getPlayerDetails(playerId, leagueCode: league);
+  }
+
   Future<List<TeamInfo>> getAllTeams() async =>
       _api.getAllTeams(_currentLeagueCode);
 
@@ -440,8 +437,6 @@ class SportService {
 
   Future<MatchLineup?> getMatchLineup(String gameId) async =>
       _api.getMatchLineup(gameId);
-
-
 
   Future<List<Game>> getYesterdaysMatchesProgressive({
     bool forceRefresh = false,
@@ -532,7 +527,6 @@ class SportService {
     final resolvedLeague = leagueCode ?? _currentLeagueCode;
     final cacheKey = '${_teamPageCacheKeyPrefix}${teamId}_${resolvedLeague}';
 
-    // Check cache first (6 hours)
     if (!forceRefresh) {
       try {
         final cached = await _cache.getCachedTeamPageData(cacheKey);
@@ -549,14 +543,12 @@ class SportService {
       print('[SportService] Fetching fresh team page data for $teamId');
       final data = await _api.getTeamPageData(teamId, leagueCode: resolvedLeague);
 
-      // Cache the data for 6 hours
       await _cache.cacheTeamPageData(cacheKey, data);
       print('[SportService] ✅ Team page data cached for $teamId (6 hours)');
 
       return data;
     } catch (e) {
       print('[SportService] getTeamPageData error: $e');
-      // Try to return stale cache if available
       try {
         final cached = await _cache.getCachedTeamPageData(cacheKey);
         if (cached != null) {
@@ -569,7 +561,6 @@ class SportService {
   }
 
   /// Returns true when the given league code represents national teams
-  /// (World Cup, qualifiers, nations league, etc.).
   bool isNationalTeamLeague(String leagueCode) =>
       AppConstants.isNationalTeamLeague(leagueCode);
 

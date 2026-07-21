@@ -6,9 +6,145 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:livescore/models/search_model.dart';
+import 'package:livescore/models/player_model.dart';
+import 'package:livescore/models/team_model.dart';
 import 'package:livescore/providers/app_provider.dart';
 import 'package:livescore/screens/team_detail_screen.dart';
-import 'package:livescore/models/team_model.dart';
+import 'package:livescore/screens/players_screen.dart';
+import 'package:livescore/widgets/football_pitch_lineup.dart';
+
+// ─── Design Tokens ────────────────────────────────────────────────────────────
+class _C {
+  static const blue      = Color(0xFF1A62C8);
+  static const blueLight = Color(0xFFE8F0FC);
+  static const white     = Color(0xFFFFFFFF);
+  static const offWhite  = Color(0xFFF5F7FB);
+  static const border    = Color(0xFFE2E8F2);
+  static const text      = Color(0xFF0F1623);
+  static const muted     = Color(0xFF6B7A96);
+  static const green     = Color(0xFF16A34A);
+  static const orange    = Color(0xFFF59E0B);
+}
+
+// ─── PREDEFINED FAMOUS PLAYERS WITH CLOUDINARY IMAGE URLs ──────────────────
+const List<Map<String, dynamic>> famousPlayers = [
+  {
+    'id': '22774',
+    'name': 'Cristiano Ronaldo',
+    'teamName': 'Al Nassr',
+    'teamId': '12765',
+    'position': 'FW',
+    'jersey': '7',
+    'nationality': 'Portugal',
+    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784612724/62fa9c82669f48668f1dce7df614884b_pst8ln.jpg',
+  },
+  {
+    'id': '45843',
+    'name': 'Lionel Messi',
+    'teamName': 'Inter Miami',
+    'teamId': '16052',
+    'position': 'FW',
+    'jersey': '10',
+    'nationality': 'Argentina',
+    'imageUrl': 'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/45843.png&w=96&h=70&cb=1',
+  },
+  {
+    'id': '231388',
+    'name': 'Kylian Mbappé',
+    'teamName': 'Real Madrid',
+    'teamId': '86',
+    'position': 'FW',
+    'jersey': '9',
+    'nationality': 'France',
+    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784613639/5bcfbffeeca706844f78b3fb07b168af_mktcmp.jpg',
+  },
+  {
+    'id': '253989',
+    'name': 'Erling Haaland',
+    'teamName': 'Manchester City',
+    'teamId': '382',
+    'position': 'FW',
+    'jersey': '9',
+    'nationality': 'Norway',
+    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784612927/0a8c8599fb5d8dc4268666d6cd376303_vd0ieu.jpg',
+  },
+  {
+    'id': '362150',
+    'name': 'Lamine Yamal',
+    'teamName': 'Barcelona',
+    'teamId': '83',
+    'position': 'FW',
+    'jersey': '19',
+    'nationality': 'Spain',
+    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784613098/afbe98ac83049fec7a8f16be1df7e5fb_cpgcw3.jpg',
+  },
+  {
+    'id': '291281',
+    'name': 'Jude Bellingham',
+    'teamName': 'Real Madrid',
+    'teamId': '86',
+    'position': 'MF',
+    'jersey': '5',
+    'nationality': 'England',
+    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784613715/735ce113be1b125fa453f10721d95b60_kblifj.jpg',
+  },
+  {
+    'id': '142200',
+    'name': 'Harry Kane',
+    'teamName': 'Bayern Munich',
+    'teamId': '132',
+    'position': 'FW',
+    'jersey': '9',
+    'nationality': 'England',
+    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784613085/32433dade363bf766c66aeff2f34efbc_rz3fp4.jpg',
+  },
+  {
+    'id': '189281',
+    'name': 'Ousmane Dembélé',
+    'teamName': 'PSG',
+    'teamId': '160',
+    'position': 'FW',
+    'jersey': '10',
+    'nationality': 'France',
+    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784613084/c01348e00137360e854bdd89186d474c_anykow.jpg',
+  },
+  {
+    'id': '270126',
+    'name': 'Vinícius Júnior',
+    'teamName': 'Real Madrid',
+    'teamId': '86',
+    'position': 'FW',
+    'jersey': '7',
+    'nationality': 'Brazil',
+    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784613770/caba416e19a425b1285b73cd6466bd60_fx7so5.jpg',
+  },
+  {
+    'id': '280903',
+    'name': 'Bukayo Saka',
+    'teamName': 'Arsenal',
+    'teamId': '359',
+    'position': 'FW',
+    'jersey': '7',
+    'nationality': 'England',
+    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784613083/4b187e38059de04124d37a6139938e02_ljtp9a.jpg',
+  },
+];
+
+// ─── PREDEFINED FAMOUS CLUBS ──────────────────────────────────────────────
+const List<Map<String, String>> famousClubs = [
+  {'id': '86', 'name': 'Real Madrid', 'league': 'esp.1', 'leagueName': 'La Liga'},
+  {'id': '83', 'name': 'Barcelona', 'league': 'esp.1', 'leagueName': 'La Liga'},
+  {'id': '359', 'name': 'Arsenal', 'league': 'eng.1', 'leagueName': 'Premier League'},
+  {'id': '360', 'name': 'Manchester United', 'league': 'eng.1', 'leagueName': 'Premier League'},
+  {'id': '382', 'name': 'Manchester City', 'league': 'eng.1', 'leagueName': 'Premier League'},
+  {'id': '160', 'name': 'PSG', 'league': 'fra.1', 'leagueName': 'Ligue 1'},
+  {'id': '132', 'name': 'Bayern Munich', 'league': 'ger.1', 'leagueName': 'Bundesliga'},
+  {'id': '111', 'name': 'Juventus', 'league': 'ita.1', 'leagueName': 'Serie A'},
+  {'id': '363', 'name': 'Chelsea', 'league': 'eng.1', 'leagueName': 'Premier League'},
+  {'id': '364', 'name': 'Liverpool', 'league': 'eng.1', 'leagueName': 'Premier League'},
+];
+
+// ─── Search Screen ───────────────────────────────────────────────────────────
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -20,47 +156,103 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
-  Timer? _debounceTimer;
+  SearchResponse _predefinedData = SearchResponse();
+  String _lastSearchedQuery = '';
 
   @override
   void initState() {
     super.initState();
     _focusNode.requestFocus();
+    _buildPredefinedData();
   }
 
   @override
   void dispose() {
-    _debounceTimer?.cancel();
     _searchController.dispose();
     _focusNode.dispose();
     super.dispose();
   }
 
-  void _onSearchChanged(String value) {
-    _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
-      if (value.trim().isNotEmpty) {
-        context.read<AppProvider>().searchWithDebounce(value);
-      } else {
-        context.read<AppProvider>().clearSearch();
-      }
+  void _buildPredefinedData() {
+    final players = famousPlayers.map((p) {
+      return SearchResult(
+        id: p['id'] as String,
+        name: p['name'] as String,
+        displayName: p['name'] as String,
+        type: 'player',
+        imageUrl: p['imageUrl'] as String,
+        teamName: p['teamName'] as String,
+        teamId: p['teamId'] as String,
+        position: p['position'] as String,
+        jerseyNumber: p['jersey'] as String,
+        nationality: p['nationality'] as String,
+      );
+    }).toList();
+
+    final clubs = famousClubs.map((c) {
+      return SearchResult(
+        id: c['id']!,
+        name: c['name']!,
+        displayName: c['name']!,
+        type: 'team',
+        imageUrl: 'https://a.espncdn.com/i/teamlogos/soccer/500/${c['id']}.png',
+        leagueCode: c['league'],
+        leagueName: c['leagueName'],
+        abbreviation: c['name']!.length > 3 ? c['name']!.substring(0, 3).toUpperCase() : c['name']!.toUpperCase(),
+      );
+    }).toList();
+
+    setState(() {
+      _predefinedData = SearchResponse(
+        players: players,
+        teams: clubs,
+      );
     });
+  }
+
+  void _performSearch() {
+    final query = _searchController.text.trim();
+
+    if (query.isEmpty) {
+      context.read<AppProvider>().clearSearch();
+      setState(() {
+        _lastSearchedQuery = '';
+      });
+      return;
+    }
+
+    if (query == _lastSearchedQuery) {
+      // Already searched for this query
+      return;
+    }
+
+    _lastSearchedQuery = query;
+    context.read<AppProvider>().search(query);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FB),
+      backgroundColor: _C.offWhite,
       body: SafeArea(
         child: Column(
           children: [
             _SearchBar(
               controller: _searchController,
               focusNode: _focusNode,
-              onChanged: _onSearchChanged,
+              onSearch: _performSearch,
+              onClear: () {
+                _searchController.clear();
+                _lastSearchedQuery = '';
+                context.read<AppProvider>().clearSearch();
+                setState(() {});
+              },
             ),
             Expanded(
-              child: _SearchResults(),
+              child: _SearchResults(
+                predefinedData: _predefinedData,
+                lastSearchedQuery: _lastSearchedQuery,
+              ),
             ),
           ],
         ),
@@ -69,29 +261,33 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 }
 
+// ─── Search Bar ──────────────────────────────────────────────────────────────
+
 class _SearchBar extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
-  final ValueChanged<String> onChanged;
+  final VoidCallback onSearch;
+  final VoidCallback onClear;
 
   const _SearchBar({
     required this.controller,
     required this.focusNode,
-    required this.onChanged,
+    required this.onSearch,
+    required this.onClear,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      color: Colors.white,
+      color: _C.white,
       child: Row(
         children: [
           Container(
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: const Color(0xFFF5F7FB),
+              color: _C.offWhite,
               borderRadius: BorderRadius.circular(10),
             ),
             child: IconButton(
@@ -109,41 +305,39 @@ class _SearchBar extends StatelessWidget {
             child: Container(
               height: 40,
               decoration: BoxDecoration(
-                color: const Color(0xFFF5F7FB),
+                color: _C.offWhite,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFE2E8F2)),
+                border: Border.all(color: _C.border),
               ),
               child: TextField(
                 controller: controller,
                 focusNode: focusNode,
-                onChanged: onChanged,
-                autofocus: true,
+                onSubmitted: (_) => onSearch(),
                 style: const TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w500,
-                  color: Color(0xFF0F1623),
+                  color: _C.text,
                 ),
                 decoration: InputDecoration(
                   hintText: 'Search players, teams, leagues...',
                   hintStyle: const TextStyle(
                     fontSize: 14,
-                    color: Color(0xFF6B7A96),
+                    color: _C.muted,
                   ),
                   border: InputBorder.none,
                   contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-                  prefixIcon: const Icon(
-                    Icons.search_rounded,
-                    size: 20,
-                    color: Color(0xFF6B7A96),
+                  prefixIcon: GestureDetector(
+                    onTap: onSearch,
+                    child: const Icon(
+                      Icons.search_rounded,
+                      size: 20,
+                      color: _C.muted,
+                    ),
                   ),
                   suffixIcon: controller.text.isNotEmpty
                       ? IconButton(
                     icon: const Icon(Icons.close_rounded, size: 18),
-                    onPressed: () {
-                      controller.clear();
-                      context.read<AppProvider>().clearSearch();
-                      focusNode.requestFocus();
-                    },
+                    onPressed: onClear,
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   )
@@ -152,13 +346,38 @@ class _SearchBar extends StatelessWidget {
               ),
             ),
           ),
+          Container(
+            width: 50,
+            height: 40,
+            margin: const EdgeInsets.only(left: 8),
+            decoration: BoxDecoration(
+              color: _C.blue,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: IconButton(
+              icon: const Icon(Icons.search_rounded, color: Colors.white, size: 22),
+              onPressed: onSearch,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
+// ─── Search Results ──────────────────────────────────────────────────────────
+
 class _SearchResults extends StatelessWidget {
+  final SearchResponse predefinedData;
+  final String lastSearchedQuery;
+
+  const _SearchResults({
+    required this.predefinedData,
+    required this.lastSearchedQuery,
+  });
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
@@ -168,13 +387,61 @@ class _SearchResults extends StatelessWidget {
 
     if (isSearching) {
       return const Center(
-        child: CircularProgressIndicator(
-          color: Color(0xFF1A62C8),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(
+              color: _C.blue,
+            ),
+            SizedBox(height: 16),
+            Text(
+              'Searching...',
+              style: TextStyle(
+                fontSize: 13,
+                color: _C.muted,
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'This may take a few seconds',
+              style: TextStyle(
+                fontSize: 11,
+                color: _C.muted,
+              ),
+            ),
+          ],
         ),
       );
     }
 
+    if (query.isNotEmpty && results.isNotEmpty) {
+      return _buildSearchResults(results);
+    }
+
+    if (query.isNotEmpty && results.isEmpty && !isSearching) {
+      return const _EmptyState(
+        icon: Icons.search_off_rounded,
+        title: 'No results found',
+        subtitle: 'Try searching with different keywords',
+      );
+    }
+
     if (query.isEmpty) {
+      return _buildPredefinedData();
+    }
+
+    return const _EmptyState(
+      icon: Icons.search_rounded,
+      title: 'Search for anything',
+      subtitle: 'Find players, teams, and leagues',
+    );
+  }
+
+  Widget _buildPredefinedData() {
+    final players = predefinedData.players;
+    final clubs = predefinedData.teams;
+
+    if (players.isEmpty && clubs.isEmpty) {
       return const _EmptyState(
         icon: Icons.search_rounded,
         title: 'Search for anything',
@@ -182,14 +449,90 @@ class _SearchResults extends StatelessWidget {
       );
     }
 
-    if (results.isEmpty) {
-      return const _EmptyState(
-        icon: Icons.search_off_rounded,
-        title: 'No results found',
-        subtitle: 'Try searching for something else',
-      );
-    }
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (players.isNotEmpty) ...[
+          Row(
+            children: [
+              const Icon(Icons.whatshot_rounded, size: 18, color: _C.orange),
+              const SizedBox(width: 6),
+              const Text(
+                'TRENDING PLAYERS',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: _C.muted,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: _C.blueLight,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '${players.length}',
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: _C.blue,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...players.map((result) => _SearchResultTile(result: result)),
+        ],
 
+        if (players.isNotEmpty && clubs.isNotEmpty)
+          const SizedBox(height: 16),
+
+        if (clubs.isNotEmpty) ...[
+          Row(
+            children: [
+              const Icon(Icons.emoji_events_rounded, size: 18, color: _C.blue),
+              const SizedBox(width: 6),
+              const Text(
+                'TRENDING CLUBS',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: _C.muted,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: _C.blueLight,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '${clubs.length}',
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: _C.blue,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...clubs.map((result) => _SearchResultTile(result: result)),
+        ],
+
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  Widget _buildSearchResults(SearchResponse results) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -213,6 +556,8 @@ class _SearchResults extends StatelessWidget {
   }
 }
 
+// ─── Section Header ──────────────────────────────────────────────────────────
+
 class _SectionHeader extends StatelessWidget {
   final String title;
   final int count;
@@ -230,7 +575,7 @@ class _SectionHeader extends StatelessWidget {
             style: const TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w800,
-              color: Color(0xFF6B7A96),
+              color: _C.muted,
               letterSpacing: 1.2,
             ),
           ),
@@ -238,7 +583,7 @@ class _SectionHeader extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
-              color: const Color(0xFFE8F0FC),
+              color: _C.blueLight,
               borderRadius: BorderRadius.circular(10),
             ),
             child: Text(
@@ -246,7 +591,7 @@ class _SectionHeader extends StatelessWidget {
               style: const TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.w700,
-                color: Color(0xFF1A62C8),
+                color: _C.blue,
               ),
             ),
           ),
@@ -255,6 +600,8 @@ class _SectionHeader extends StatelessWidget {
     );
   }
 }
+
+// ─── Search Result Tile ──────────────────────────────────────────────────────
 
 class _SearchResultTile extends StatelessWidget {
   final SearchResult result;
@@ -266,9 +613,16 @@ class _SearchResultTile extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _C.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F2)),
+        border: Border.all(color: _C.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Material(
         color: Colors.transparent,
@@ -290,7 +644,7 @@ class _SearchResultTile extends StatelessWidget {
                         style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFF0F1623),
+                          color: _C.text,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -300,7 +654,7 @@ class _SearchResultTile extends StatelessWidget {
                         _getSubtitle(),
                         style: const TextStyle(
                           fontSize: 12,
-                          color: Color(0xFF6B7A96),
+                          color: _C.muted,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -313,7 +667,7 @@ class _SearchResultTile extends StatelessWidget {
                 const Icon(
                   Icons.chevron_right_rounded,
                   size: 20,
-                  color: Color(0xFF6B7A96),
+                  color: _C.muted,
                 ),
               ],
             ),
@@ -335,9 +689,6 @@ class _SearchResultTile extends StatelessWidget {
         }
         if (result.jerseyNumber != null && result.jerseyNumber!.isNotEmpty) {
           parts.add('#${result.jerseyNumber}');
-        }
-        if (result.rating != null && result.rating!.isNotEmpty) {
-          parts.add('⭐ ${result.rating}');
         }
         if (result.nationality != null && result.nationality!.isNotEmpty) {
           parts.add(result.nationality!);
@@ -361,30 +712,10 @@ class _SearchResultTile extends StatelessWidget {
 
     switch (result.type) {
       case 'team':
-        final team = TeamInfo(
-          id: result.id,
-          name: result.name,
-          displayName: result.displayName,
-          abbreviation: result.name.length > 3
-              ? result.name.substring(0, 3).toUpperCase()
-              : result.name.toUpperCase(),
-          logo: result.imageUrl ?? 'https://a.espncdn.com/i/teamlogos/soccer/500/${result.id}.png',
-          color: '#1A62C8',
-          alternateColor: '#FFFFFF',
-          record: '0-0-0',
-        );
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => TeamDetailScreen(
-              team: team,
-              leagueCode: result.leagueCode,
-            ),
-          ),
-        );
+        _navigateToTeam(context);
         break;
       case 'player':
-        _showPlayerInfo(context);
+        _navigateToPlayer(context);
         break;
       case 'league':
         _showLeagueInfo(context);
@@ -392,65 +723,70 @@ class _SearchResultTile extends StatelessWidget {
     }
   }
 
-  void _showPlayerInfo(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+  void _navigateToTeam(BuildContext context) {
+    final team = TeamInfo(
+      id: result.id,
+      name: result.name,
+      displayName: result.displayName,
+      abbreviation: result.abbreviation ??
+          (result.name.length > 3 ? result.name.substring(0, 3).toUpperCase() : result.name.toUpperCase()),
+      logo: result.imageUrl ?? 'https://a.espncdn.com/i/teamlogos/soccer/500/${result.id}.png',
+      color: '#1A62C8',
+      alternateColor: '#FFFFFF',
+      record: '0-0-0',
+    );
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TeamDetailScreen(
+          team: team,
+          leagueCode: result.leagueCode,
         ),
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: const Color(0xFFE2E8F2),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-            _Avatar(result: result, size: 80),
-            const SizedBox(height: 12),
-            Text(
-              result.displayName,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF0F1623),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              _getSubtitle(),
-              style: const TextStyle(
-                fontSize: 14,
-                color: Color(0xFF6B7A96),
-              ),
-            ),
-            const SizedBox(height: 20),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _InfoChip(label: 'Player', icon: Icons.person_rounded),
-                if (result.position != null)
-                  _InfoChip(label: result.position!, icon: Icons.sports_soccer_rounded),
-                if (result.jerseyNumber != null)
-                  _InfoChip(label: '#${result.jerseyNumber}', icon: Icons.numbers_rounded),
-                if (result.nationality != null)
-                  _InfoChip(label: result.nationality!, icon: Icons.flag_rounded),
-                if (result.rating != null)
-                  _InfoChip(label: '⭐ ${result.rating}', icon: Icons.star_rounded),
-                if (result.age != null)
-                  _InfoChip(label: '${result.age} yrs', icon: Icons.cake_rounded),
-              ],
-            ),
-          ],
+      ),
+    );
+  }
+
+  void _navigateToPlayer(BuildContext context) {
+    final pitchPlayer = PitchPlayer(
+      id: result.id,
+      name: result.displayName,
+      shortName: result.displayName.split(' ').last,
+      number: result.jerseyNumber ?? '',
+      position: result.position ?? '',
+      imageUrl: result.imageUrl,
+      isStarter: true,
+      isHome: true,
+      rating: result.rating != null ? double.tryParse(result.rating!) : null,
+    );
+
+    TeamInfo? teamInfo;
+    if (result.teamId != null && result.teamId!.isNotEmpty) {
+      final clubData = famousClubs.firstWhere(
+            (c) => c['id'] == result.teamId,
+        orElse: () => {'id': result.teamId!, 'name': result.teamName ?? 'Unknown Team'},
+      );
+
+      teamInfo = TeamInfo(
+        id: clubData['id']!,
+        name: clubData['name']!,
+        displayName: clubData['name']!,
+        abbreviation: clubData['name']!.length > 3
+            ? clubData['name']!.substring(0, 3).toUpperCase()
+            : clubData['name']!.toUpperCase(),
+        logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/${clubData['id']}.png',
+        color: '#1A62C8',
+        alternateColor: '#FFFFFF',
+        record: '0-0-0',
+      );
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PlayerScreen(
+          player: pitchPlayer,
+          teamInfo: teamInfo,
+          game: null,
         ),
       ),
     );
@@ -462,7 +798,7 @@ class _SearchResultTile extends StatelessWidget {
       backgroundColor: Colors.transparent,
       builder: (_) => Container(
         decoration: const BoxDecoration(
-          color: Colors.white,
+          color: _C.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
@@ -473,7 +809,7 @@ class _SearchResultTile extends StatelessWidget {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: const Color(0xFFE2E8F2),
+                color: _C.border,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -485,7 +821,7 @@ class _SearchResultTile extends StatelessWidget {
               style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
-                color: Color(0xFF0F1623),
+                color: _C.text,
               ),
             ),
             const SizedBox(height: 4),
@@ -493,20 +829,17 @@ class _SearchResultTile extends StatelessWidget {
               'League',
               style: TextStyle(
                 fontSize: 14,
-                color: Color(0xFF6B7A96),
+                color: _C.muted,
               ),
             ),
             const SizedBox(height: 20),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  // Navigate to standings for this league
-                },
+                onPressed: () => Navigator.pop(context),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1A62C8),
-                  foregroundColor: Colors.white,
+                  backgroundColor: _C.blue,
+                  foregroundColor: _C.white,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
@@ -529,6 +862,8 @@ class _SearchResultTile extends StatelessWidget {
   }
 }
 
+// ─── Avatar ──────────────────────────────────────────────────────────────────
+
 class _Avatar extends StatelessWidget {
   final SearchResult result;
   final double size;
@@ -537,7 +872,12 @@ class _Avatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bgColor = const Color(0xFFE8F0FC);
+    final bgColor = _C.blueLight;
+
+    String imageUrl = result.imageUrl ?? '';
+    if (result.type == 'team' && result.id.isNotEmpty) {
+      imageUrl = 'https://a.espncdn.com/i/teamlogos/soccer/500/${result.id}.png';
+    }
 
     return Container(
       width: size,
@@ -545,12 +885,12 @@ class _Avatar extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: bgColor,
-        border: Border.all(color: const Color(0xFFE2E8F2), width: 1.5),
+        border: Border.all(color: _C.border, width: 1.5),
       ),
       child: ClipOval(
-        child: result.imageUrl != null && result.imageUrl!.isNotEmpty
+        child: imageUrl.isNotEmpty
             ? CachedNetworkImage(
-          imageUrl: result.imageUrl!,
+          imageUrl: imageUrl,
           fit: BoxFit.cover,
           placeholder: (_, __) => _Placeholder(result: result, size: size),
           errorWidget: (_, __, ___) => _Placeholder(result: result, size: size),
@@ -560,6 +900,8 @@ class _Avatar extends StatelessWidget {
     );
   }
 }
+
+// ─── Placeholder ─────────────────────────────────────────────────────────────
 
 class _Placeholder extends StatelessWidget {
   final SearchResult result;
@@ -580,20 +922,22 @@ class _Placeholder extends StatelessWidget {
     return Container(
       width: size,
       height: size,
-      color: const Color(0xFFE8F0FC),
+      color: _C.blueLight,
       child: Center(
         child: Text(
           text.isNotEmpty ? (text.length > 2 ? text.substring(0, 2) : text) : '?',
           style: TextStyle(
             fontSize: size * 0.35,
             fontWeight: FontWeight.w800,
-            color: const Color(0xFF1A62C8),
+            color: _C.blue,
           ),
         ),
       ),
     );
   }
 }
+
+// ─── Type Badge ──────────────────────────────────────────────────────────────
 
 class _TypeBadge extends StatelessWidget {
   final String type;
@@ -614,7 +958,7 @@ class _TypeBadge extends StatelessWidget {
       'league': 'League',
     };
 
-    final color = colors[type] ?? const Color(0xFF6B7A96);
+    final color = colors[type] ?? _C.muted;
     final label = labels[type] ?? type;
 
     return Container(
@@ -636,39 +980,7 @@ class _TypeBadge extends StatelessWidget {
   }
 }
 
-class _InfoChip extends StatelessWidget {
-  final String label;
-  final IconData icon;
-
-  const _InfoChip({required this.label, required this.icon});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF5F7FB),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE2E8F2)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: const Color(0xFF6B7A96)),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF0F1623),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+// ─── Empty State ─────────────────────────────────────────────────────────────
 
 class _EmptyState extends StatelessWidget {
   final IconData icon;
@@ -693,13 +1005,13 @@ class _EmptyState extends StatelessWidget {
               width: 72,
               height: 72,
               decoration: BoxDecoration(
-                color: const Color(0xFFE8F0FC),
+                color: _C.blueLight,
                 borderRadius: BorderRadius.circular(18),
               ),
               child: Icon(
                 icon,
                 size: 36,
-                color: const Color(0xFF1A62C8),
+                color: _C.blue,
               ),
             ),
             const SizedBox(height: 16),
@@ -708,7 +1020,7 @@ class _EmptyState extends StatelessWidget {
               style: const TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
-                color: Color(0xFF0F1623),
+                color: _C.text,
               ),
             ),
             const SizedBox(height: 8),
@@ -717,7 +1029,7 @@ class _EmptyState extends StatelessWidget {
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 13,
-                color: Color(0xFF6B7A96),
+                color: _C.muted,
                 height: 1.5,
               ),
             ),
