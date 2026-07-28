@@ -6,6 +6,7 @@ import 'package:livescore/models/player_model.dart';
 import 'package:livescore/models/standing_model.dart';
 import 'package:livescore/models/league_leader_model.dart';
 import 'package:livescore/models/news_model.dart';
+import 'package:livescore/services/sportsdb_service.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/models/team_page_data.dart';
 import 'package:livescore/services/cache_service.dart';
@@ -2065,6 +2066,356 @@ class ApiService {
     );
   }
 
+  // ─── PLAYER SEASON STATISTICS (API-Football) ──────────────────────────────
+  //
+  // Why this exists: ESPN's soccer athlete endpoint (used by
+  // `getPlayerDetails`/`_parsePlayerFromApi` above) simply does not include
+  // `statistics` / `seasonStats` / `careerStats` in its real payload for
+  // soccer — that parsing code has always been reading from empty arrays.
+  // TheSportsDB's free key locks its one stats endpoint
+  // (`lookupplayerstats.php`) to a single demo player, so it can't fill the
+  // gap either (see the header comment in sportsdb_service.dart). API-
+  // Football's `/players` endpoint is the only one of the three that
+  // actually returns granular per-season numbers — goals, shots, passes,
+  // tackles, duels, cards — scoped to a specific league + season, which is
+  // exactly "season statistics for the league this player is playing in".
+  //
+  // We only have an ESPN player id, not an API-Football one, so we resolve
+  // the player by searching API-Football by surname, scoped first to the
+  // player's own competition, then falling back to an unscoped search —
+  // disambiguating hits by team name when there's more than one candidate.
+  Future<Map<String, dynamic>?> getPlayerSeasonStatsApiFootball({
+    required String playerName,
+    required String leagueCode,
+    String? teamName,
+    String? season,
+  }) async {
+    if (playerName.trim().isEmpty) return null;
+
+    final leagueId = AppConstants.apiFootballLeagueIds[leagueCode];
+    final apiKey = AppConstants.apiFootballKey;
+    if (apiKey.isEmpty) return null;
+
+    final seasonYear = AppConstants.apiFootballSeasonFor(leagueCode, season: season);
+    final cacheKey =
+        'af_player_stats_${playerName.toLowerCase().trim()}_${leagueId ?? 'any'}_$seasonYear';
+
+    final cached = await _cache.getCachedPlayerSeasonStats(cacheKey);
+    if (cached != null) {
+      print('[PlayerStats] Cache HIT for $playerName ($leagueCode $seasonYear)');
+      return cached;
+    }
+
+    // API-Football's `search` matches loosely against first/last name; the
+    // surname alone tends to disambiguate best and needs at least 3 chars.
+    // ✅ FIX: the API rejects `search` outright ("may only contain
+    // alpha-numeric characters and spaces") for any accented name — e.g.
+    // "Mbappé" always 400'd before this was added. Every player name gets
+    // normalized to plain ASCII before it's sent as a query param.
+    final nameParts = playerName.trim().split(RegExp(r'\s+'));
+    final rawTerm = nameParts.length > 1 ? nameParts.last : nameParts.first;
+    final searchTerm = _sanitizeApiFootballSearchTerm(rawTerm);
+    if (searchTerm.length < 3) {
+      print('[PlayerStats] Search term "$searchTerm" too short — skipping');
+      return null;
+    }
+
+    Map<String, dynamic>? match;
+
+    if (leagueId != null) {
+      match = await _fetchApiFootballPlayerBySearch(
+        searchTerm: searchTerm,
+        leagueId: leagueId,
+        season: seasonYear,
+        fullName: playerName,
+        teamName: teamName,
+      );
+    }
+
+    // ✅ FIX: the old fallback dropped `league` entirely and called
+    // `/players?search=..&season=..` on its own — API-Football rejects
+    // that combination outright ("The League or Team field is required
+    // with the Search field"), so it never actually returned anything.
+    // A bare unscoped-by-league search isn't a valid call on this
+    // endpoint at all, so instead we walk a short list of the leagues the
+    // free plan actually covers (the same set already proven to work in
+    // `_searchPlayersApiFootball`), stopping at the first confident match.
+    // This is what actually rescues cases like the guessed leagueCode
+    // being wrong (e.g. a player screen opened without match context
+    // defaults to 'eng.1' even though the player has since moved clubs).
+    if (match == null) {
+      for (final fallbackLeagueId in _apiFootballFallbackLeagueIds) {
+        if (fallbackLeagueId == leagueId) continue; // already tried
+        match = await _fetchApiFootballPlayerBySearch(
+          searchTerm: searchTerm,
+          leagueId: fallbackLeagueId,
+          season: seasonYear,
+          fullName: playerName,
+          teamName: teamName,
+        );
+        if (match != null) break;
+        // Stay well under the free plan's per-minute rate limit while
+        // walking multiple leagues for one player.
+        await Future.delayed(const Duration(milliseconds: 400));
+      }
+    }
+
+    if (match == null) {
+      print('[PlayerStats] No API-Football match found for $playerName');
+      return null;
+    }
+
+    final parsed = _parseApiFootballPlayerStatistics(match);
+    if (parsed != null && parsed.isNotEmpty) {
+      await _cache.cachePlayerSeasonStats(cacheKey, parsed);
+      print('[PlayerStats] ✅ Resolved season stats for $playerName: '
+          '${parsed['goals']}G ${parsed['assists']}A in ${parsed['appearances']} apps');
+    }
+    return parsed;
+  }
+
+  /// Leagues the free API-Football plan reliably indexes, tried in rough
+  /// order of how likely a top club player is to be found there. Mirrors
+  /// the list `_searchPlayersApiFootball` already uses successfully, plus a
+  /// few extra competitions so more players resolve on the first try.
+  static const List<int> _apiFootballFallbackLeagueIds = [
+    39,  // Premier League
+    140, // La Liga
+    135, // Serie A
+    78,  // Bundesliga
+    61,  // Ligue 1
+    2,   // Champions League
+    94,  // Primeira Liga
+    88,  // Eredivisie
+    71,  // Brasileirão
+    253, // MLS
+  ];
+
+  /// API-Football's `search` query param is documented to accept only
+  /// alpha-numeric characters and spaces — anything else (accented
+  /// letters, apostrophes, hyphens) causes the whole request to be
+  /// rejected with a 400-style `errors` payload rather than just being
+  /// ignored. Strip diacritics first (é→e, ñ→n, etc.) so names like
+  /// "Mbappé", "Häßler", or "Núñez" still resolve, then drop anything
+  /// that still isn't alpha-numeric/space.
+  String _sanitizeApiFootballSearchTerm(String raw) {
+    final stripped = _stripDiacritics(raw);
+    return stripped.replaceAll(RegExp(r'[^a-zA-Z0-9 ]'), '').trim();
+  }
+
+  String _stripDiacritics(String input) {
+    const withDia =
+        'ÀÁÂÃÄÅàáâãäåÒÓÔÕÖØòóôõöøÈÉÊËèéêëÇçÐðÌÍÎÏìíîïÙÚÛÜùúûüÑñŠšŸÿýŽž';
+    const withoutDia =
+        'AAAAAAaaaaaaOOOOOOOooooooEEEEeeeeCcDdIIIIiiiiUUUUuuuuNnSsYyyZz';
+    final buffer = StringBuffer();
+    for (final rune in input.runes) {
+      final ch = String.fromCharCode(rune);
+      final idx = withDia.indexOf(ch);
+      buffer.write(idx >= 0 ? withoutDia[idx] : ch);
+    }
+    return buffer.toString();
+  }
+
+  Future<Map<String, dynamic>?> _fetchApiFootballPlayerBySearch({
+    required String searchTerm,
+    required int? leagueId,
+    required int season,
+    required String fullName,
+    String? teamName,
+  }) async {
+    final params = <String, String>{
+      'search': searchTerm,
+      'season': '$season',
+    };
+    if (leagueId != null) params['league'] = '$leagueId';
+
+    final url = Uri.parse('${AppConstants.apiFootballBaseUrl}/players')
+        .replace(queryParameters: params);
+
+    try {
+      print('[PlayerStats] Searching API-Football: $url');
+      final res = await _client.get(
+        url,
+        headers: {'x-apisports-key': AppConstants.apiFootballKey},
+      ).timeout(const Duration(seconds: 8));
+
+      if (res.statusCode == 429) {
+        print('[PlayerStats] ⚠️ Rate limit hit searching "$searchTerm"');
+        return null;
+      }
+      if (res.statusCode != 200) {
+        print('[PlayerStats] HTTP ${res.statusCode} for "$searchTerm" (league=$leagueId)');
+        return null;
+      }
+
+      final data = json.decode(res.body) as Map<String, dynamic>;
+      final errors = data['errors'];
+      if ((errors is Map && errors.isNotEmpty) || (errors is List && errors.isNotEmpty)) {
+        print('[PlayerStats] API error for "$searchTerm" (league=$leagueId): $errors');
+        return null;
+      }
+
+      final response = data['response'] as List? ?? [];
+      if (response.isEmpty) return null;
+
+      return _bestApiFootballPlayerMatch(response, fullName: fullName, teamName: teamName);
+    } catch (e) {
+      print('[PlayerStats] Error searching "$searchTerm" (league=$leagueId): $e');
+      return null;
+    }
+  }
+
+  /// Picks the response entry whose player name and (if available) team
+  /// name most closely match, instead of blindly taking the first result —
+  /// API-Football's `search` is a loose substring match and common
+  /// surnames (e.g. "Silva", "Rodriguez") return several unrelated players.
+  /// Returns null if nothing clears the minimum confidence bar, so callers
+  /// never attach the wrong player's numbers.
+  Map<String, dynamic>? _bestApiFootballPlayerMatch(
+      List response, {
+        required String fullName,
+        String? teamName,
+      }) {
+    final normalizedFull = fullName.toLowerCase().trim();
+    final normalizedTeam = teamName?.toLowerCase().trim() ?? '';
+
+    Map<String, dynamic>? bestEntry;
+    int bestScore = -1;
+
+    for (final entry in response) {
+      if (entry is! Map) continue;
+      final player = entry['player'] as Map<String, dynamic>?;
+      if (player == null) continue;
+
+      final name = (player['name']?.toString() ?? '').toLowerCase();
+      final firstname = (player['firstname']?.toString() ?? '').toLowerCase();
+      final lastname = (player['lastname']?.toString() ?? '').toLowerCase();
+      final combined = '$firstname $lastname'.trim();
+
+      int score = 0;
+      if (name == normalizedFull || combined == normalizedFull) {
+        score += 5;
+      } else if (lastname.isNotEmpty && normalizedFull.contains(lastname)) {
+        score += 2;
+      } else if (name.isNotEmpty && normalizedFull.contains(name)) {
+        score += 2;
+      }
+
+      if (normalizedTeam.isNotEmpty) {
+        final statsList = entry['statistics'] as List? ?? [];
+        for (final s in statsList) {
+          if (s is! Map) continue;
+          final team = (s['team']?['name']?.toString() ?? '').toLowerCase();
+          if (team.isEmpty) continue;
+          if (team == normalizedTeam ||
+              team.contains(normalizedTeam) ||
+              normalizedTeam.contains(team)) {
+            score += 4;
+            break;
+          }
+        }
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestEntry = entry as Map<String, dynamic>;
+      }
+    }
+
+    // Require at least a partial name match — never fall back to "just
+    // take the first result" purely on a team-name hit with no name
+    // signal at all, since that risks a teammate's stats.
+    if (bestScore < 2) return null;
+    return bestEntry;
+  }
+
+  /// Normalizes an API-Football `/players` response entry (one player +
+  /// their `statistics` list, one entry per competition they appeared in
+  /// that season) into the flat key/value map the UI reads. When a search
+  /// wasn't league-scoped and returns rows for multiple competitions, the
+  /// row with the most appearances is used as the "main" season line.
+  Map<String, dynamic>? _parseApiFootballPlayerStatistics(Map<String, dynamic> entry) {
+    final statsList = entry['statistics'] as List? ?? [];
+    if (statsList.isEmpty) return null;
+
+    Map<String, dynamic> chosen = statsList.first as Map<String, dynamic>;
+    if (statsList.length > 1) {
+      int bestApps = -1;
+      for (final s in statsList) {
+        if (s is! Map) continue;
+        final games = s['games'] as Map<String, dynamic>?;
+        final apps = ((games?['appearences'] ?? games?['appearances'] ?? 0) as num?) ?? 0;
+        if (apps.toInt() > bestApps) {
+          bestApps = apps.toInt();
+          chosen = s as Map<String, dynamic>;
+        }
+      }
+    }
+
+    final games = chosen['games'] as Map<String, dynamic>? ?? {};
+    final goals = chosen['goals'] as Map<String, dynamic>? ?? {};
+    final shots = chosen['shots'] as Map<String, dynamic>? ?? {};
+    final passes = chosen['passes'] as Map<String, dynamic>? ?? {};
+    final tackles = chosen['tackles'] as Map<String, dynamic>? ?? {};
+    final duels = chosen['duels'] as Map<String, dynamic>? ?? {};
+    final dribbles = chosen['dribbles'] as Map<String, dynamic>? ?? {};
+    final fouls = chosen['fouls'] as Map<String, dynamic>? ?? {};
+    final cards = chosen['cards'] as Map<String, dynamic>? ?? {};
+    final team = chosen['team'] as Map<String, dynamic>?;
+    final league = chosen['league'] as Map<String, dynamic>?;
+
+    final appearances = ((games['appearences'] ?? games['appearances'] ?? 0) as num?) ?? 0;
+    final minutes = ((games['minutes'] ?? 0) as num?) ?? 0;
+    final totalGoals = ((goals['total'] ?? 0) as num?) ?? 0;
+    final totalAssists = ((goals['assists'] ?? 0) as num?) ?? 0;
+
+    double? rating;
+    final ratingRaw = games['rating'];
+    if (ratingRaw != null) rating = double.tryParse(ratingRaw.toString());
+
+    String? goalsPer90;
+    if (minutes.toDouble() > 0) {
+      goalsPer90 = ((totalGoals.toDouble() / minutes.toDouble()) * 90).toStringAsFixed(2);
+    }
+
+    final passAccuracyRaw = passes['accuracy'];
+
+    final stats = <String, dynamic>{
+      'goals': totalGoals,
+      'assists': totalAssists,
+      'appearances': appearances,
+      'minutes': minutes,
+      if (goalsPer90 != null) 'goalsPer90': goalsPer90,
+      'shots': shots['total'] ?? 0,
+      'shotsOnTarget': shots['on'] ?? 0,
+      if (passAccuracyRaw != null) 'passAccuracy': '$passAccuracyRaw%',
+      'keyPasses': passes['key'] ?? 0,
+      'tackles': tackles['total'] ?? 0,
+      'interceptions': tackles['interceptions'] ?? 0,
+      'blocks': tackles['blocks'] ?? 0,
+      'duelsWon': duels['won'] ?? 0,
+      'duelsTotal': duels['total'] ?? 0,
+      'dribbles': dribbles['success'] ?? 0,
+      'foulsCommitted': fouls['committed'] ?? 0,
+      'yellowCards': cards['yellow'] ?? 0,
+      'redCards': cards['red'] ?? 0,
+      if (rating != null) 'rating': rating.toStringAsFixed(1),
+      'position': games['position']?.toString() ?? '',
+      if (team != null) 'statsTeam': team['name']?.toString() ?? '',
+      if (league != null) 'statsLeague': league['name']?.toString() ?? '',
+      if (league != null) 'statsSeason': league['season']?.toString() ?? '',
+    };
+
+    // A genuine 0-goal, 0-appearance response (player not actually rostered
+    // for this league/season) shouldn't be cached and shown as "stats" —
+    // but a real player who has 0 goals with several appearances should
+    // still show real zeros rather than being treated as "no data".
+    if (appearances == 0 && minutes == 0) return null;
+
+    return stats;
+  }
+
   /// Get the team ID for a player
   Future<String> _getPlayerTeamId(String playerId, String leagueCode) async {
     try {
@@ -3041,7 +3392,22 @@ class ApiService {
       // ── Search Players (API-Football - search in multiple leagues) ──────
       final playerResults = await _searchPlayersApiFootball(lowerQuery);
       players.addAll(playerResults);
-      print('[Search] Found ${players.length} players');
+      print('[Search] Found ${players.length} players from API-Football');
+
+      // ── Search Players (TheSportsDB - fills gaps API-Football's 6-league/
+      //    2024-season restriction misses: other leagues, players who moved
+      //    since 2024, etc.) ────────────────────────────────────────────────
+      if (players.length < 15) {
+        final seenNames = players.map((p) => p.displayName.toLowerCase()).toSet();
+        final sportsDbResults = await _searchPlayersSportsDb(lowerQuery);
+        for (final p in sportsDbResults) {
+          if (players.length >= 30) break;
+          if (seenNames.contains(p.displayName.toLowerCase())) continue;
+          players.add(p);
+          seenNames.add(p.displayName.toLowerCase());
+        }
+      }
+      print('[Search] Found ${players.length} players total');
 
       print('[Search] Total: ${players.length + teams.length + leagues.length} results (players: ${players.length}, teams: ${teams.length}, leagues: ${leagues.length})');
 
@@ -3080,11 +3446,22 @@ class ApiService {
     print('[SearchTeams] Searching for: "$query"');
 
     try {
-      final url = '${AppConstants.apiFootballBaseUrl}/teams?search=$query';
+      // ✅ FIX: build via Uri.replace so spaces/special characters are
+      // percent-encoded, and strip accents first since API-Football's
+      // `search` param rejects non-alphanumeric characters outright
+      // (confirmed failure case: searching an accented team/city name
+      // used to 400 instead of just returning no results).
+      final sanitizedQuery = _sanitizeApiFootballSearchTerm(query);
+      if (sanitizedQuery.length < 3) {
+        print('[SearchTeams] Sanitized query too short — skipping');
+        return results;
+      }
+      final url = Uri.parse('${AppConstants.apiFootballBaseUrl}/teams')
+          .replace(queryParameters: {'search': sanitizedQuery});
       print('[SearchTeams] Requesting: $url');
 
       final res = await _client.get(
-        Uri.parse(url),
+        url,
         headers: {'x-apisports-key': apiKey},
       ).timeout(const Duration(seconds: 10));
 
@@ -3163,7 +3540,200 @@ class ApiService {
 
 // lib/services/api_service.dart
 
+  // ─── THESPORTSDB INTEGRATION METHODS ───────────────────────────────────────
+
+  /// Search for a player in TheSportsDB by name
+  Future<Map<String, dynamic>?> searchSportsDbPlayer(String playerName) async {
+    print('[ApiService] 🔍 Searching SportsDB for: $playerName');
+
+    if (playerName.isEmpty) return null;
+
+    final cacheKey = 'sportsdb_search_${playerName.toLowerCase()}';
+    final cached = await _cache.getCachedSportsDbSearch(cacheKey);
+    if (cached != null) {
+      print('[ApiService] ✅ SportsDB search cache HIT for: $playerName');
+      return cached;
+    }
+
+    try {
+      final sportsDb = SportsDbService();
+      final result = await sportsDb.searchPlayerByName(playerName);
+
+      if (result != null) {
+        print('[ApiService] ✅ SportsDB found: ${result['strPlayer']}');
+        // Cache the result
+        await _cache.cacheSportsDbSearch(cacheKey, result);
+        return result;
+      } else {
+        print('[ApiService] ⚠️ SportsDB no results for: $playerName');
+      }
+    } catch (e) {
+      print('[ApiService] ❌ SportsDB search error: $e');
+    }
+
+    return null;
+  }
+
+
+  // ─── THESPORTSDB INTEGRATION METHODS ───────────────────────────────────────
+
+  /// Get a player from TheSportsDB by ESPN ID (or name fallback)
+  Future<Player?> getPlayerFromSportsDb(String playerId) async {
+    print('[ApiService] 🔍 Looking up player in SportsDB: $playerId');
+
+    final cacheKey = 'sportsdb_player_$playerId';
+    final cached = await _cache.getCachedSportsDbPlayer(cacheKey);
+    if (cached != null) {
+      print('[ApiService] ✅ SportsDB cache HIT for: ${cached.displayName}');
+      return cached;
+    }
+
+    // Try to find the player by searching TheSportsDB
+    try {
+      // First try to get the player by searching all leagues
+      final sportsDb = SportsDbService();
+
+      // We need a name to search - if we don't have one, we can't search
+      // This is a limitation - we need to pass a name
+      // For now, we'll try to get the player from the team roster
+      // if we have a team ID
+
+      // Try to find the player in any team roster by looking up the team ID
+      // This requires knowing which team the player belongs to
+      // We'll try to get this from the ESPN API first
+
+      // For now, return null - we'll handle this differently
+      print('[ApiService] ⚠️ Cannot search SportsDB without player name');
+      return null;
+    } catch (e) {
+      print('[ApiService] SportsDB error: $e');
+      return null;
+    }
+  }
+
+  /// Parse SportsDB player data to our Player model
+  Player _parseSportsDbPlayer(Map<String, dynamic> data) {
+    final id = data['idPlayer']?.toString() ?? '';
+    final name = data['strPlayer']?.toString() ?? '';
+    final fullName = data['strFullName']?.toString() ?? name;
+    final displayName = name.isNotEmpty ? name : fullName;
+
+    // Headshot - prefer cutout (transparent PNG) then thumb
+    String headshot = data['strCutout']?.toString() ?? '';
+    if (headshot.isEmpty) {
+      headshot = data['strThumb']?.toString() ?? '';
+    }
+
+    // Add size modifiers for smaller images
+    if (headshot.isNotEmpty && !headshot.contains('/tiny') && !headshot.contains('/small')) {
+      headshot = '$headshot/small';
+    }
+
+    final jersey = data['strNumber']?.toString() ?? '';
+    final position = data['strPosition']?.toString() ?? '';
+    final teamName = data['strTeam']?.toString() ?? '';
+    final teamId = data['idTeam']?.toString() ?? '';
+
+    // Height in cm -> inches
+    int height = 0;
+    final heightStr = data['strHeight']?.toString() ?? '';
+    if (heightStr.isNotEmpty) {
+      final cm = double.tryParse(heightStr.replaceAll(' cm', '').trim()) ?? 0;
+      height = (cm / 2.54).round();
+    }
+
+    // Weight in kg -> lbs
+    int weight = 0;
+    final weightStr = data['strWeight']?.toString() ?? '';
+    if (weightStr.isNotEmpty) {
+      final kg = double.tryParse(weightStr.replaceAll(' kg', '').trim()) ?? 0;
+      weight = (kg * 2.20462).round();
+    }
+
+    // Age
+    int age = 0;
+    final birthDate = data['dateBorn']?.toString() ?? '';
+    if (birthDate.isNotEmpty) {
+      try {
+        final birth = DateTime.parse(birthDate);
+        final now = DateTime.now();
+        age = now.year - birth.year;
+        if (now.month < birth.month || (now.month == birth.month && now.day < birth.day)) {
+          age--;
+        }
+      } catch (_) {}
+    }
+
+    final nationality = data['strNationality']?.toString() ?? '';
+    final foot = data['strFoot']?.toString() ?? '';
+
+    // Market value
+    double? marketValue;
+    final valueStr = data['strValue']?.toString() ?? '';
+    if (valueStr.isNotEmpty) {
+      final clean = valueStr.replaceAll('€', '').replaceAll('M', '').replaceAll('B', '').trim();
+      final val = double.tryParse(clean);
+      if (val != null) {
+        if (valueStr.contains('B')) {
+          marketValue = val * 1000;
+        } else {
+          marketValue = val;
+        }
+      }
+    }
+
+    // Build statistics map
+    final stats = <String, dynamic>{};
+    final statKeys = [
+      'intGoals', 'intAssists', 'intAppearances',
+      'intShots', 'intShotsOnTarget', 'intPasses',
+      'intTackles', 'intClearances',
+    ];
+    for (final key in statKeys) {
+      if (data.containsKey(key)) {
+        stats[key.replaceAll('int', '').toLowerCase()] = data[key];
+      }
+    }
+
+    return Player(
+      id: id,
+      fullName: fullName,
+      displayName: displayName,
+      headshot: headshot,
+      jersey: jersey,
+      position: position,
+      teamId: teamId,
+      teamName: teamName,
+      height: height,
+      weight: weight,
+      age: age,
+      college: '',
+      statistics: stats,
+      injuryStatus: null,
+      nationality: nationality.isNotEmpty ? nationality : null,
+      birthDate: birthDate.isNotEmpty ? birthDate : null,
+      foot: foot.isNotEmpty ? foot : null,
+      preferredPosition: position.isNotEmpty ? position : null,
+      marketValue: marketValue,
+      contractExpiry: null,
+      seasonStats: null,
+      careerStats: null,
+    );
+  }
+
 // ─── SEARCH PLAYERS - FIXED ──────────────────────────────────────────────────
+
+  /// Reverse lookup of AppConstants.apiFootballLeagueIds — turns the
+  /// numeric league id a player was actually found under back into our
+  /// internal league code (e.g. 140 -> 'esp.1'), so search results can
+  /// carry the real league instead of leaving screens that need it (like
+  /// PlayerScreen's season-stats fetch) to guess or default.
+  String? _internalLeagueCodeForApiFootballId(int leagueId) {
+    for (final entry in AppConstants.apiFootballLeagueIds.entries) {
+      if (entry.value == leagueId) return entry.key;
+    }
+    return null;
+  }
 
   /// Search players using API-Football by searching across multiple leagues
   Future<List<SearchResult>> _searchPlayersApiFootball(String query) async {
@@ -3183,6 +3753,15 @@ class ApiService {
     // ✅ FIX: Use 2024 season (max supported by free plan)
     final season = 2024;  // Hardcoded to 2024 for free plan
     print('[SearchPlayers] Using season: $season');
+
+    // ✅ FIX: strip accents / percent-encode — API-Football's `search`
+    // param rejects non-alphanumeric characters outright, so searching
+    // e.g. "Mbappé" used to 400 on every single league in this loop.
+    final sanitizedQuery = _sanitizeApiFootballSearchTerm(query);
+    if (sanitizedQuery.length < 3) {
+      print('[SearchPlayers] Sanitized query too short — skipping');
+      return results;
+    }
 
     // ✅ FIX: Search fewer leagues to avoid rate limit
     final leagueIds = [
@@ -3207,12 +3786,17 @@ class ApiService {
       requestCount++;
 
       try {
-        // ✅ FIX: Remove limit parameter (causing errors)
-        final url = '${AppConstants.apiFootballBaseUrl}/players?league=$leagueId&season=$season&search=$query';
+        final url = Uri.parse('${AppConstants.apiFootballBaseUrl}/players').replace(
+          queryParameters: {
+            'league': '$leagueId',
+            'season': '$season',
+            'search': sanitizedQuery,
+          },
+        );
         print('[SearchPlayers] Searching league $leagueId');
 
         final res = await _client.get(
-          Uri.parse(url),
+          url,
           headers: {'x-apisports-key': apiKey},
         ).timeout(const Duration(seconds: 8));
 
@@ -3278,6 +3862,7 @@ class ApiService {
               imageUrl: headshot.isNotEmpty ? headshot : null,
               teamName: teamName,
               teamId: '',
+              leagueCode: _internalLeagueCodeForApiFootballId(leagueId),
               position: position,
               jerseyNumber: '',
               abbreviation: '',
@@ -3301,6 +3886,66 @@ class ApiService {
     }
 
     print('[SearchPlayers] ✅ Total found: ${results.length} players');
+    return results;
+  }
+
+  /// Search players in TheSportsDB - a global name search with no
+  /// league/season restriction, so it catches players API-Football's
+  /// 6-hardcoded-league, season-2024-only search misses entirely (e.g.
+  /// anyone outside the top 5 European leagues + Champions League, or
+  /// anyone who moved leagues since the 2024 season the free API-Football
+  /// plan is capped at).
+  ///
+  /// Ids are prefixed with `sdb_` so they're never mistaken for an
+  /// API-Football player id elsewhere in the app - this source is
+  /// display-only (name/photo/team), same as how favorites already store
+  /// player info directly rather than re-fetching by id.
+  Future<List<SearchResult>> _searchPlayersSportsDb(String query) async {
+    final List<SearchResult> results = [];
+    if (query.trim().length < 3) return results;
+
+    try {
+      final sportsDb = SportsDbService();
+      final players = await sportsDb.searchPlayersByName(query);
+      print('[SearchPlayers][SportsDB] Raw results: ${players.length}');
+
+      for (final p in players) {
+        if (results.length >= 30) break;
+
+        // TheSportsDB's player search isn't sport-scoped - skip anything
+        // explicitly tagged as a different sport.
+        final sport = p['strSport']?.toString() ?? '';
+        if (sport.isNotEmpty && sport != 'Soccer') continue;
+
+        final id = p['idPlayer']?.toString() ?? '';
+        final displayName = p['strPlayer']?.toString() ?? '';
+        if (id.isEmpty || displayName.isEmpty) continue;
+
+        final cutout = p['strCutout']?.toString() ?? '';
+        final thumb = p['strThumb']?.toString() ?? '';
+        final headshot = cutout.isNotEmpty ? cutout : thumb;
+
+        results.add(SearchResult(
+          id: 'sdb_$id',
+          name: displayName,
+          displayName: displayName,
+          type: 'player',
+          imageUrl: headshot.isNotEmpty ? headshot : null,
+          teamName: p['strTeam']?.toString() ?? '',
+          teamId: '',
+          position: p['strPosition']?.toString() ?? '',
+          jerseyNumber: p['strNumber']?.toString() ?? '',
+          abbreviation: '',
+          nationality: p['strNationality']?.toString() ?? '',
+          age: null,
+          rating: null,
+        ));
+      }
+      print('[SearchPlayers][SportsDB] ✅ Added ${results.length} players');
+    } catch (e) {
+      print('[SearchPlayers][SportsDB] Error: $e');
+    }
+
     return results;
   }
 

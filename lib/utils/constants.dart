@@ -23,6 +23,52 @@ class AppConstants {
   static const String apiFootballKey = '27a9ac97447419779adc82202949d976';
   static const String apiFootballBaseUrl = 'https://v3.football.api-sports.io';
 
+  // ─── THESPORTSDB (ADDITIONAL DATA SOURCE) ─────────────────────────────────────
+  // Free public API key. TheSportsDB's free tier has real restrictions we've
+  // verified directly against the live API (not just the docs):
+  //   • searchteams.php is locked server-side to only return "Arsenal" — do
+  //     NOT use it for arbitrary team lookups. Use search_all_teams.php?l=
+  //     instead, which works normally for any league name and (usefully)
+  //     returns each team's ESPN id in `idESPN`.
+  //   • lookup_all_players.php?id=<teamId> works for any team and returns
+  //     each player's ESPN id in `idESPN` — this lets us match SportsDB
+  //     players to ESPN athletes with zero fuzzy name-matching.
+  //   • lookupplayerstats.php is locked to a single demo player (Cristiano
+  //     Ronaldo) on the free tier — it ignores whatever id you pass in.
+  //     There is NO way to get arbitrary player season/career stats from
+  //     TheSportsDB on the free key. Don't build features that assume this
+  //     endpoint works for real players.
+  //   • TheSportsDB has no "league stat leaders" (top scorer / assists /
+  //     cards) endpoint at all, on any tier — this is a genuine gap in the
+  //     API, not a rate-limit issue.
+  //   • TheSportsDB has no per-match player rating endpoint either.
+  // Given those limits, we only use TheSportsDB here as an additional,
+  // ESPN-id-matched source of player headshot images (transparent cutouts),
+  // used as a *fallback* when ESPN's own headshot is missing — never as a
+  // replacement for ESPN/API-Football data.
+  static const String sportsDbApiKey = '123';
+  static const String sportsDbBaseUrl = 'https://www.thesportsdb.com/api/v1/json';
+
+  // Maps our internal league codes to TheSportsDB's `search_all_teams.php?l=`
+  // league name format (spaces become underscores). Only the leagues we
+  // currently need SportsDB headshot enrichment for are listed; lookups for
+  // any other league code are simply skipped (ESPN's own headshot/initials
+  // fallback still applies as before).
+  static const Map<String, String> sportsDbLeagueNames = {
+    'eng.1': 'English_Premier_League',
+    'esp.1': 'Spanish_La_Liga',
+    'ita.1': 'Italian_Serie_A',
+    'ger.1': 'German_Bundesliga',
+    'fra.1': 'French_Ligue_1',
+    'por.1': 'Portuguese_Liga_1',
+    'ned.1': 'Dutch_Eredivisie',
+    'usa.1': 'American_Major_League_Soccer',
+    'bra.1': 'Brazilian_Serie_A',
+    'sco.1': 'Scottish_Premier_League',
+    'tur.1': 'Turkish_Super_Lig',
+    'bel.1': 'Belgian_Pro_League',
+  };
+
   static const int apiFootballMaxSeason = 2024;
 
   // API-Football endpoints
@@ -197,24 +243,90 @@ class AppConstants {
   ];
 
   // ─── LEAGUE LOGO IDs ────────────────────────────────────────────────────────
+  // All league logo IDs from ESPN CDN. The ID maps to:
+  // https://a.espncdn.com/i/leaguelogos/soccer/500/[ID].png
   static const Map<String, String> leagueLogoIds = {
+    // International & World Cup
     'fifa.world':           '4',
+    'fifa.worldq.uefa':     '4',
+    'fifa.worldq.conmebol': '4',
+    'fifa.worldq.afc':      '4',
+    'fifa.worldq.caf':      '4',
+    'fifa.worldq.concacaf': '4',
+    'fifa.clubworld':       '7',
+    'fifa.friendly':        '55',
+
+    // UEFA Competitions
     'uefa.champions':       '2',
     'uefa.europa':          '2310',
     'uefa.conference':      '2311',
-    'eng.1': '23', 'esp.1': '15', 'ita.1': '12', 'ger.1': '10', 'fra.1': '9',
-    'por.1': '14', 'ned.1': '11', 'tur.1': '52', 'bel.1': '41', 'sco.1': '44',
-    'aut.1': '60', 'sui.1': '62',
-    'bra.1': '85', 'usa.1': '19', 'mex.1': '26', 'arg.1': '27',
-    'jpn.1': '32', 'swe.1': '57', 'nor.1': '61', 'den.1': '40',
-    'conmebol.libertadores': '58', 'conmebol.sudamericana': '59',
-    'concacaf.champions': '18', 'afc.champions': '17', 'caf.champions': '15',
-    'fifa.clubworld': '7',
-    'uefa.euro': '21', 'conmebol.america': '26', 'uefa.nations': '15157',
-    'fifa.worldq.uefa': '4', 'fifa.worldq.conmebol': '4', 'fifa.worldq.afc': '4',
-    'fifa.worldq.caf': '4', 'fifa.worldq.concacaf': '4',
-    'concacaf.gold': '18', 'afc.cup': '17', 'caf.nations': '15',
-    'ofc.nations': '15', 'fifa.friendly': '55',
+    'uefa.euro':            '21',
+    'uefa.nations':         '15157',
+
+    // CONMEBOL
+    'conmebol.america':     '26',
+    'conmebol.libertadores': '58',
+    'conmebol.sudamericana': '59',
+
+    // CONCACAF
+    'concacaf.champions':   '18',
+    'concacaf.gold':        '18',
+
+    // AFC
+    'afc.champions':        '17',
+    'afc.cup':              '17',
+
+    // CAF
+    'caf.champions':        '15',
+    'caf.nations':          '15',
+
+    // OFC
+    'ofc.nations':          '15',
+
+    // Big 5 European Leagues
+    'eng.1': '23',   // Premier League
+    'esp.1': '15',   // La Liga
+    'ita.1': '12',   // Serie A
+    'ger.1': '10',   // Bundesliga
+    'fra.1': '9',    // Ligue 1
+
+    // Other European Leagues
+    'por.1': '14',   // Primeira Liga
+    'ned.1': '11',   // Eredivisie
+    'tur.1': '52',   // Süper Lig
+    'bel.1': '41',   // Pro League
+    'sco.1': '44',   // Premiership
+    'aut.1': '60',   // Austrian Bundesliga
+    'sui.1': '62',   // Super League
+    'isr.1': '54',   // Ligat ha'Al
+    'rus.1': '53',   // Russian Premier League
+    'rou.1': '51',   // Liga I
+    'swe.1': '57',   // Allsvenskan
+    'nor.1': '61',   // Eliteserien
+    'den.1': '40',   // Superliga
+
+    // English Lower Leagues
+    'eng.2': '24',   // Championship
+    'eng.3': '25',   // League One
+    'eng.4': '26',   // League Two
+
+    // Americas
+    'bra.1': '85',   // Brasileirão
+    'usa.1': '19',   // MLS
+    'mex.1': '26',   // Liga MX
+    'arg.1': '27',   // Liga Profesional
+
+    // Asia
+    'jpn.1': '32',   // J1 League
+    'chn.1': '33',   // Chinese Super League
+    'ind.1': '34',   // Indian Super League
+    'tha.1': '35',   // Thai League 1
+    'aus.1': '36',   // A-League
+    'kr.1': '37',    // K League 1
+
+    // Africa
+    'rsa.1': '38',   // South African Premier Division
+    'egy.1': '39',   // Egyptian Premier League
   };
 
   static String? leagueLogoUrl(String leagueCode) {
@@ -285,9 +397,19 @@ class AppConstants {
     final now = DateTime.now();
     if (season != null && season.isNotEmpty) {
       final parsed = int.tryParse(season);
-      if (parsed != null) return parsed;
+      if (parsed != null) {
+        // ✅ FIX: apiFootballMaxSeason was declared but never actually
+        // applied here, so once "now" moved past 2024 this returned a
+        // season number (e.g. 2026) the free API-Football plan has no
+        // data for at all — every leaders/stats call would silently come
+        // back empty. Every caller funnels through here, so capping it in
+        // one place fixes both leaders AND the new player season stats.
+        return parsed > apiFootballMaxSeason ? apiFootballMaxSeason : parsed;
+      }
     }
-    if (isNationalTeamLeague(leagueCode)) return now.year;
-    return now.month >= 7 ? now.year : now.year - 1;
+    final computed = isNationalTeamLeague(leagueCode)
+        ? now.year
+        : (now.month >= 7 ? now.year : now.year - 1);
+    return computed > apiFootballMaxSeason ? apiFootballMaxSeason : computed;
   }
 }

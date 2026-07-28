@@ -1,13 +1,22 @@
+// lib/screens/team_detail_screen.dart
+
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:livescore/models/team_model.dart';
 import 'package:livescore/models/team_page_data.dart';
 import 'package:livescore/services/sport_service.dart';
+import 'package:livescore/services/sportsdb_service.dart';
 import 'package:livescore/utils/theme.dart';
 import 'package:livescore/utils/constants.dart';
 import 'dart:math' as math;
 import 'package:intl/intl.dart';
+
+// Brand accents: primary = green, secondary = blue. Used as fallbacks when a
+// team has no usable brand color, and for neutral/informational UI accents
+// that shouldn't compete with a team's own color.
+const Color _kPrimaryGreen = Color(0xFF16A34A);
+const Color _kSecondaryBlue = Color(0xFF2563EB);
 
 class TeamDetailScreen extends StatefulWidget {
   final TeamInfo team;
@@ -27,11 +36,16 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final SportService _sportService = SportService();
+  final SportsDbService _sportsDb = SportsDbService();
 
   bool _isFollowing = false;
   bool _isLoading = true;
   String? _error;
   TeamPageData? _data;
+
+  // Cache for SportsDB headshots
+  Map<String, String> _sportsDbHeadshots = {};
+  bool _headshotsLoaded = false;
 
   bool get _isNationalTeam =>
       AppConstants.isNationalTeamLeague(widget.leagueCode ?? '');
@@ -55,9 +69,32 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
       );
       if (!mounted) return;
       setState(() { _data = data; _isLoading = false; });
+
+      // Load SportsDB headshots in background
+      _loadSportsDbHeadshots();
     } catch (e) {
       if (!mounted) return;
       setState(() { _error = 'Failed to load team data'; _isLoading = false; });
+    }
+  }
+
+  /// Load SportsDB headshots for all squad players
+  Future<void> _loadSportsDbHeadshots() async {
+    if (_data == null || _data!.squad.isEmpty) return;
+    if (_headshotsLoaded) return;
+
+    try {
+      // Only try to get headshots if the team is in a mapped league
+      final headshots = await _sportsDb.getTeamHeadshots(widget.team.id);
+
+      if (!mounted) return;
+      setState(() {
+        _sportsDbHeadshots = headshots;
+        _headshotsLoaded = true;
+      });
+      print('[TeamDetail] Loaded ${headshots.length} SportsDB headshots');
+    } catch (e) {
+      print('[TeamDetail] SportsDB headshot error: $e');
     }
   }
 
@@ -74,7 +111,7 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
         return Color(int.parse('FF$colorHex', radix: 16));
       }
     } catch (_) {}
-    return AppTheme.primaryBlue;
+    return _kPrimaryGreen;
   }
 
   /// Returns a badge-safe version of [color].
@@ -102,6 +139,28 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
       return widget.team.logo;
     }
     return 'https://a.espncdn.com/i/teamlogos/soccer/500/${widget.team.id}.png';
+  }
+
+  /// Get best available headshot URL for a player
+  String _getPlayerHeadshotUrl(TeamSquadPlayer player) {
+    // 1. Try SportsDB headshot first (best quality transparent PNG)
+    if (_sportsDbHeadshots.containsKey(player.id) &&
+        _sportsDbHeadshots[player.id]!.isNotEmpty) {
+      return _sportsDbHeadshots[player.id]!;
+    }
+
+    // 2. Try ESPN headshot from API
+    if (player.headshotUrl.isNotEmpty &&
+        !player.headshotUrl.contains('combiner')) {
+      return player.headshotUrl;
+    }
+
+    // 3. Build ESPN CDN URL
+    if (player.id.isNotEmpty) {
+      return 'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/${player.id}.png&w=426&h=240&scale=crop&location=origin';
+    }
+
+    return '';
   }
 
   String _formatMatchDate(String isoDate) {
@@ -418,7 +477,11 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
           const Text('Could not load team data',
               style: TextStyle(fontWeight: FontWeight.w700, color: AppTheme.lightGray)),
           const SizedBox(height: 16),
-          TextButton(onPressed: _loadData, child: const Text('Retry')),
+          TextButton(
+            onPressed: _loadData,
+            style: TextButton.styleFrom(foregroundColor: _kPrimaryGreen),
+            child: const Text('Retry', style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
         ],
       ),
     );
@@ -1081,6 +1144,9 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
       Color primaryColor, {
         String leagueCode = 'eng.1',
       }) {
+    // Get best available headshot
+    final headshotUrl = _getPlayerHeadshotUrl(player);
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1097,10 +1163,9 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
       ),
       child: Row(
         children: [
-          // Headshot with multiple fallback URLs
           _PlayerHeadshot(
             playerId: player.id,
-            headshotUrl: player.headshotUrl,
+            headshotUrl: headshotUrl,
             size: 72,
             primaryColor: primaryColor,
             leagueCode: leagueCode,
@@ -1186,6 +1251,9 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
   }
 
   Widget _buildPlayerRow(TeamSquadPlayer p, bool isDarkMode, Color primaryColor, {String leagueCode = 'eng.1'}) {
+    // Get best available headshot
+    final headshotUrl = _getPlayerHeadshotUrl(p);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: Row(
@@ -1204,7 +1272,7 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
           // Headshot with fallback CDN
           _PlayerHeadshot(
             playerId: p.id,
-            headshotUrl: p.headshotUrl,
+            headshotUrl: headshotUrl,
             size: 40,
             primaryColor: primaryColor,
             leagueCode: leagueCode,
@@ -1266,13 +1334,13 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             margin: const EdgeInsets.only(bottom: 16),
             decoration: BoxDecoration(
-              color: AppTheme.primaryBlue.withOpacity(isDarkMode ? 0.12 : 0.06),
+              color: _kSecondaryBlue.withOpacity(isDarkMode ? 0.12 : 0.06),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: AppTheme.primaryBlue.withOpacity(0.2)),
+              border: Border.all(color: _kSecondaryBlue.withOpacity(0.2)),
             ),
             child: Row(
               children: [
-                const Icon(Icons.analytics_outlined, size: 15, color: AppTheme.primaryBlue),
+                Icon(Icons.analytics_outlined, size: 15, color: _kSecondaryBlue),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -1467,90 +1535,6 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
 
         const SizedBox(height: 24),
       ],
-    );
-  }
-
-  Widget _buildAnalyticsBestPlayer(TeamAnalytics a, bool isDarkMode,
-      Color surfaceColor, Color primaryColor, {String leagueCode = 'eng.1'}) {
-    final player = a.bestPlayer!;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: surfaceColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: primaryColor.withOpacity(0.12), width: 1),
-      ),
-      child: Row(
-        children: [
-          _PlayerHeadshot(
-            playerId: player.id,
-            headshotUrl: player.headshotUrl,
-            size: 60,
-            primaryColor: primaryColor,
-            leagueCode: leagueCode,
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  player.name,
-                  style: TextStyle(
-                    fontSize: 15, fontWeight: FontWeight.w800,
-                    color: isDarkMode ? Colors.white : Colors.black87,
-                  ),
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    _buildBadge(player.position, primaryColor),
-                    const SizedBox(width: 8),
-                    if (player.nationality.isNotEmpty)
-                      Text(player.nationality,
-                          style: const TextStyle(fontSize: 11, color: AppTheme.lightGray)),
-                  ],
-                ),
-                if (a.bestPlayerPerformanceNote.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(a.bestPlayerPerformanceNote,
-                      style: TextStyle(
-                          fontSize: 10,
-                          color: isDarkMode ? Colors.white38 : Colors.black38,
-                          fontStyle: FontStyle.italic)),
-                ],
-              ],
-            ),
-          ),
-          if (a.bestPlayerRating != null) ...[
-            const SizedBox(width: 12),
-            Column(
-              children: [
-                Container(
-                  width: 48, height: 48,
-                  decoration: BoxDecoration(
-                    color: _safeBadgeColor(primaryColor).withOpacity(0.10),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Center(
-                    child: Text(
-                      a.bestPlayerRating!.toStringAsFixed(1),
-                      style: TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w900, color: _safeBadgeColor(primaryColor),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                const Text('RATING',
-                    style: TextStyle(fontSize: 8, fontWeight: FontWeight.w800,
-                        color: AppTheme.lightGray)),
-              ],
-            ),
-          ],
-        ],
-      ),
     );
   }
 

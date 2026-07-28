@@ -11,6 +11,7 @@ import 'package:livescore/models/team_model.dart';
 import 'package:livescore/models/player_model.dart';
 import 'package:livescore/models/search_model.dart';
 import 'package:livescore/utils/constants.dart';
+import 'package:livescore/utils/predefined_data.dart' as seed;
 
 // ── Football keyword filter ───────────────────────────────────────────────────
 bool _isFootballArticle(NewsArticle a) {
@@ -67,6 +68,10 @@ class AppProvider extends ChangeNotifier {
   bool _isSearching = false;
   SearchResponse _searchResults = SearchResponse();
   String _searchQuery = '';
+  // True whenever _searchResults came from the offline predefined dataset
+  // rather than the live API (API rate-limited/down, or query unmatched).
+  // The search screen uses this to show a small "showing suggestions" note.
+  bool _isSearchFallback = false;
 
   // ─── SEARCH CACHE ────────────────────────────────────────────────────────────
   final Map<String, SearchResponse> _searchCache = {};
@@ -76,6 +81,7 @@ class AppProvider extends ChangeNotifier {
   bool get isSearching => _isSearching;
   SearchResponse get searchResults => _searchResults;
   String get searchQuery => _searchQuery;
+  bool get isSearchFallback => _isSearchFallback;
 
   @override
   void dispose() {
@@ -129,6 +135,7 @@ class AppProvider extends ChangeNotifier {
 
   List<String> get favoriteTeamIds => _prefs.preferences.favoriteTeamIds;
   List<String> get favoriteLeagueIds => _prefs.preferences.favoriteLeagueIds;
+  List<Map<String, String>> get favoritePlayers => _prefs.preferences.favoritePlayers;
 
   List<Game> get favoriteTeamGames => _allGames
       .where((g) => favoriteTeamIds.contains(g.awayTeam.id) || favoriteTeamIds.contains(g.homeTeam.id))
@@ -577,6 +584,33 @@ class AppProvider extends ChangeNotifier {
 
   bool isTeamFavorite(String teamId) => _prefs.isTeamFavorite(teamId);
 
+  // ─── FAVORITE PLAYERS (mirrors toggleFavoriteTeam above) ────────────────
+
+  /// Removes a favorite player by id. Unlike teams, players aren't toggled
+  /// on from here (there's no bare "player id" to add — onboarding's
+  /// picker already has the full {id, name, image, team} map needed by
+  /// PreferencesService.addFavoritePlayer), so this only supports the
+  /// remove side, which is all Settings' delete-tile needs.
+  Future<void> removeFavoritePlayer(String playerId) async {
+    await _prefs.removeFavoritePlayer(playerId);
+    notifyListeners();
+  }
+
+  bool isPlayerFavorite(String playerId) => _prefs.isPlayerFavorite(playerId);
+
+  // ─── FAVORITE LEAGUES (mirrors toggleFavoriteTeam above) ────────────────
+
+  Future<void> toggleFavoriteLeague(String leagueCode) async {
+    if (favoriteLeagueIds.contains(leagueCode)) {
+      await _prefs.removeFavoriteLeague(leagueCode);
+    } else {
+      await _prefs.addFavoriteLeague(leagueCode);
+    }
+    notifyListeners();
+  }
+
+  bool isLeagueFavorite(String leagueCode) => _prefs.isLeagueFavorite(leagueCode);
+
   // ─── SILENT REFRESH FOR TODAY'S GAMES ────────────────────────────────────────
   bool _isLoadingBackground = false;
 
@@ -647,6 +681,7 @@ class AppProvider extends ChangeNotifier {
       _searchQuery = '';
       _searchResults = SearchResponse();
       _isSearching = false;
+      _isSearchFallback = false;
       notifyListeners();
       return;
     }
@@ -665,6 +700,7 @@ class AppProvider extends ChangeNotifier {
           _searchQuery = query;
           _searchResults = cached;
           _isSearching = false;
+          _isSearchFallback = false;
           notifyListeners();
           return;
         } else {
@@ -682,10 +718,43 @@ class AppProvider extends ChangeNotifier {
 
     try {
       print('[AppProvider] 🔍 Performing fresh search for: $query');
-      final results = await _sportService.search(query);
+      var results = await _sportService.search(query);
+      _isSearchFallback = false;
+
+      // ─── Predefined fallback ──────────────────────────────────────────────
+      // The live search can legitimately come back empty (rate-limited,
+      // API-Football's league/season restrictions, TheSportsDB missing a
+      // player, transient network blip, etc).
+      if (results.isEmpty) {
+        // 1) Try to match the query against our small seed dataset first
+        //    (e.g. user searched "Ronaldo" and it happens to be one of the
+        //    10 predefined famous players).
+        final matched = _predefinedSearchFallback(query);
+        if (matched.isNotEmpty) {
+          print('[AppProvider] ℹ️ Live search empty, using matched predefined data for: $query');
+          results = matched;
+          _isSearchFallback = true;
+        } else {
+          // 2) The query doesn't match anyone in the seed dataset either
+          //    (e.g. "Mohanad Lashin") — rather than leaving the user with
+          //    a dead "no results" screen when the live API is down/rate
+          //    limited, surface generic trending suggestions instead so
+          //    there's still something useful on screen.
+          final trending = _predefinedTrendingSuggestions();
+          if (trending.isNotEmpty) {
+            print('[AppProvider] ℹ️ Live search empty & no seed match, showing trending suggestions for: $query');
+            results = trending;
+            _isSearchFallback = true;
+          }
+        }
+      }
 
       // ─── Cache Results ──────────────────────────────────────────────────────
-      if (results.isNotEmpty) {
+      // Note: fallback results are intentionally NOT cached — they're a
+      // stand-in for a live API that's currently unavailable/rate-limited,
+      // and caching them would keep serving stale suggestions even after
+      // the live API recovers.
+      if (results.isNotEmpty && !_isSearchFallback) {
         _searchCache[cacheKey] = results;
         _searchCacheTimestamps[cacheKey] = DateTime.now();
 
@@ -712,10 +781,97 @@ class AppProvider extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('[AppProvider] ❌ Search error: $e');
-      _searchResults = SearchResponse();
+      // API call itself threw (network down, etc) — still try to serve
+      // something instead of an empty state.
+      final matched = _predefinedSearchFallback(query);
+      _searchResults = matched.isNotEmpty ? matched : _predefinedTrendingSuggestions();
+      _isSearchFallback = true;
       _isSearching = false;
       notifyListeners();
     }
+  }
+
+  /// Filters the offline predefined players/clubs dataset by [query],
+  /// matching on name, team name, or nationality (players) and name
+  /// (clubs). Used only as a fallback when the live search API fails or
+  /// returns nothing.
+  SearchResponse _predefinedSearchFallback(String query) {
+    final q = query.trim();
+    if (q.isEmpty) return SearchResponse();
+
+    final players = seed.famousPlayers.where((p) {
+      return seed.matchesPredefinedQuery(p['name'] as String, q) ||
+          seed.matchesPredefinedQuery(p['teamName'] as String, q) ||
+          seed.matchesPredefinedQuery(p['nationality'] as String, q);
+    }).map((p) {
+      return SearchResult(
+        id: p['id'] as String,
+        name: p['name'] as String,
+        displayName: p['name'] as String,
+        type: 'player',
+        imageUrl: p['imageUrl'] as String,
+        teamName: p['teamName'] as String,
+        teamId: p['teamId'] as String,
+        position: p['position'] as String,
+        jerseyNumber: p['jersey'] as String,
+        nationality: p['nationality'] as String,
+      );
+    }).toList();
+
+    final clubs = seed.famousClubs.where((c) {
+      return seed.matchesPredefinedQuery(c['name']!, q);
+    }).map((c) {
+      return SearchResult(
+        id: c['id']!,
+        name: c['name']!,
+        displayName: c['name']!,
+        type: 'team',
+        imageUrl: 'https://a.espncdn.com/i/teamlogos/soccer/500/${c['id']}.png',
+        leagueCode: c['league'],
+        leagueName: c['leagueName'],
+        abbreviation: c['name']!.length > 3 ? c['name']!.substring(0, 3).toUpperCase() : c['name']!.toUpperCase(),
+      );
+    }).toList();
+
+    return SearchResponse(players: players, teams: clubs);
+  }
+
+  /// Generic, unfiltered "popular right now" suggestions built from the
+  /// same offline seed dataset. Used when the live search is unavailable
+  /// AND the query doesn't match anything in our small predefined list —
+  /// e.g. searching an obscure player name while API-Football is
+  /// rate-limited. Better to show the user *something* recognizable than
+  /// a flat "no results found".
+  SearchResponse _predefinedTrendingSuggestions({int playerLimit = 6, int clubLimit = 4}) {
+    final players = seed.famousPlayers.take(playerLimit).map((p) {
+      return SearchResult(
+        id: p['id'] as String,
+        name: p['name'] as String,
+        displayName: p['name'] as String,
+        type: 'player',
+        imageUrl: p['imageUrl'] as String,
+        teamName: p['teamName'] as String,
+        teamId: p['teamId'] as String,
+        position: p['position'] as String,
+        jerseyNumber: p['jersey'] as String,
+        nationality: p['nationality'] as String,
+      );
+    }).toList();
+
+    final clubs = seed.famousClubs.take(clubLimit).map((c) {
+      return SearchResult(
+        id: c['id']!,
+        name: c['name']!,
+        displayName: c['name']!,
+        type: 'team',
+        imageUrl: 'https://a.espncdn.com/i/teamlogos/soccer/500/${c['id']}.png',
+        leagueCode: c['league'],
+        leagueName: c['leagueName'],
+        abbreviation: c['name']!.length > 3 ? c['name']!.substring(0, 3).toUpperCase() : c['name']!.toUpperCase(),
+      );
+    }).toList();
+
+    return SearchResponse(players: players, teams: clubs);
   }
 
   // lib/providers/app_provider.dart
@@ -742,6 +898,7 @@ class AppProvider extends ChangeNotifier {
     _searchQuery = '';
     _searchResults = SearchResponse();
     _isSearching = false;
+    _isSearchFallback = false;
     // Don't clear cache on clear
     notifyListeners();
   }

@@ -3,7 +3,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:livescore/models/team_model.dart';
 import 'package:livescore/services/sport_service.dart';
 import 'package:livescore/screens/team_detail_screen.dart';
-import 'package:livescore/utils/theme.dart';
 import 'package:livescore/utils/constants.dart';
 
 class TeamsScreen extends StatefulWidget {
@@ -35,18 +34,28 @@ class _TeamsScreenState extends State<TeamsScreen> {
   late Color _borderColor;
   late Color _textPrimary;
   late Color _textMuted;
-  late Color _accent;
+  late Color _accent;      // primary — green
+  late Color _accent2;     // secondary — blue
   late Color _inputBg;
+
+  bool _searchHasFocus = false;
 
   @override
   void initState() {
     super.initState();
     _loadTeams();
+    _searchFocus.addListener(_handleFocusChange);
+  }
+
+  void _handleFocusChange() {
+    if (!mounted) return;
+    setState(() => _searchHasFocus = _searchFocus.hasFocus);
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _searchFocus.removeListener(_handleFocusChange);
     _searchFocus.dispose();
     super.dispose();
   }
@@ -148,24 +157,24 @@ class _TeamsScreenState extends State<TeamsScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    _bgColor     = isDark ? const Color(0xFF0A0A0A) : const Color(0xFFF4F4F4);
-    _surfaceColor = isDark ? const Color(0xFF141414) : Colors.white;
-    _borderColor  = isDark ? const Color(0xFF252525) : const Color(0xFFE6E6E6);
-    _textPrimary  = isDark ? Colors.white            : const Color(0xFF0D0D0D);
-    _textMuted    = isDark ? const Color(0xFF5A5A5A) : const Color(0xFFAAAAAA);
-    _accent       = AppTheme.primaryBlue;
-    _inputBg      = isDark ? const Color(0xFF1C1C1C) : const Color(0xFFEEEEEE);
+    _bgColor     = isDark ? const Color(0xFF0A0B0A) : const Color(0xFFF4F6F5);
+    _surfaceColor = isDark ? const Color(0xFF141715) : Colors.white;
+    _borderColor  = isDark ? const Color(0xFF232823) : const Color(0xFFE7EBE8);
+    _textPrimary  = isDark ? Colors.white            : const Color(0xFF0D0F0D);
+    _textMuted    = isDark ? const Color(0xFF64706A) : const Color(0xFFA2ACA6);
+    // Primary = green, Secondary = blue.
+    _accent       = isDark ? const Color(0xFF22C55E) : const Color(0xFF15803D);
+    _accent2      = isDark ? const Color(0xFF3B82F6) : const Color(0xFF1D4ED8);
+    _inputBg      = isDark ? const Color(0xFF1B1F1C) : const Color(0xFFEEF1EF);
 
     return Scaffold(
       backgroundColor: _bgColor,
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildHeader(isDark),
-            Expanded(child: _buildBody()),
-          ],
-        ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildHeader(isDark),
+          Expanded(child: SafeArea(top: false, child: _buildBody())),
+        ],
       ),
     );
   }
@@ -180,77 +189,108 @@ class _TeamsScreenState extends State<TeamsScreen> {
         ? 'Could not load'
         : _searchQuery.isNotEmpty
         ? '${_filteredTeams.length} result${_filteredTeams.length == 1 ? '' : 's'}'
-        : '${_teams.length} teams';
+        : '${_teams.length} team${_teams.length == 1 ? '' : 's'}';
 
     return Container(
-      color: _surfaceColor,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Title + count ────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Text(
-                  'Teams',
-                  style: TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w700,
-                    color: _textPrimary,
-                    letterSpacing: -0.6,
-                    height: 1.1,
+      decoration: BoxDecoration(
+        color: _surfaceColor,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.28 : 0.045),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Mark + title + count pill ──────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [_accent, _accent.withOpacity(0.72)],
+                      ),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.shield_rounded, size: 17, color: Colors.white),
                   ),
-                ),
-                const Spacer(),
-                if (!_isLoading && _error == null)
+                  const SizedBox(width: 12),
                   Text(
-                    subtitle,
+                    'Teams',
                     style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: _textMuted,
+                      fontSize: 25,
+                      fontWeight: FontWeight.w800,
+                      color: _textPrimary,
+                      letterSpacing: -0.6,
+                      height: 1.1,
                     ),
                   ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 10),
-
-          // ── League label + dropdown ──────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Text(
-              'LEAGUE',
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                color: _textMuted,
-                letterSpacing: 0.8,
+                  const Spacer(),
+                  if (!_isLoading && _error == null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: _accent.withOpacity(isDark ? 0.16 : 0.10),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        subtitle,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: _accent,
+                          letterSpacing: -0.1,
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
-          ),
-          const SizedBox(height: 5),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: _buildLeagueDropdown(isDark),
-          ),
 
-          const SizedBox(height: 10),
+            const SizedBox(height: 16),
 
-          // ── Search bar (always visible) ──────────────────────────────
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: _buildSearchBar(),
-          ),
+            // ── League label + dropdown ──────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                'LEAGUE',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: _textMuted,
+                  letterSpacing: 1.0,
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _buildLeagueDropdown(isDark),
+            ),
 
-          const SizedBox(height: 10),
+            const SizedBox(height: 10),
 
-          // ── Bottom divider ───────────────────────────────────────────
-          Divider(height: 0.5, thickness: 0.5, color: _borderColor),
-        ],
+            // ── Search bar (always visible) ──────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _buildSearchBar(isDark),
+            ),
+
+            const SizedBox(height: 14),
+          ],
+        ),
       ),
     );
   }
@@ -259,18 +299,25 @@ class _TeamsScreenState extends State<TeamsScreen> {
     return Container(
       decoration: BoxDecoration(
         color: _inputBg,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: _borderColor, width: 0.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.18 : 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
           value: _selectedLeagueCode,
           isExpanded: true,
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-          icon: Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: _textMuted),
+          icon: Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: _accent2),
           style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: _textPrimary),
           dropdownColor: _surfaceColor,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(14),
           items: _leagues.map((league) {
             final code  = league['code']!;
             final isWC  = _isWorldCup(code);
@@ -310,7 +357,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: _accent,
+                        color: _accent2,
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: const Text(
@@ -334,18 +381,31 @@ class _TeamsScreenState extends State<TeamsScreen> {
     );
   }
 
-  Widget _buildSearchBar() {
-    return Container(
-      height: 42,
+  Widget _buildSearchBar(bool isDark) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      height: 44,
       decoration: BoxDecoration(
         color: _inputBg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _borderColor, width: 0.5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _searchHasFocus ? _accent.withOpacity(0.55) : _borderColor,
+          width: _searchHasFocus ? 1.2 : 0.5,
+        ),
+        boxShadow: _searchHasFocus
+            ? [BoxShadow(color: _accent.withOpacity(0.12), blurRadius: 12, offset: const Offset(0, 3))]
+            : [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.18 : 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Row(
         children: [
-          const SizedBox(width: 12),
-          Icon(Icons.search_rounded, size: 18, color: _textMuted),
+          const SizedBox(width: 14),
+          Icon(Icons.search_rounded, size: 18, color: _searchHasFocus ? _accent : _textMuted),
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
@@ -368,12 +428,12 @@ class _TeamsScreenState extends State<TeamsScreen> {
               onTap: _clearSearch,
               behavior: HitTestBehavior.opaque,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Icon(Icons.close_rounded, size: 16, color: _textMuted),
               ),
             )
           else
-            const SizedBox(width: 12),
+            const SizedBox(width: 14),
         ],
       ),
     );
@@ -429,8 +489,9 @@ class _TeamsScreenState extends State<TeamsScreen> {
               decoration: BoxDecoration(
                 color: _inputBg,
                 borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: _borderColor, width: 0.5),
               ),
-              child: Icon(Icons.wifi_off_rounded, size: 26, color: _textMuted),
+              child: Icon(Icons.wifi_off_rounded, size: 24, color: _textMuted),
             ),
             const SizedBox(height: 16),
             Text(
@@ -446,17 +507,25 @@ class _TeamsScreenState extends State<TeamsScreen> {
             const SizedBox(height: 24),
             SizedBox(
               width: double.infinity,
-              child: TextButton(
-                onPressed: _loadTeams,
-                style: TextButton.styleFrom(
-                  backgroundColor: _accent,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  gradient: LinearGradient(colors: [_accent, _accent.withOpacity(0.82)]),
+                  boxShadow: [
+                    BoxShadow(color: _accent.withOpacity(0.28), blurRadius: 14, offset: const Offset(0, 6)),
+                  ],
                 ),
-                child: const Text(
-                  'Try again',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                child: TextButton(
+                  onPressed: _loadTeams,
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text(
+                    'Try again',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
                 ),
               ),
             ),
@@ -478,8 +547,12 @@ class _TeamsScreenState extends State<TeamsScreen> {
             Container(
               width: 56,
               height: 56,
-              decoration: BoxDecoration(color: _inputBg, borderRadius: BorderRadius.circular(16)),
-              child: Icon(Icons.sports_soccer_rounded, size: 26, color: _textMuted),
+              decoration: BoxDecoration(
+                color: _inputBg,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: _borderColor, width: 0.5),
+              ),
+              child: Icon(Icons.sports_soccer_rounded, size: 24, color: _textMuted),
             ),
             const SizedBox(height: 16),
             Text(
@@ -585,7 +658,7 @@ class _SkeletonCardState extends State<_SkeletonCard>
       builder: (_, __) => Container(
         decoration: BoxDecoration(
           color: widget.surfaceColor,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: widget.shimmerColor, width: 0.5),
         ),
         child: Column(
@@ -690,18 +763,18 @@ class _TeamGridCardState extends State<_TeamGridCard> {
               color: _pressed
                   ? widget.surfaceColor.withOpacity(0.85)
                   : widget.surfaceColor,
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                color: _pressed ? widget.accent.withOpacity(0.35) : widget.borderColor,
-                width: _pressed ? 1.0 : 0.5,
+                color: _pressed ? widget.accent.withOpacity(0.4) : widget.borderColor,
+                width: _pressed ? 1.2 : 0.5,
               ),
               boxShadow: _pressed
                   ? []
                   : [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.06),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
                 ),
               ],
             ),

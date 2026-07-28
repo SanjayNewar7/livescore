@@ -25,13 +25,20 @@ class UserPreferencesAdapter extends TypeAdapter<UserPreferences> {
       liveScoreAlerts: fields[5] as bool,
       newsAlerts: fields[6] as bool,
       lastSelectedLeague: fields[7] as String,
+      // fields[8] is absent on data written before this field existed —
+      // default to an empty list rather than throwing.
+      favoritePlayers: fields[8] == null
+          ? const []
+          : (fields[8] as List)
+          .map((e) => Map<String, String>.from(e as Map))
+          .toList(),
     );
   }
 
   @override
   void write(BinaryWriter writer, UserPreferences obj) {
     writer
-      ..writeByte(8)
+      ..writeByte(9)
       ..writeByte(0)
       ..write(obj.favoriteTeamIds)
       ..writeByte(1)
@@ -47,7 +54,9 @@ class UserPreferencesAdapter extends TypeAdapter<UserPreferences> {
       ..writeByte(6)
       ..write(obj.newsAlerts)
       ..writeByte(7)
-      ..write(obj.lastSelectedLeague);
+      ..write(obj.lastSelectedLeague)
+      ..writeByte(8)
+      ..write(obj.favoritePlayers);
   }
 
   @override
@@ -56,7 +65,7 @@ class UserPreferencesAdapter extends TypeAdapter<UserPreferences> {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is UserPreferencesAdapter &&
-          runtimeType == other.runtimeType &&
-          typeId == other.typeId;
+          other is UserPreferencesAdapter &&
+              runtimeType == other.runtimeType &&
+              typeId == other.typeId;
 }

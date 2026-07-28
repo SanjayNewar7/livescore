@@ -1,4 +1,5 @@
 // lib/screens/settings_screen.dart
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -13,12 +14,14 @@ import 'package:livescore/services/quiz_service.dart';
 import 'package:livescore/models/quiz_model.dart';
 import 'package:livescore/models/user_profile_model.dart';
 import 'package:livescore/models/team_model.dart';
+import 'package:flutter/services.dart';
 
 import 'edit_profile_screen.dart';
 import 'favorites_screen.dart';
 import 'quiz_screen.dart';
 import 'privacy_policy_screen.dart';
 import 'developer_screen.dart';
+import 'team_detail_screen.dart';
 
 // ── App Links ──────────────────────────────────────────────────────
 class _AppLinks {
@@ -46,10 +49,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   UserProfile _profile = UserProfile.empty;
 
+  // Rotates the "Favorite Club" tile through UserPreferences.favoriteTeamIds
+  // (the multi-team list from onboarding / the favorites-screen manage
+  // sheet) every 15 seconds when more than one team is set. Single-team or
+  // no-team cases render statically - nothing to rotate through.
+  Timer? _favoriteTeamRotationTimer;
+  int _favoriteTeamRotationIndex = 0;
+
   @override
   void initState() {
     super.initState();
     _profile = ProfileService().profile;
+    _favoriteTeamRotationTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (!mounted) return;
+      setState(() => _favoriteTeamRotationIndex++);
+    });
+  }
+
+  @override
+  void dispose() {
+    _favoriteTeamRotationTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _openEditProfile() async {
@@ -100,6 +120,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   @override
+  @override
   Widget build(BuildContext context) {
     final provider = Provider.of<AppProvider>(context);
 
@@ -112,7 +133,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         centerTitle: false,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_rounded, size: 20),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            HapticFeedback.lightImpact();
+            // Navigate back to home screen by popping until the first route
+            Navigator.popUntil(context, (route) => route.isFirst);
+          },
         ),
       ),
       body: ListView(
@@ -173,6 +198,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     );
                   }
                   return _buildFavoriteTeamTile(team, provider);
+                }).toList(),
+              );
+            },
+          ),
+          const SizedBox(height: 20),
+
+          // ── Favorite Players (same list/tile format as Favorite Teams
+          //    above, sourced from the up-to-4 players picked in onboarding
+          //    or the favorites-screen manage sheet) ────────────────────
+          _buildSectionHeader('Favorite Players', Icons.person_outline),
+          const SizedBox(height: 8),
+          Consumer<AppProvider>(
+            builder: (context, provider, child) {
+              final favoritePlayers = provider.favoritePlayers;
+              if (favoritePlayers.isEmpty) {
+                return _buildEmptyFavoritesCard(
+                  title: 'No Favorite Players',
+                  subtitle: 'Go to Players tab to add your favorite players',
+                  icon: Icons.person_outline,
+                );
+              }
+              return _buildSettingsCard(
+                favoritePlayers.map((player) {
+                  return _buildFavoritePlayerTile(player, provider);
                 }).toList(),
               );
             },
@@ -321,32 +370,115 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildFavoritesRow() {
-    return Row(
-      children: [
-        Expanded(
-          child: _buildFavoriteChip(
-            label: 'Favorite Club',
-            name: _profile.hasFavoriteClub ? _profile.favoriteClubName ?? '' : 'Not set',
-            imageUrl: _profile.favoriteClubLogo,
-            fallbackIcon: Icons.shield_outlined,
-            accent: _blue,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildFavoriteChip(
-            label: 'Favorite Player',
-            name: _profile.hasFavoritePlayer ? _profile.favoritePlayerName ?? '' : 'Not set',
-            imageUrl: _profile.favoritePlayerImage,
-            fallbackIcon: Icons.person_outline,
-            accent: _green,
-          ),
-        ),
-      ],
+    return Consumer<AppProvider>(
+      builder: (context, provider, _) {
+        final favoriteTeamIds = provider.favoriteTeamIds;
+        final hasMultipleTeams = favoriteTeamIds.length > 1;
+
+        TeamInfo? rotatingTeam;
+        int shownPosition = 0;
+        if (favoriteTeamIds.isNotEmpty) {
+          shownPosition = _favoriteTeamRotationIndex % favoriteTeamIds.length;
+          rotatingTeam = _resolveFavoriteTeam(favoriteTeamIds[shownPosition], provider);
+        }
+
+        final clubLabel = hasMultipleTeams
+            ? 'Favorite Club (${shownPosition + 1}/${favoriteTeamIds.length})'
+            : 'Favorite Club';
+        final clubName = rotatingTeam != null
+            ? rotatingTeam.displayName
+            : (_profile.hasFavoriteClub ? _profile.favoriteClubName ?? '' : 'Not set');
+        final clubImage = rotatingTeam != null
+            ? (rotatingTeam.logo.isNotEmpty
+            ? rotatingTeam.logo
+            : 'https://a.espncdn.com/i/teamlogos/soccer/500/${rotatingTeam.id}.png')
+            : _profile.favoriteClubLogo;
+
+        return Row(
+          children: [
+            Expanded(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 400),
+                child: _buildFavoriteChip(
+                  key: ValueKey(rotatingTeam?.id ?? clubName),
+                  label: clubLabel,
+                  name: clubName,
+                  imageUrl: clubImage,
+                  fallbackIcon: Icons.shield_outlined,
+                  accent: _blue,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 400),
+                child: _buildRotatingFavoritePlayerChip(provider),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
+  /// Same rotate-every-15s pattern as the Favorite Club chip above, but
+  /// sourced from the up-to-4 players in UserPreferences.favoritePlayers
+  /// (onboarding / favorites-screen manage sheet) instead of the single
+  /// profile-level favorite. Falls back to the profile's favorite player
+  /// only when that list is empty.
+  Widget _buildRotatingFavoritePlayerChip(AppProvider provider) {
+    final favoritePlayers = provider.favoritePlayers;
+
+    if (favoritePlayers.isEmpty) {
+      return _buildFavoriteChip(
+        key: const ValueKey('profile_favorite_player'),
+        label: 'Favorite Player',
+        name: _profile.hasFavoritePlayer ? _profile.favoritePlayerName ?? '' : 'Not set',
+        imageUrl: _profile.favoritePlayerImage,
+        fallbackIcon: Icons.person_outline,
+        accent: _green,
+      );
+    }
+
+    final shownPosition = _favoriteTeamRotationIndex % favoritePlayers.length;
+    final player = favoritePlayers[shownPosition];
+    final hasMultiplePlayers = favoritePlayers.length > 1;
+
+    return _buildFavoriteChip(
+      key: ValueKey('fav_player_${player['id'] ?? shownPosition}'),
+      label: hasMultiplePlayers
+          ? 'Favorite Player (${shownPosition + 1}/${favoritePlayers.length})'
+          : 'Favorite Player',
+      name: player['name']?.trim().isNotEmpty == true ? player['name']! : 'Unknown Player',
+      imageUrl: player['image'],
+      fallbackIcon: Icons.person_outline,
+      accent: _green,
+    );
+  }
+
+  /// Resolves a favorite-team id to a TeamInfo using whatever AppProvider has
+  /// already loaded, falling back to a stub with the ESPN official logo URL
+  /// (same fallback pattern already used in the "Favorite Teams" list below).
+  TeamInfo _resolveFavoriteTeam(String teamId, AppProvider provider) {
+    try {
+      return provider.allTeams.firstWhere((t) => t.id == teamId);
+    } catch (_) {
+      return TeamInfo(
+        id: teamId,
+        name: teamId,
+        displayName: teamId,
+        abbreviation: teamId.length > 3 ? teamId.substring(0, 3).toUpperCase() : teamId,
+        logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/$teamId.png',
+        color: '#1A62C8',
+        alternateColor: '#FFFFFF',
+        record: '0-0-0',
+      );
+    }
+  }
+
   Widget _buildFavoriteChip({
+    Key? key,
     required String label,
     required String name,
     required String? imageUrl,
@@ -354,6 +486,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required Color accent,
   }) {
     return GestureDetector(
+      key: key,
       onTap: _openFavorites,
       child: Container(
         padding: const EdgeInsets.all(14),
@@ -632,6 +765,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Future<void> _openTeamDetail(TeamInfo team) async {
+    final provider = Provider.of<AppProvider>(context, listen: false);
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TeamDetailScreen(
+          team: team,
+          leagueCode: provider.currentLeagueCode,
+        ),
+      ),
+    );
+  }
+
   Widget _buildFavoriteTeamTile(TeamInfo team, AppProvider provider) {
     // ✅ FIX: Build ESPN official logo URL
     final logoUrl = team.logo.isNotEmpty
@@ -649,6 +795,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       onDismissed: (_) => provider.toggleFavoriteTeam(team.id),
       child: ListTile(
+        onTap: () => _openTeamDetail(team),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         leading: ClipRRect(
           borderRadius: BorderRadius.circular(8),
@@ -679,7 +826,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildEmptyFavoritesCard() {
+  Widget _buildEmptyFavoritesCard({
+    String title = 'No Favorite Teams',
+    String subtitle = 'Go to Teams tab to add your favorite teams',
+    IconData icon = Icons.favorite_border,
+  }) {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -693,13 +844,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             width: 56,
             height: 56,
             decoration: BoxDecoration(color: _blue.withOpacity(0.1), shape: BoxShape.circle),
-            child: const Icon(Icons.favorite_border, size: 28, color: _blue),
+            child: Icon(icon, size: 28, color: _blue),
           ),
           const SizedBox(height: 12),
-          const Text('No Favorite Teams', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _ink)),
+          Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _ink)),
           const SizedBox(height: 4),
           Text(
-            'Go to Teams tab to add your favorite teams',
+            subtitle,
             style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
             textAlign: TextAlign.center,
           ),
@@ -708,37 +859,176 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  /// Same tile format as [_buildFavoriteTeamTile] (swipe-to-delete list
+  /// tile, circular avatar leading, name + subtitle, trailing delete
+  /// button) applied to a favorite-player map ({id, name, image, team}).
+  Widget _buildFavoritePlayerTile(Map<String, String> player, AppProvider provider) {
+    final id = player['id'] ?? '';
+    final name = player['name']?.trim().isNotEmpty == true ? player['name']! : 'Unknown Player';
+    final team = player['team'] ?? '';
+    final imageUrl = player['image'] ?? '';
+    final initials = name.isNotEmpty ? name.substring(0, 1).toUpperCase() : '?';
+
+    return Dismissible(
+      key: Key('fav_player_$id'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        decoration: BoxDecoration(color: Colors.red.shade100, borderRadius: BorderRadius.circular(12)),
+        child: const Icon(Icons.delete_outline, color: Colors.red),
+      ),
+      onDismissed: (_) => provider.removeFavoritePlayer(id),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        leading: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: imageUrl.isNotEmpty
+              ? CachedNetworkImage(
+            imageUrl: imageUrl,
+            width: 36,
+            height: 36,
+            fit: BoxFit.cover,
+            placeholder: (context, url) => Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(color: _green.withOpacity(0.1), borderRadius: BorderRadius.circular(18)),
+              child: const Center(child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: _green))),
+            ),
+            errorWidget: (context, url, error) => Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(color: _green.withOpacity(0.1), borderRadius: BorderRadius.circular(18)),
+              child: Center(child: Text(initials, style: const TextStyle(color: _green, fontWeight: FontWeight.w700, fontSize: 13))),
+            ),
+          )
+              : Container(
+            width: 36, height: 36,
+            decoration: BoxDecoration(color: _green.withOpacity(0.1), borderRadius: BorderRadius.circular(18)),
+            child: Center(child: Text(initials, style: const TextStyle(color: _green, fontWeight: FontWeight.w700, fontSize: 13))),
+          ),
+        ),
+        title: Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _ink)),
+        subtitle: team.isNotEmpty ? Text(team, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)) : null,
+        trailing: IconButton(
+          icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+          onPressed: () => provider.removeFavoritePlayer(id),
+        ),
+      ),
+    );
+  }
+
   Widget _buildDivider() => Divider(height: 1, thickness: 1, color: Colors.grey.shade100);
 
   void _showClearCacheDialog(BuildContext context) async {
+    const Color danger = Color(0xFFDC2626);
+    const Color muted = Color(0xFF6B7A96);
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Clear Cache'),
-        content: const Text('Are you sure you want to clear all cached data? This will free up storage space.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel', style: TextStyle(color: Color(0xFF6B7A96))),
+      barrierColor: Colors.black.withOpacity(0.5),
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 30, offset: const Offset(0, 12)),
+            ],
           ),
-          TextButton(
-            onPressed: () async {
-              await CacheService().clearAllCache();
-              if (context.mounted) {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Cache cleared successfully'),
-                    backgroundColor: _green,
-                    behavior: SnackBarBehavior.floating,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ── Icon header, matches the card gradients used elsewhere
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.only(top: 28, bottom: 20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [danger.withOpacity(0.08), danger.withOpacity(0.02)],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
                   ),
-                );
-              }
-            },
-            child: const Text('Clear', style: TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.w600)),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                ),
+                child: Center(
+                  child: Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: danger.withOpacity(0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.delete_sweep_rounded, color: danger, size: 32),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Clear Cache',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: _ink),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'This removes cached scores, standings, and images to free up storage. '
+                          'Your profile, favorites, and quiz progress are not affected.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 13, color: Colors.grey.shade600, height: 1.4),
+                    ),
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: muted,
+                              side: BorderSide(color: Colors.grey.shade300),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            ),
+                            child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              await CacheService().clearAllCache();
+                              if (context.mounted) {
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Cache cleared successfully'),
+                                    backgroundColor: _green,
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                              }
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: danger,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            ),
+                            child: const Text('Clear Cache', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

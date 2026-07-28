@@ -1,15 +1,21 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:livescore/screens/search_screen.dart';
+import 'package:livescore/screens/favorites_screen.dart';
+import 'package:livescore/screens/news_screen.dart';
 import 'package:provider/provider.dart';
 
 import 'package:livescore/models/game_model.dart';
 import 'package:livescore/providers/app_provider.dart';
 import 'package:livescore/screens/settings_screen.dart';
 import 'package:livescore/screens/team_detail_screen.dart';
+import 'package:livescore/services/preferences_service.dart';
+import 'package:livescore/services/profile_service.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/widgets/game_card.dart';
 
@@ -18,18 +24,27 @@ import '../models/team_model.dart';
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 
 class _C {
-  static const blue      = Color(0xFF1A62C8);
-  static const blueMid   = Color(0xFF4A85D8);
-  static const blueLight = Color(0xFFE8F0FC);
-  static const blueDark  = Color(0xFF0D3F85);
+  // Primary — Green (brand / active states / CTAs)
+  static const primary      = Color(0xFF16A34A);
+  static const primaryMid   = Color(0xFF34B85F);
+  static const primaryLight = Color(0xFFE6F7EC);
+  static const primaryDark  = Color(0xFF0E7C39);
+  // Secondary — Blue (info badges, secondary accents)
+  static const secondary      = Color(0xFF1A62C8);
+  static const secondaryLight = Color(0xFFE8F0FC);
+  // Kept for backwards-compat with any lingering references
+  static const blue      = primary;
+  static const blueLight = primaryLight;
+
   static const white     = Color(0xFFFFFFFF);
   static const offWhite  = Color(0xFFF5F7FB);
+  static const searchFill = Color(0xFFF0F1F5);
   static const border    = Color(0xFFE2E8F2);
   static const text      = Color(0xFF0F1623);
   static const muted     = Color(0xFF6B7A96);
   static const liveRed   = Color(0xFFE53535);
   static const liveRedBg = Color(0xFFFEF2F2);
-  static const green     = Color(0xFF16A34A);
+  static const green     = primary;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -171,6 +186,11 @@ class _HomeScreenState extends State<HomeScreen>
   bool _hasTimeout = false;
   Timer? _loadingTimer;
 
+  // ─── Goal celebration tracking ───────────────────────────────────────────
+  final Map<String, int> _lastKnownScores = {};
+  bool _scoresInitialized = false;
+  OverlayEntry? _celebrationEntry;
+
   @override
   void initState() {
     super.initState();
@@ -187,10 +207,52 @@ class _HomeScreenState extends State<HomeScreen>
         context.read<AppProvider>().silentRefreshToday();
       }
     });
+
+    context.read<AppProvider>().addListener(_onProviderUpdate);
+  }
+
+  /// Watches for score increases on live matches while the user is on the
+  /// home screen and pops up a brief goal celebration.
+  void _onProviderUpdate() {
+    if (!mounted || _selectedFilter != 'TODAY') return;
+    final games = context.read<AppProvider>().allGames;
+    final liveGames = games.where((g) => g.status == 'STATUS_LIVE');
+
+    Game? scorer;
+    for (final g in liveGames) {
+      final total = (int.tryParse(g.homeScore) ?? 0) + (int.tryParse(g.awayScore) ?? 0);
+      final prev = _lastKnownScores[g.id];
+      if (_scoresInitialized && prev != null && total > prev && scorer == null) {
+        scorer = g;
+      }
+      _lastKnownScores[g.id] = total;
+    }
+    _scoresInitialized = true;
+
+    if (scorer != null) _showGoalCelebration(scorer);
+  }
+
+  void _showGoalCelebration(Game game) {
+    if (_celebrationEntry != null) return; // one celebration at a time
+    final overlayState = Overlay.of(context);
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => _GoalCelebrationOverlay(
+        game: game,
+        onDone: () {
+          entry.remove();
+          if (_celebrationEntry == entry) _celebrationEntry = null;
+        },
+      ),
+    );
+    _celebrationEntry = entry;
+    overlayState.insert(entry);
   }
 
   @override
   void dispose() {
+    context.read<AppProvider>().removeListener(_onProviderUpdate);
+    _celebrationEntry?.remove();
     _refreshTimer?.cancel();
     _tabController.dispose();
     _scrollController.dispose();
@@ -332,7 +394,7 @@ class _HomeScreenState extends State<HomeScreen>
                   },
                   onManageFavorites: () => Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                    MaterialPageRoute(builder: (_) => const FavoritesScreen()),
                   ),
                   scrollController: _scrollController,
                   emptyTitle: 'No league matches',
@@ -350,7 +412,10 @@ class _HomeScreenState extends State<HomeScreen>
                     setState(() => _selectedFilter = 'TODAY');
                     _loadDataProgressive();
                   },
-                  onManageFavorites: () {},
+                  onManageFavorites: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const FavoritesScreen()),
+                  ),
                   scrollController: _scrollController,
                   emptyTitle: 'No international matches',
                   emptySubtitle: 'No cups, qualifiers, or friendlies on this date',
@@ -437,12 +502,12 @@ class _TopBarState extends State<_TopBar> {
                                 ),
                               ),
                               TextSpan(
-                                text: 'Score',
+                                text: 'Goal',
                                 style: TextStyle(
                                   fontWeight: FontWeight.w800,
                                   fontSize: 26,
                                   letterSpacing: -0.5,
-                                  color: _C.blue,
+                                  color: _C.primary,
                                 ),
                               ),
                             ],
@@ -459,15 +524,7 @@ class _TopBarState extends State<_TopBar> {
                       ],
                     ),
                   ),
-                  _IconBtn(
-                    icon: Icons.search_rounded,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const SearchScreen()),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  if (hasLiveGames)
+                  if (hasLiveGames) ...[
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 5),
@@ -496,7 +553,57 @@ class _TopBarState extends State<_TopBar> {
                         ],
                       ),
                     ),
+                    const SizedBox(width: 10),
+                  ],
+                  _NotificationBell(
+                    showDot: hasLiveGames &&
+                        PreferencesService().preferences.liveScoreAlerts,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const NewsScreen()),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  _ProfileAvatar(
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                    ),
+                  ),
                 ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SearchScreen()),
+                ),
+                child: Container(
+                  height: 40,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: _C.searchFill,
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.search_rounded,
+                          size: 20, color: _C.muted.withOpacity(0.85)),
+                      const SizedBox(width: 7),
+                      Text(
+                        'Search teams, leagues, players',
+                        style: TextStyle(
+                          fontSize: 15,
+                          color: _C.muted.withOpacity(0.85),
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
             const SizedBox(height: 14),
@@ -593,6 +700,114 @@ class _TopBarState extends State<_TopBar> {
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
     ];
     return '${days[now.weekday - 1]}, ${now.day} ${months[now.month - 1]} ${now.year}';
+  }
+}
+
+// ─── Notification Bell ─────────────────────────────────────────────────────
+
+class _NotificationBell extends StatelessWidget {
+  final bool showDot;
+  final VoidCallback onTap;
+
+  const _NotificationBell({required this.showDot, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: const BoxDecoration(
+          shape: BoxShape.circle,
+          color: _C.offWhite,
+        ),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            const Center(
+              child: Icon(
+                Icons.notifications_none_rounded,
+                size: 20,
+                color: _C.text,
+              ),
+            ),
+            if (showDot)
+              Positioned(
+                top: 6,
+                right: 6,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _C.liveRed,
+                    border: Border.all(color: _C.white, width: 1.5),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Profile Avatar ─────────────────────────────────────────────────────────
+
+class _ProfileAvatar extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _ProfileAvatar({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final profile = ProfileService().profile;
+    final imagePath = profile.imagePath;
+    final hasPhoto = imagePath != null &&
+        imagePath.isNotEmpty &&
+        File(imagePath).existsSync();
+    final initials = _initialsFrom(profile.name);
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 36,
+        height: 36,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: _C.primaryLight,
+          border: Border.all(color: _C.primary.withOpacity(0.25), width: 1.5),
+        ),
+        child: hasPhoto
+            ? Image.file(File(imagePath), fit: BoxFit.cover)
+            : Center(
+          child: initials.isNotEmpty
+              ? Text(
+            initials,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: _C.primary,
+            ),
+          )
+              : const Icon(
+            Icons.person_rounded,
+            size: 18,
+            color: _C.primary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _initialsFrom(String? name) {
+    if (name == null || name.trim().isEmpty) return '';
+    final parts = name.trim().split(RegExp(r'\s+'));
+    final first = parts[0].isNotEmpty ? parts[0][0] : '';
+    final second = parts.length > 1 && parts[1].isNotEmpty ? parts[1][0] : '';
+    return (first + second).toUpperCase();
   }
 }
 
@@ -709,7 +924,7 @@ class _MatchList extends StatelessWidget {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: _C.blueLight,
+                    color: _C.secondaryLight,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
@@ -720,7 +935,7 @@ class _MatchList extends StatelessWidget {
                         height: 14,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: _C.blue,
+                          color: _C.secondary,
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -729,7 +944,7 @@ class _MatchList extends StatelessWidget {
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: _C.blue,
+                          color: _C.secondary,
                         ),
                       ),
                     ],
@@ -745,7 +960,7 @@ class _MatchList extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(
                       horizontal: 12, vertical: 7),
                   decoration: BoxDecoration(
-                      color: _C.blueLight,
+                      color: _C.secondaryLight,
                       borderRadius: BorderRadius.circular(8)),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -753,13 +968,13 @@ class _MatchList extends StatelessWidget {
                       SizedBox(
                         width: 13, height: 13,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: _C.blue),
+                            strokeWidth: 2, color: _C.secondary),
                       ),
                       const SizedBox(width: 8),
                       const Text('Loading more leagues…',
                           style: TextStyle(
                               fontSize: 11,
-                              color: _C.blue,
+                              color: _C.secondary,
                               fontWeight: FontWeight.w600)),
                     ],
                   ),
@@ -888,17 +1103,17 @@ class _LeagueHeader extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: _C.white,
-                border: Border.all(color: _C.blue, width: 1),
+                border: Border.all(color: _C.secondary, width: 1),
               ),
               child: ClipOval(
                 child: CachedNetworkImage(
                   imageUrl: AppConstants.fifaWorldCup2026LogoUrlSmall,
                   fit: BoxFit.cover,
                   placeholder: (context, url) => Container(
-                    color: _C.blueLight,
+                    color: _C.secondaryLight,
                   ),
                   errorWidget: (context, url, error) => Container(
-                    color: _C.blue,
+                    color: _C.secondary,
                     child: const Icon(
                       Icons.sports_soccer,
                       size: 16,
@@ -939,14 +1154,14 @@ class _LeagueHeader extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
             decoration: BoxDecoration(
-              color: _C.blueLight,
+              color: _C.secondaryLight,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
               '$gamesCount ${gamesCount == 1 ? 'match' : 'matches'}',
               style: const TextStyle(
                 fontSize: 10,
-                color: _C.blue,
+                color: _C.secondary,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -988,6 +1203,193 @@ class _LiveDotState extends State<_LiveDot> {
       ),
     );
   }
+}
+
+// ─── Goal Celebration Overlay ──────────────────────────────────────────────
+
+class _GoalCelebrationOverlay extends StatefulWidget {
+  final Game game;
+  final VoidCallback onDone;
+
+  const _GoalCelebrationOverlay({required this.game, required this.onDone});
+
+  @override
+  State<_GoalCelebrationOverlay> createState() =>
+      _GoalCelebrationOverlayState();
+}
+
+class _GoalCelebrationOverlayState extends State<_GoalCelebrationOverlay>
+    with TickerProviderStateMixin {
+  static const _displayDuration = Duration(milliseconds: 2600);
+
+  late final AnimationController _popController;
+  late final Animation<double> _pop;
+  late final AnimationController _confettiController;
+  late final List<_ConfettiPiece> _pieces;
+  Timer? _dismissTimer;
+  bool _fadingOut = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _popController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 550),
+    );
+    _pop = CurvedAnimation(parent: _popController, curve: Curves.elasticOut);
+
+    _confettiController = AnimationController(
+      vsync: this,
+      duration: _displayDuration,
+    );
+
+    final rnd = math.Random();
+    _pieces = List.generate(28, (_) => _ConfettiPiece(rnd));
+
+    _popController.forward();
+    _confettiController.forward();
+
+    _dismissTimer = Timer(_displayDuration - const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+      setState(() => _fadingOut = true);
+    });
+    Timer(_displayDuration, () {
+      if (mounted) widget.onDone();
+    });
+  }
+
+  @override
+  void dispose() {
+    _dismissTimer?.cancel();
+    _popController.dispose();
+    _confettiController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final g = widget.game;
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: AnimatedOpacity(
+          opacity: _fadingOut ? 0.0 : 1.0,
+          duration: const Duration(milliseconds: 400),
+          child: Stack(
+            children: [
+              AnimatedBuilder(
+                animation: _confettiController,
+                builder: (_, __) => CustomPaint(
+                  painter: _ConfettiPainter(_pieces, _confettiController.value),
+                  size: Size.infinite,
+                ),
+              ),
+              Center(
+                child: ScaleTransition(
+                  scale: _pop,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 30, vertical: 22),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.86),
+                      borderRadius: BorderRadius.circular(22),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('⚽', style: TextStyle(fontSize: 54)),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'GOAL!',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 26,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '${_teamLabel(g.homeTeam)}  ${g.homeScore} - ${g.awayScore}  ${_teamLabel(g.awayTeam)}',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _teamLabel(TeamInfo team) =>
+      team.abbreviation.isNotEmpty ? team.abbreviation : team.displayName;
+}
+
+class _ConfettiPiece {
+  final double x; // 0..1 horizontal start position
+  final double delay; // 0..1 fraction of animation before it starts falling
+  final double speed; // fall speed multiplier
+  final double drift; // horizontal sway amplitude
+  final double size;
+  final double rotationSpeed;
+  final Color color;
+
+  _ConfettiPiece(math.Random rnd)
+      : x = rnd.nextDouble(),
+        delay = rnd.nextDouble() * 0.3,
+        speed = 0.7 + rnd.nextDouble() * 0.6,
+        drift = 10 + rnd.nextDouble() * 20,
+        size = 5 + rnd.nextDouble() * 5,
+        rotationSpeed = (rnd.nextBool() ? 1 : -1) * (2 + rnd.nextDouble() * 4),
+        color = const [
+          _C.primary,
+          _C.secondary,
+          Color(0xFFFFC107),
+          Color(0xFFFF7043),
+          Color(0xFFAB47BC),
+        ][rnd.nextInt(5)];
+}
+
+class _ConfettiPainter extends CustomPainter {
+  final List<_ConfettiPiece> pieces;
+  final double progress; // 0..1
+
+  _ConfettiPainter(this.pieces, this.progress);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final p in pieces) {
+      final t = ((progress - p.delay).clamp(0.0, 1.0)) / (1 - p.delay).clamp(0.0001, 1.0);
+      if (t <= 0) continue;
+      final fallY = t * p.speed * size.height * 1.1;
+      final sway = math.sin(t * math.pi * 3) * p.drift;
+      final dx = p.x * size.width + sway;
+      final dy = fallY - size.height * 0.15;
+      if (dy < -20 || dy > size.height + 20) continue;
+
+      final paint = Paint()..color = p.color.withOpacity((1 - t * 0.6).clamp(0.0, 1.0));
+      canvas.save();
+      canvas.translate(dx, dy);
+      canvas.rotate(t * p.rotationSpeed);
+      canvas.drawRect(
+        Rect.fromCenter(center: Offset.zero, width: p.size, height: p.size * 0.5),
+        paint,
+      );
+      canvas.restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ConfettiPainter oldDelegate) =>
+      oldDelegate.progress != progress;
 }
 
 // ─── Favourites Strip ─────────────────────────────────────────────────────────
@@ -1242,10 +1644,11 @@ class _FavouritesStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final favTeamIds = provider.favoriteTeamIds.take(3).toList();
-    final favLeagueIds = provider.favoriteLeagueIds.take(3).toList();
+    final favTeamIds = provider.favoriteTeamIds.take(4).toList();
+    final favPlayers = provider.favoritePlayers.take(4).toList();
+    final favLeagueIds = provider.favoriteLeagueIds.take(4).toList();
 
-    if (favTeamIds.isEmpty && favLeagueIds.isEmpty) {
+    if (favTeamIds.isEmpty && favPlayers.isEmpty && favLeagueIds.isEmpty) {
       return _EmptyFavourites(onManage: onManage);
     }
 
@@ -1301,10 +1704,24 @@ class _FavouritesStrip extends StatelessWidget {
           emoji: league['flag'] ?? '⚽',
           label: (league['name'] ?? id).split(' ').first,
           leagueCode: code,
+          onTap: () => _navigateToStandings(context, code),
         );
       }
       return _FavCircleLeague(
-          logoUrl: '', emoji: '⚽', label: id, leagueCode: id);
+        logoUrl: '',
+        emoji: '⚽',
+        label: id,
+        leagueCode: id,
+        onTap: () => _navigateToStandings(context, id),
+      );
+    }).toList();
+
+    final playerCircles = favPlayers.map((p) {
+      return _FavCirclePlayer(
+        imageUrl: p['image'] ?? '',
+        label: p['name'] ?? 'Player',
+        onTap: onManage,
+      );
     }).toList();
 
     return Padding(
@@ -1342,7 +1759,16 @@ class _FavouritesStrip extends StatelessWidget {
                 ...teamCircles.map((c) =>
                     Padding(
                         padding: const EdgeInsets.only(right: 14), child: c)),
-                if (teamCircles.isNotEmpty && leagueCircles.isNotEmpty)
+                if (teamCircles.isNotEmpty && playerCircles.isNotEmpty)
+                  Container(
+                    width: 1, height: 60,
+                    color: _C.border,
+                    margin: const EdgeInsets.only(right: 14),
+                  ),
+                ...playerCircles.map((c) =>
+                    Padding(
+                        padding: const EdgeInsets.only(right: 14), child: c)),
+                if ((teamCircles.isNotEmpty || playerCircles.isNotEmpty) && leagueCircles.isNotEmpty)
                   Container(
                     width: 1, height: 60,
                     color: _C.border,
@@ -1411,6 +1837,10 @@ class _FavouritesStrip extends StatelessWidget {
         );
       }
     }
+  }
+
+  void _navigateToStandings(BuildContext context, String leagueCode) {
+    Navigator.pushNamed(context, '/standings', arguments: leagueCode);
   }
 
   static Color _parseColor(String hex) {
@@ -1516,54 +1946,120 @@ class _FavCircleLeague extends StatelessWidget {
   final String emoji;
   final String label;
   final String leagueCode;
+  final VoidCallback? onTap;
 
   const _FavCircleLeague({
     required this.logoUrl,
     required this.emoji,
     required this.label,
     required this.leagueCode,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 54,
-          height: 54,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: _C.blueLight,
-            border: Border.all(color: _C.border, width: 1.5),
-          ),
-          padding: const EdgeInsets.all(8),
-          child: logoUrl.isNotEmpty
-              ? CachedNetworkImage(
-            imageUrl: logoUrl,
-            fit: BoxFit.contain,
-            placeholder: (context, url) => const SizedBox(),
-            errorWidget: (context, url, error) =>
-                Text(emoji, style: const TextStyle(fontSize: 22)),
-          )
-              : Text(emoji, style: const TextStyle(fontSize: 22)),
-        ),
-        const SizedBox(height: 5),
-        SizedBox(
-          width: 54,
-          child: Text(
-            label,
-            style: const TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              color: _C.text,
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 54,
+            height: 54,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _C.secondaryLight,
+              border: Border.all(color: _C.secondary.withOpacity(0.3), width: 1.5),
             ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
+            padding: const EdgeInsets.all(8),
+            child: logoUrl.isNotEmpty
+                ? CachedNetworkImage(
+              imageUrl: logoUrl,
+              fit: BoxFit.contain,
+              placeholder: (context, url) => const SizedBox(),
+              errorWidget: (context, url, error) =>
+                  Text(emoji, style: const TextStyle(fontSize: 22)),
+            )
+                : Text(emoji, style: const TextStyle(fontSize: 22)),
           ),
-        ),
-      ],
+          const SizedBox(height: 5),
+          SizedBox(
+            width: 54,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: _C.text,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FavCirclePlayer extends StatelessWidget {
+  final String imageUrl;
+  final String label;
+  final VoidCallback? onTap;
+
+  const _FavCirclePlayer({
+    required this.imageUrl,
+    required this.label,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 54,
+            height: 54,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _C.primaryLight,
+              border: Border.all(color: _C.primary.withOpacity(0.3), width: 1.5),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: imageUrl.isNotEmpty
+                ? CachedNetworkImage(
+              imageUrl: imageUrl,
+              fit: BoxFit.cover,
+              placeholder: (context, url) => const SizedBox(),
+              errorWidget: (context, url, error) => Icon(
+                Icons.person_rounded,
+                size: 26,
+                color: _C.primary,
+              ),
+            )
+                : Icon(Icons.person_rounded, size: 26, color: _C.primary),
+          ),
+          const SizedBox(height: 5),
+          SizedBox(
+            width: 54,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: _C.text,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

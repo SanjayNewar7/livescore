@@ -6,33 +6,60 @@ import 'package:livescore/providers/app_provider.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/models/standing_model.dart';
 import 'package:livescore/models/league_leader_model.dart';
+import 'package:livescore/services/sportsdb_service.dart';
+import 'package:livescore/services/api_service.dart';
 
-// ─── Design Tokens (matches home_screen / game_detail_screen palette) ─────────
+import '../models/search_model.dart';
+import '../models/team_model.dart';
+
+// ─── Design Tokens ──────────────────────────────────────────────────────────
+// Premium, minimalist palette — primary GREEN, secondary BLUE.
 class _C {
-  static const blue      = Color(0xFF1A62C8);
-  static const blueDark  = Color(0xFF0D3F85);
-  static const blueLight = Color(0xFFE8F0FC);
+  // Primary — brand green. Used for selection states, primary buttons,
+  // positive stats and the dominant World Cup accent.
+  static const primary      = Color(0xFF0E9F6E);
+  static const primaryDark  = Color(0xFF0A7A55);
+  static const primaryLight = Color(0xFFE3F6EC);
+
+  // Secondary — accent blue. Used sparingly for contrast (table headers,
+  // the Top Scorer card, a handful of secondary highlights).
+  static const secondary      = Color(0xFF2A63E4);
+  static const secondaryDark  = Color(0xFF17408F);
+  static const secondaryLight = Color(0xFFE9F0FE);
+
+  // Neutrals
   static const white     = Color(0xFFFFFFFF);
-  static const offWhite  = Color(0xFFF5F7FB);
-  static const border    = Color(0xFFE2E8F2);
-  static const text      = Color(0xFF0F1623);
-  static const muted     = Color(0xFF6B7A96);
-  static const green     = Color(0xFF16A34A);
-  static const red       = Color(0xFFE53535);
-  static const amber     = Color(0xFFCA8A04);
-  static const gold      = Color(0xFFD4AF37);
+  static const offWhite  = Color(0xFFF6F9F8);
+  static const border    = Color(0xFFE3E9E6);
+  static const text      = Color(0xFF10201A);
+  static const muted     = Color(0xFF67766F);
+
+  // Status
+  static const red   = Color(0xFFDC3545);
+  static const amber = Color(0xFFC98A1B);
+
+  // Medal accents — reserved strictly for rank badges (1st/2nd/3rd), never
+  // used as a general brand color.
+  static const gold   = Color(0xFFC9A227);
+  static const silver = Color(0xFF93A0AA);
+  static const bronze = Color(0xFFB0703A);
 }
 
 class StandingsScreen extends StatefulWidget {
-  const StandingsScreen({super.key});
+  /// Optional league code to open the standings screen directly on
+  /// (e.g. 'uefa.champions'). Defaults to the FIFA World Cup view when
+  /// not provided, preserving existing behaviour.
+  final String? initialLeagueCode;
+
+  const StandingsScreen({super.key, this.initialLeagueCode});
 
   @override
   State<StandingsScreen> createState() => _StandingsScreenState();
 }
 
 class _StandingsScreenState extends State<StandingsScreen> {
-  // Default selection: FIFA World Cup 2026
-  String _selectedLeagueCode = 'fifa.world';
+  late String _selectedLeagueCode =
+      widget.initialLeagueCode ?? 'fifa.world';
   String _selectedSeason = AppConstants.standingsSeasons.first['value']!;
 
   bool _isLoading = false;
@@ -44,23 +71,199 @@ class _StandingsScreenState extends State<StandingsScreen> {
   String _selectedGroup = 'All';
   List<String> _groups = ['All'];
 
-  // FIFA World Cup 2026 is pinned to the FRONT of the strip. It already
-  // lives inside AppConstants.allLeagues (as part of internationalLeagues),
-  // but that puts it ~50 chips deep in the horizontal scroll — practically
-  // unreachable once you've scrolled away to look at another league. Pinning
-  // it first means it's always one tap away, in both directions.
-  //
-  // NOTE: we deliberately do this locally rather than reordering
-  // AppConstants.allLeagues itself — that combined list is also walked
-  // in api_service.dart's getGameDetail() brute-force league search, where
-  // club leagues need to stay first for performance on the common case.
+  // ─── FIFA World Cup 2026 — Final Tournament Stat Leaders ──────────────────
+  // Sourced from FIFA's official tournament statistics at the close of the
+  // competition. Enriched with SportsDB headshots at load time.
+  final List<Map<String, dynamic>> _worldCupTopScorers = [
+    {'name': 'Kylian Mbappé', 'goals': 10, 'team': 'France'},
+    {'name': 'Lionel Messi', 'goals': 8, 'team': 'Argentina'},
+    {'name': 'Jude Bellingham', 'goals': 7, 'team': 'England'},
+    {'name': 'Erling Haaland', 'goals': 7, 'team': 'Norway'},
+    {'name': 'Ousmane Dembélé', 'goals': 6, 'team': 'France'},
+  ];
+
+  final List<Map<String, dynamic>> _worldCupTopAssists = [
+    {'name': 'Michael Olise', 'assists': 7, 'team': 'France'},
+    {'name': 'Bruno Guimarães', 'assists': 4, 'team': 'Brazil'},
+    {'name': 'Martin Ødegaard', 'assists': 4, 'team': 'Norway'},
+    {'name': 'Kylian Mbappé', 'assists': 4, 'team': 'France'},
+    {'name': 'Brahim Díaz', 'assists': 4, 'team': 'Morocco'},
+  ];
+
+  final List<Map<String, dynamic>> _worldCupMostYellowCards = [
+    {'name': 'Issa Diop', 'cards': 3, 'team': 'Morocco'},
+    {'name': 'Mohanad Lashin', 'cards': 2, 'team': 'Egypt'},
+    {'name': 'Marawan Attia', 'cards': 2, 'team': 'Egypt'},
+    {'name': 'Luc De Fougerolles', 'cards': 2, 'team': 'Canada'},
+    {'name': 'Haissem Hassan', 'cards': 2, 'team': 'Egypt'},
+  ];
+
+  final List<Map<String, dynamic>> _worldCupMostRedCards = [
+    {'name': 'Jarell Quansah', 'cards': 1, 'team': 'England'},
+    {'name': 'Nathan Ngoy', 'cards': 1, 'team': 'Belgium'},
+    {'name': 'Tarik Muharemovic', 'cards': 1, 'team': 'Bosnia & Herzegovina'},
+    {'name': 'Agustín Canobbio', 'cards': 1, 'team': 'Uruguay'},
+    {'name': 'Piero Hincapié', 'cards': 1, 'team': 'Ecuador'},
+  ];
+
+  // In-memory cache for SportsDB headshots so we don't re-fetch a player
+  // that appears in more than one leaderboard (e.g. Mbappé).
+  final Map<String, String> _headshotCache = {};
+
+  // ─── FIFA World Cup 2026 — Final Standings ─────────────────────────────────
+  // Built directly from the official final tournament table (rank, team,
+  // MP, W, D, L, GF, GA, GD, PTS). The tournament is complete, so this is
+  // static data rather than a live API fetch — every row here mirrors the
+  // attached results CSV exactly. `iso` is the ISO 3166-1 alpha-2 code used
+  // to pull each nation's flag as its "team crest".
+  static const List<Map<String, dynamic>> _worldCup2026Table = [
+    {'rank': 1,  'team': 'Spain',                 'iso': 'es',    'mp': 8, 'w': 7, 'd': 1, 'l': 0, 'gf': 16, 'ga': 2,  'pts': 22},
+    {'rank': 2,  'team': 'Argentina',              'iso': 'ar',    'mp': 8, 'w': 6, 'd': 0, 'l': 2, 'gf': 19, 'ga': 8,  'pts': 18},
+    {'rank': 3,  'team': 'England',                'iso': 'gb-eng','mp': 8, 'w': 6, 'd': 1, 'l': 1, 'gf': 22, 'ga': 14, 'pts': 19},
+    {'rank': 4,  'team': 'France',                 'iso': 'fr',    'mp': 8, 'w': 5, 'd': 0, 'l': 3, 'gf': 19, 'ga': 11, 'pts': 15},
+    {'rank': 5,  'team': 'Morocco',                'iso': 'ma',    'mp': 5, 'w': 3, 'd': 2, 'l': 0, 'gf': 10, 'ga': 5,  'pts': 11},
+    {'rank': 6,  'team': 'Norway',                 'iso': 'no',    'mp': 5, 'w': 3, 'd': 1, 'l': 1, 'gf': 12, 'ga': 11, 'pts': 10},
+    {'rank': 7,  'team': 'Switzerland',             'iso': 'ch',    'mp': 5, 'w': 3, 'd': 1, 'l': 1, 'gf': 10, 'ga': 7,  'pts': 10},
+    {'rank': 8,  'team': 'Belgium',                 'iso': 'be',    'mp': 5, 'w': 2, 'd': 2, 'l': 1, 'gf': 9,  'ga': 6,  'pts': 8},
+    {'rank': 9,  'team': 'Mexico',                  'iso': 'mx',    'mp': 4, 'w': 3, 'd': 0, 'l': 1, 'gf': 7,  'ga': 2,  'pts': 9},
+    {'rank': 10, 'team': 'Netherlands',              'iso': 'nl',    'mp': 4, 'w': 2, 'd': 1, 'l': 1, 'gf': 11, 'ga': 6,  'pts': 7},
+    {'rank': 11, 'team': 'Brazil',                   'iso': 'br',    'mp': 4, 'w': 2, 'd': 1, 'l': 1, 'gf': 8,  'ga': 3,  'pts': 7},
+    {'rank': 12, 'team': 'Colombia',                 'iso': 'co',    'mp': 4, 'w': 2, 'd': 1, 'l': 1, 'gf': 5,  'ga': 3,  'pts': 7},
+    {'rank': 13, 'team': 'United States',            'iso': 'us',    'mp': 4, 'w': 2, 'd': 0, 'l': 2, 'gf': 9,  'ga': 6,  'pts': 6},
+    {'rank': 14, 'team': 'Canada',                   'iso': 'ca',    'mp': 4, 'w': 1, 'd': 1, 'l': 2, 'gf': 9,  'ga': 5,  'pts': 4},
+    {'rank': 15, 'team': 'Japan',                    'iso': 'jp',    'mp': 4, 'w': 1, 'd': 2, 'l': 1, 'gf': 8,  'ga': 5,  'pts': 5},
+    {'rank': 16, 'team': 'Paraguay',                 'iso': 'py',    'mp': 4, 'w': 1, 'd': 1, 'l': 2, 'gf': 3,  'ga': 6,  'pts': 4},
+    {'rank': 17, 'team': 'Germany',                  'iso': 'de',    'mp': 4, 'w': 2, 'd': 0, 'l': 2, 'gf': 11, 'ga': 6,  'pts': 6},
+    {'rank': 18, 'team': 'Croatia',                  'iso': 'hr',    'mp': 4, 'w': 2, 'd': 0, 'l': 2, 'gf': 6,  'ga': 7,  'pts': 6},
+    {'rank': 19, 'team': 'Ivory Coast',               'iso': 'ci',    'mp': 4, 'w': 2, 'd': 0, 'l': 2, 'gf': 5,  'ga': 4,  'pts': 6},
+    {'rank': 20, 'team': 'Portugal',                  'iso': 'pt',    'mp': 4, 'w': 1, 'd': 2, 'l': 1, 'gf': 7,  'ga': 3,  'pts': 5},
+    {'rank': 21, 'team': 'Egypt',                     'iso': 'eg',    'mp': 4, 'w': 1, 'd': 2, 'l': 1, 'gf': 6,  'ga': 5,  'pts': 5},
+    {'rank': 22, 'team': 'Australia',                 'iso': 'au',    'mp': 4, 'w': 1, 'd': 1, 'l': 2, 'gf': 2,  'ga': 4,  'pts': 4},
+    {'rank': 23, 'team': 'South Africa',              'iso': 'za',    'mp': 4, 'w': 1, 'd': 1, 'l': 2, 'gf': 3,  'ga': 5,  'pts': 4},
+    {'rank': 24, 'team': 'Bosnia & Herzegovina',      'iso': 'ba',    'mp': 4, 'w': 1, 'd': 1, 'l': 2, 'gf': 6,  'ga': 8,  'pts': 4},
+    {'rank': 25, 'team': 'DR Congo',                  'iso': 'cd',    'mp': 4, 'w': 1, 'd': 1, 'l': 2, 'gf': 5,  'ga': 5,  'pts': 4},
+    {'rank': 26, 'team': 'Sweden',                    'iso': 'se',    'mp': 4, 'w': 1, 'd': 1, 'l': 2, 'gf': 8,  'ga': 9,  'pts': 4},
+    {'rank': 27, 'team': 'Ecuador',                   'iso': 'ec',    'mp': 4, 'w': 1, 'd': 1, 'l': 2, 'gf': 3,  'ga': 4,  'pts': 4},
+    {'rank': 28, 'team': 'Austria',                   'iso': 'at',    'mp': 4, 'w': 1, 'd': 1, 'l': 2, 'gf': 7,  'ga': 8,  'pts': 4},
+    {'rank': 29, 'team': 'Algeria',                   'iso': 'dz',    'mp': 4, 'w': 1, 'd': 1, 'l': 2, 'gf': 6,  'ga': 9,  'pts': 4},
+    {'rank': 30, 'team': 'Ghana',                     'iso': 'gh',    'mp': 4, 'w': 1, 'd': 1, 'l': 2, 'gf': 3,  'ga': 4,  'pts': 4},
+    {'rank': 31, 'team': 'Cabo Verde',                'iso': 'cv',    'mp': 4, 'w': 0, 'd': 3, 'l': 1, 'gf': 3,  'ga': 4,  'pts': 3},
+    {'rank': 32, 'team': 'Senegal',                   'iso': 'sn',    'mp': 4, 'w': 1, 'd': 0, 'l': 3, 'gf': 9,  'ga': 8,  'pts': 3},
+    {'rank': 33, 'team': 'Iran',                      'iso': 'ir',    'mp': 3, 'w': 0, 'd': 3, 'l': 0, 'gf': 3,  'ga': 3,  'pts': 3},
+    {'rank': 34, 'team': 'Scotland',                  'iso': 'gb-sct','mp': 3, 'w': 1, 'd': 0, 'l': 2, 'gf': 1,  'ga': 4,  'pts': 3},
+    {'rank': 35, 'team': 'South Korea',                'iso': 'kr',    'mp': 3, 'w': 1, 'd': 0, 'l': 2, 'gf': 2,  'ga': 3,  'pts': 3},
+    {'rank': 36, 'team': 'Türkiye',                    'iso': 'tr',    'mp': 3, 'w': 1, 'd': 0, 'l': 2, 'gf': 3,  'ga': 5,  'pts': 3},
+    {'rank': 37, 'team': 'Uruguay',                    'iso': 'uy',    'mp': 3, 'w': 0, 'd': 2, 'l': 1, 'gf': 3,  'ga': 4,  'pts': 2},
+    {'rank': 38, 'team': 'Saudi Arabia',                'iso': 'sa',    'mp': 3, 'w': 0, 'd': 2, 'l': 1, 'gf': 1,  'ga': 5,  'pts': 2},
+    {'rank': 39, 'team': 'Czech Republic',              'iso': 'cz',    'mp': 3, 'w': 0, 'd': 1, 'l': 2, 'gf': 2,  'ga': 6,  'pts': 1},
+    {'rank': 40, 'team': 'Qatar',                       'iso': 'qa',    'mp': 3, 'w': 0, 'd': 1, 'l': 2, 'gf': 2,  'ga': 10, 'pts': 1},
+    {'rank': 41, 'team': 'Curaçao',                     'iso': 'cw',    'mp': 3, 'w': 0, 'd': 1, 'l': 2, 'gf': 1,  'ga': 9,  'pts': 1},
+    {'rank': 42, 'team': 'New Zealand',                 'iso': 'nz',    'mp': 3, 'w': 0, 'd': 1, 'l': 2, 'gf': 4,  'ga': 10, 'pts': 1},
+    {'rank': 43, 'team': 'Panama',                      'iso': 'pa',    'mp': 3, 'w': 0, 'd': 0, 'l': 3, 'gf': 0,  'ga': 4,  'pts': 0},
+    {'rank': 44, 'team': 'Jordan',                      'iso': 'jo',    'mp': 3, 'w': 0, 'd': 0, 'l': 3, 'gf': 3,  'ga': 8,  'pts': 0},
+    {'rank': 45, 'team': 'Haiti',                       'iso': 'ht',    'mp': 3, 'w': 0, 'd': 0, 'l': 3, 'gf': 2,  'ga': 8,  'pts': 0},
+    {'rank': 46, 'team': 'Uzbekistan',                  'iso': 'uz',    'mp': 3, 'w': 0, 'd': 0, 'l': 3, 'gf': 2,  'ga': 11, 'pts': 0},
+    {'rank': 47, 'team': 'Tunisia',                     'iso': 'tn',    'mp': 3, 'w': 0, 'd': 0, 'l': 3, 'gf': 2,  'ga': 12, 'pts': 0},
+    {'rank': 48, 'team': 'Iraq',                        'iso': 'iq',    'mp': 3, 'w': 0, 'd': 0, 'l': 3, 'gf': 1,  'ga': 12, 'pts': 0},
+  ];
+
+  /// Tournament stage label for a given final rank, used to power the
+  /// group filter chips for the World Cup table (Champion, Runner-up, ...).
+  static String _stageForRank(int rank) {
+    if (rank == 1) return 'Champion';
+    if (rank == 2) return 'Runner-up';
+    if (rank <= 4) return 'Semi-finalists';
+    if (rank <= 8) return 'Quarter-finalists';
+    if (rank <= 16) return 'Round of 16';
+    if (rank <= 32) return 'Round of 32';
+    return 'Group Stage';
+  }
+
+  static const List<String> _stageOrder = [
+    'Champion', 'Runner-up', 'Semi-finalists', 'Quarter-finalists',
+    'Round of 16', 'Round of 32', 'Group Stage',
+  ];
+
+  List<Standing> _buildWorldCupStandings() {
+    return _worldCup2026Table.map((row) {
+      final rank = row['rank'] as int;
+      final team = row['team'] as String;
+      final iso = row['iso'] as String;
+      final wins = row['w'] as int;
+      final draws = row['d'] as int;
+      final losses = row['l'] as int;
+      final mp = row['mp'] as int;
+      final gf = row['gf'] as int;
+      final ga = row['ga'] as int;
+      final gd = gf - ga;
+      final pts = row['pts'] as int;
+
+      return Standing(
+        rank: rank,
+        team: TeamInfo(
+          id: 'wc26-$iso',
+          name: team,
+          displayName: team,
+          abbreviation: team.length >= 3 ? team.substring(0, 3).toUpperCase() : team.toUpperCase(),
+          logo: 'https://flagcdn.com/w160/$iso.png',
+          color: '#0E9F6E',
+          alternateColor: '#2A63E4',
+          record: '$wins-$losses-$draws',
+        ),
+        wins: '$wins',
+        losses: '$losses',
+        ties: '$draws',
+        winPercentage: mp > 0 ? ((wins / mp) * 100).toStringAsFixed(1) : '0.0',
+        pointsFor: '$gf',
+        pointsAgainst: '$ga',
+        streak: '',
+        clinchedPlayoffs: rank <= 4,
+        conference: _stageForRank(rank),
+        division: '',
+        stats: const {},
+        points: pts,
+        goalsFor: gf,
+        goalsAgainst: ga,
+        goalDifference: gd,
+        matchesPlayed: mp,
+      );
+    }).toList();
+  }
+
   static List<Map<String, String>> _buildLeagueStrip() {
     final all = List<Map<String, String>>.from(AppConstants.allLeagues);
+
+    final removeCodes = {
+      'fin.1', 'isl.1', 'cze.1', 'pol.1', 'cro.1', 'ukr.1',
+      'hun.1', 'svk.1', 'cyp.1', 'kr.1', 'egy.1', 'fifa.friendly',
+      'conmebol.america', 'uefa.euro', 'uefa.nations',
+    };
+
+    all.removeWhere((league) => removeCodes.contains(league['code']));
+
+    final keepCodes = {
+      'fifa.world', 'eng.1', 'esp.1', 'ita.1', 'ger.1', 'fra.1',
+      'por.1', 'ned.1', 'tur.1', 'bel.1', 'sco.1',
+      'aut.1', 'sui.1', 'bra.1', 'usa.1', 'mex.1',
+      'arg.1', 'jpn.1', 'swe.1', 'nor.1', 'den.1',
+      'eng.2', 'eng.3', 'eng.4', 'isr.1', 'rus.1',
+      'rou.1', 'chn.1', 'ind.1', 'tha.1', 'aus.1',
+      'rsa.1', 'uefa.champions', 'uefa.europa', 'uefa.conference',
+      'conmebol.libertadores', 'conmebol.sudamericana',
+      'concacaf.champions', 'afc.champions', 'caf.champions',
+      'fifa.clubworld', 'fifa.worldq.uefa', 'fifa.worldq.conmebol',
+      'fifa.worldq.afc', 'fifa.worldq.caf', 'fifa.worldq.concacaf',
+      'concacaf.gold', 'afc.cup', 'caf.nations', 'ofc.nations',
+    };
+
+    all.retainWhere((league) => keepCodes.contains(league['code']));
+
     final wcIndex = all.indexWhere((l) => l['code'] == 'fifa.world');
     if (wcIndex > 0) {
       final wc = all.removeAt(wcIndex);
       all.insert(0, wc);
     }
+
     return all;
   }
 
@@ -76,7 +279,7 @@ class _StandingsScreenState extends State<StandingsScreen> {
 
   Future<void> _loadAll() async {
     await _loadStandings();
-    _loadLeaders(); // fire-and-forget — doesn't block the table
+    _loadLeaders();
   }
 
   Future<void> _loadStandings() async {
@@ -85,6 +288,22 @@ class _StandingsScreenState extends State<StandingsScreen> {
       _error = null;
       _selectedGroup = 'All';
     });
+
+    // The FIFA World Cup 2026 has concluded — use the final tournament
+    // table directly rather than fetching live standings.
+    if (_isWorldCup()) {
+      final standings = _buildWorldCupStandings();
+      final presentStages = standings.map((s) => s.conference).toSet();
+      final orderedGroups = _stageOrder.where(presentStages.contains).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _standings = standings;
+        _groups = ['All', ...orderedGroups];
+        _isLoading = false;
+      });
+      return;
+    }
 
     try {
       final provider = Provider.of<AppProvider>(context, listen: false);
@@ -119,7 +338,20 @@ class _StandingsScreenState extends State<StandingsScreen> {
       _isLoadingLeaders = true;
       _leaders = LeagueLeaders.empty;
     });
+
     try {
+      // For the World Cup, use our verified final tournament leaders,
+      // enriched with SportsDB headshots.
+      if (_isWorldCup()) {
+        final enrichedLeaders = await _enrichWorldCupLeaders();
+        if (!mounted) return;
+        setState(() {
+          _leaders = enrichedLeaders;
+          _isLoadingLeaders = false;
+        });
+        return;
+      }
+
       final provider = Provider.of<AppProvider>(context, listen: false);
       final leaders = await provider.fetchLeagueLeaders(
         _selectedLeagueCode,
@@ -134,6 +366,87 @@ class _StandingsScreenState extends State<StandingsScreen> {
       if (!mounted) return;
       setState(() => _isLoadingLeaders = false);
     }
+  }
+
+  /// Resolves a headshot for one World Cup leaderboard entry: SportsDB
+  /// first (transparent cutout / thumb), falling back to an ESPN search
+  /// match, with an in-memory cache so repeat names (e.g. Mbappé appearing
+  /// on both the scorers and assists boards) only hit the network once.
+  Future<String> _resolveHeadshot(
+      String name, SportsDbService sportsDb, ApiService apiService) async {
+    if (_headshotCache.containsKey(name)) return _headshotCache[name]!;
+
+    String headshot = '';
+    try {
+      final playerData = await sportsDb.searchPlayerByName(name);
+      if (playerData != null) {
+        headshot = playerData['strCutout']?.toString().trim() ?? '';
+        if (headshot.isEmpty) {
+          headshot = playerData['strThumb']?.toString().trim() ?? '';
+        }
+      }
+    } catch (e) {
+      print('[Standings] SportsDB headshot lookup failed for $name: $e');
+    }
+
+    if (headshot.isEmpty) {
+      try {
+        final searchResults = await apiService.search(name);
+        final player = searchResults.players.firstWhere(
+              (p) => p.displayName.contains(name),
+          orElse: () => SearchResult(
+            id: '',
+            name: name,
+            displayName: name,
+            type: 'player',
+            imageUrl: null,
+          ),
+        );
+        headshot = player.imageUrl ?? '';
+      } catch (_) {}
+    }
+
+    if (headshot.isNotEmpty) {
+      _headshotCache[name] = headshot;
+    }
+    return headshot;
+  }
+
+  Future<LeagueLeaders> _enrichWorldCupLeaders() async {
+    final sportsDb = SportsDbService();
+    final apiService = ApiService();
+
+    Future<List<LeaderEntry>> enrich(
+        List<Map<String, dynamic>> source, String statKey) async {
+      final entries = <LeaderEntry>[];
+      for (final row in source) {
+        final name = row['name'] as String;
+        final team = row['team'] as String;
+        final headshot = await _resolveHeadshot(name, sportsDb, apiService);
+        entries.add(LeaderEntry(
+          athleteId: name,
+          name: name,
+          headshot: headshot,
+          teamId: team,
+          teamAbbreviation: team.length >= 3 ? team.substring(0, 3).toUpperCase() : team.toUpperCase(),
+          teamLogo: '',
+          value: (row[statKey] as int).toDouble(),
+        ));
+      }
+      return entries;
+    }
+
+    final topScorers = await enrich(_worldCupTopScorers, 'goals');
+    final topAssists = await enrich(_worldCupTopAssists, 'assists');
+    final topYellowCards = await enrich(_worldCupMostYellowCards, 'cards');
+    final topRedCards = await enrich(_worldCupMostRedCards, 'cards');
+
+    return LeagueLeaders(
+      topScorers: topScorers,
+      topAssists: topAssists,
+      mostYellowCards: topYellowCards,
+      mostRedCards: topRedCards,
+    );
   }
 
   List<Standing> get _filteredStandings {
@@ -206,7 +519,7 @@ class _StandingsScreenState extends State<StandingsScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      isScrollControlled: true, // needed now that there are 10 seasons, not 4
+      isScrollControlled: true,
       builder: (_) => _SeasonPickerSheet(
         selected: _selectedSeason,
         onSelected: (v) {
@@ -239,11 +552,24 @@ class _StandingsScreenState extends State<StandingsScreen> {
     }
 
     return RefreshIndicator(
-      color: _C.blue,
+      color: _C.primary,
       onRefresh: _loadAll,
       child: ListView(
         padding: const EdgeInsets.only(bottom: 24),
         children: [
+          if (_isWorldCup())
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Text(
+                'FIFA WORLD CUP 2026 · FINAL STANDINGS',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
+                  color: _C.primary,
+                  letterSpacing: 1.1,
+                ),
+              ),
+            ),
           _StandingsTable(
             standings: _filteredStandings,
             isWorldCup: _isWorldCup(),
@@ -253,6 +579,7 @@ class _StandingsScreenState extends State<StandingsScreen> {
             leaders: _leaders,
             isLoading: _isLoadingLeaders,
             leagueName: _getLeagueName(),
+            isWorldCup: _isWorldCup(),
           ),
         ],
       ),
@@ -286,14 +613,16 @@ class _Header extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 14),
       child: Row(
         children: [
-          // League logo (official image, no emoji)
           Container(
             width: 38,
             height: 38,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: _C.blueLight,
-              border: Border.all(color: _C.border),
+              color: isWorldCup ? _C.primaryLight : _C.secondaryLight,
+              border: Border.all(
+                color: isWorldCup ? _C.primary : _C.border,
+                width: isWorldCup ? 2 : 1,
+              ),
             ),
             padding: const EdgeInsets.all(6),
             child: logoUrl != null
@@ -302,73 +631,106 @@ class _Header extends StatelessWidget {
               fit: BoxFit.contain,
               placeholder: (_, __) => const SizedBox(),
               errorWidget: (_, __, ___) =>
-              const Icon(Icons.emoji_events_rounded, size: 18, color: _C.blue),
+                  Icon(Icons.emoji_events_rounded, size: 18, color: isWorldCup ? _C.primary : _C.secondary),
             )
-                : const Icon(Icons.emoji_events_rounded, size: 18, color: _C.blue),
+                : Icon(Icons.emoji_events_rounded, size: 18, color: isWorldCup ? _C.primary : _C.secondary),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  leagueName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    color: _C.text,
-                    letterSpacing: -0.3,
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        leagueName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          color: _C.text,
+                          letterSpacing: -0.3,
+                        ),
+                      ),
+                    ),
+
+                  ],
                 ),
                 const SizedBox(height: 2),
-                const Text(
-                  'STANDINGS',
+                Text(
+                  isWorldCup ? 'FINAL TOURNAMENT TABLE' : 'STANDINGS',
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 1.4,
-                    color: _C.muted,
+                    color: isWorldCup ? _C.primary : _C.muted,
                   ),
                 ),
               ],
             ),
           ),
-          // Season selector pill
-          GestureDetector(
-            onTap: onSeasonTap,
-            child: Container(
+          if (isWorldCup)
+          // The tournament is complete — show a static badge rather than
+          // an interactive season selector.
+            Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: _C.blueLight,
+                color: _C.primaryLight,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: _C.blue.withOpacity(0.25)),
+                border: Border.all(color: _C.primary.withOpacity(0.3)),
               ),
-              child: Row(
+              child: const Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  Icon(Icons.check_circle_rounded, size: 13, color: _C.primary),
+                  SizedBox(width: 4),
                   Text(
-                    selectedSeasonLabel,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: _C.blue,
-                    ),
+                    'COMPLETED',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: _C.primary),
                   ),
-                  const SizedBox(width: 4),
-                  const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: _C.blue),
                 ],
               ),
+            )
+          else
+            GestureDetector(
+              onTap: onSeasonTap,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _C.secondaryLight,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: _C.secondary.withOpacity(0.25)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      selectedSeasonLabel,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: _C.secondary,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      size: 16,
+                      color: _C.secondary,
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
         ],
       ),
     );
   }
 }
 
-// ─── League Selector Strip (logos only — no emoji) ────────────────────────────
+// ─── League Selector Strip ──────────────────────────────────────────────────
 
 class _LeagueSelectorStrip extends StatelessWidget {
   final List<Map<String, String>> leagues;
@@ -393,8 +755,6 @@ class _LeagueSelectorStrip extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16),
           itemCount: leagues.length,
           separatorBuilder: (_, i) {
-            // Thin divider right after the pinned World Cup chip (index 0)
-            // to visually set it apart as "featured" from the rest.
             if (i == 0 && leagues[0]['code'] == 'fifa.world') {
               return const Padding(
                 padding: EdgeInsets.symmetric(vertical: 10),
@@ -423,13 +783,9 @@ class _LeagueSelectorStrip extends StatelessWidget {
                       height: 48,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: isSelected
-                            ? (isWC ? _C.gold.withOpacity(0.15) : _C.blueLight)
-                            : (isWC ? _C.gold.withOpacity(0.06) : _C.offWhite),
+                        color: isSelected ? _C.primaryLight : _C.offWhite,
                         border: Border.all(
-                          color: isSelected
-                              ? (isWC ? _C.gold : _C.blue)
-                              : (isWC ? _C.gold.withOpacity(0.4) : _C.border),
+                          color: isSelected ? _C.primary : _C.border,
                           width: isSelected ? 2 : 1.2,
                         ),
                       ),
@@ -455,9 +811,7 @@ class _LeagueSelectorStrip extends StatelessWidget {
                         style: TextStyle(
                           fontSize: 9.5,
                           fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
-                          color: isSelected
-                              ? (isWC ? _C.amber : _C.blue)
-                              : _C.muted,
+                          color: isSelected ? _C.primaryDark : _C.muted,
                         ),
                       ),
                     ),
@@ -472,13 +826,12 @@ class _LeagueSelectorStrip extends StatelessWidget {
   }
 
   String _shortName(String name) {
-    // Keep league chip labels compact
     if (name.length <= 12) return name;
     return name.split(' ').first;
   }
 }
 
-// ─── Season Picker bottom sheet ────────────────────────────────────────────────
+// ─── Season Picker ──────────────────────────────────────────────────────────
 
 class _SeasonPickerSheet extends StatelessWidget {
   final String selected;
@@ -520,9 +873,9 @@ class _SeasonPickerSheet extends StatelessWidget {
                       margin: const EdgeInsets.only(bottom: 8),
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
                       decoration: BoxDecoration(
-                        color: isSel ? _C.blueLight : _C.offWhite,
+                        color: isSel ? _C.secondaryLight : _C.offWhite,
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: isSel ? _C.blue : _C.border),
+                        border: Border.all(color: isSel ? _C.secondary : _C.border),
                       ),
                       child: Row(
                         children: [
@@ -530,10 +883,10 @@ class _SeasonPickerSheet extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: isSel ? FontWeight.w800 : FontWeight.w600,
-                                color: isSel ? _C.blue : _C.text,
+                                color: isSel ? _C.secondary : _C.text,
                               )),
                           const Spacer(),
-                          if (isSel) const Icon(Icons.check_circle_rounded, color: _C.blue, size: 18),
+                          if (isSel) const Icon(Icons.check_circle_rounded, color: _C.secondary, size: 18),
                         ],
                       ),
                     ),
@@ -548,7 +901,7 @@ class _SeasonPickerSheet extends StatelessWidget {
   }
 }
 
-// ─── Group Chips (e.g. World Cup groups A–H) ──────────────────────────────────
+// ─── Group Chips ─────────────────────────────────────────────────────────────
 
 class _GroupChips extends StatelessWidget {
   final List<String> groups;
@@ -581,9 +934,9 @@ class _GroupChips extends StatelessWidget {
               duration: const Duration(milliseconds: 150),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
               decoration: BoxDecoration(
-                color: isSelected ? _C.blue : _C.offWhite,
+                color: isSelected ? _C.primary : _C.offWhite,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: isSelected ? _C.blue : _C.border),
+                border: Border.all(color: isSelected ? _C.primary : _C.border),
               ),
               child: Text(
                 group,
@@ -601,7 +954,7 @@ class _GroupChips extends StatelessWidget {
   }
 }
 
-// ─── Standings Table ──────────────────────────────────────────────────────────
+// ─── Standings Table ────────────────────────────────────────────────────────
 
 class _StandingsTable extends StatelessWidget {
   final List<Standing> standings;
@@ -630,13 +983,13 @@ class _StandingsTable extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                 decoration: const BoxDecoration(
-                  color: _C.blueLight,
+                  color: _C.secondaryLight,
                   border: Border(bottom: BorderSide(color: _C.border)),
                 ),
                 child: Row(
                   children: [
                     _headerCell('#', 28),
-                    _headerCell('CLUB', 168, alignLeft: true),
+                    _headerCell('TEAM', 168, alignLeft: true),
                     _headerCell('MP', 36),
                     _headerCell('W', 30),
                     _headerCell('D', 30),
@@ -666,7 +1019,7 @@ class _StandingsTable extends StatelessWidget {
         style: const TextStyle(
           fontSize: 10.5,
           fontWeight: FontWeight.w800,
-          color: _C.blueDark,
+          color: _C.secondaryDark,
           letterSpacing: 0.4,
         ),
       ),
@@ -684,15 +1037,19 @@ class _StandingsTable extends StatelessWidget {
     final gd = s.goalDifference ?? (gf - ga);
     final pts = s.points ?? 0;
 
-    // Qualification zone highlight (top 4 styled distinctly, like most apps)
-    final rankColor = s.rank <= 4
-        ? _C.blue
-        : (s.rank <= 6 ? _C.green : _C.text);
+    // Medal colors reserved strictly for the top 3 ranks.
+    Color rankColor = _C.text;
+    if (s.rank == 1) rankColor = _C.gold;
+    else if (s.rank == 2) rankColor = _C.silver;
+    else if (s.rank == 3) rankColor = _C.bronze;
+    else if (s.rank <= 4) rankColor = _C.primary;
+
+    final isTop4 = isWorldCup && s.rank <= 4;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
       decoration: BoxDecoration(
-        color: isEven ? _C.white : _C.offWhite.withOpacity(0.5),
+        color: isEven ? _C.white : _C.offWhite.withOpacity(0.6),
         border: const Border(bottom: BorderSide(color: _C.border, width: 0.6)),
       ),
       child: Row(
@@ -702,10 +1059,29 @@ class _StandingsTable extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (s.rank <= 4)
-                  Container(width: 3, height: 16, color: _C.blue, margin: const EdgeInsets.only(right: 4)),
-                Text('${s.rank}',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: rankColor)),
+                if (isTop4)
+                  Container(
+                    width: 3,
+                    height: 16,
+                    color: s.rank == 1 ? _C.gold : (s.rank == 2 ? Colors.grey.shade600 : (s.rank == 3 ? _C.amber : _C.secondary)),
+                    margin: const EdgeInsets.only(right: 4),
+                  ),
+                Flexible(
+                  child: Text(
+                    '${s.rank}',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: rankColor,
+                    ),
+                    overflow: TextOverflow.visible,
+                  ),
+                ),
+                if (s.rank == 1)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 2),
+                    child: Icon(Icons.star_rounded, color: _C.gold, size: 10),
+                  ),
               ],
             ),
           ),
@@ -715,15 +1091,16 @@ class _StandingsTable extends StatelessWidget {
               children: [
                 Container(
                   width: 26, height: 26,
-                  decoration: BoxDecoration(color: _C.offWhite, shape: BoxShape.circle),
+                  decoration: const BoxDecoration(color: _C.offWhite, shape: BoxShape.circle),
                   child: ClipOval(
                     child: CachedNetworkImage(
                       imageUrl: s.team.logo.isNotEmpty && s.team.logo.startsWith('http')
                           ? s.team.logo
                           : 'https://a.espncdn.com/i/teamlogos/soccer/500/${s.team.id}.png',
-                      fit: BoxFit.contain,
+                      fit: BoxFit.cover,
                       placeholder: (_, __) => const SizedBox(),
-                      errorWidget: (_, __, ___) => const Icon(Icons.shield_rounded, size: 16, color: _C.muted),
+                      errorWidget: (_, __, ___) =>
+                          Icon(Icons.shield_rounded, size: 16, color: _C.muted),
                     ),
                   ),
                 ),
@@ -731,7 +1108,11 @@ class _StandingsTable extends StatelessWidget {
                 Expanded(
                   child: Text(
                     s.team.displayName.isNotEmpty ? s.team.displayName : s.team.name,
-                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: _C.text),
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: isTop4 ? FontWeight.w800 : FontWeight.w600,
+                      color: isTop4 ? _C.primaryDark : _C.text,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -740,18 +1121,22 @@ class _StandingsTable extends StatelessWidget {
             ),
           ),
           _cell('$mp', 36),
-          _cell('$wins', 30, color: _C.green),
+          _cell('$wins', 30, color: _C.primary),
           _cell('$draws', 30, color: _C.amber),
           _cell('$losses', 30, color: _C.red),
           _cell('$gf', 36),
           _cell('$ga', 36),
           _cell(gd > 0 ? '+$gd' : '$gd', 40,
-              color: gd > 0 ? _C.green : (gd < 0 ? _C.red : _C.muted), bold: true),
+              color: gd > 0 ? _C.primary : (gd < 0 ? _C.red : _C.muted), bold: true),
           SizedBox(
             width: 44,
             child: Text('$pts',
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _C.blue)),
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  color: isTop4 ? _C.primaryDark : _C.secondary,
+                )),
           ),
         ],
       ),
@@ -774,17 +1159,19 @@ class _StandingsTable extends StatelessWidget {
   }
 }
 
-// ─── Leaders Section (top scorer / assist / cards) ────────────────────────────
+// ─── Leaders Section ────────────────────────────────────────────────────────
 
 class _LeadersSection extends StatelessWidget {
   final LeagueLeaders leaders;
   final bool isLoading;
   final String leagueName;
+  final bool isWorldCup;
 
   const _LeadersSection({
     required this.leaders,
     required this.isLoading,
     required this.leagueName,
+    required this.isWorldCup,
   });
 
   @override
@@ -801,7 +1188,7 @@ class _LeadersSection extends StatelessWidget {
         child: const Center(
           child: SizedBox(
             width: 22, height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2, color: _C.blue),
+            child: CircularProgressIndicator(strokeWidth: 2, color: _C.primary),
           ),
         ),
       );
@@ -836,29 +1223,36 @@ class _LeadersSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-            padding: EdgeInsets.only(left: 4, bottom: 8),
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 8),
             child: Text(
-              'LEAGUE STAT LEADERS',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1.2, color: _C.muted),
+              isWorldCup ? 'WORLD CUP 2026 · STAT LEADERS' : 'LEAGUE STAT LEADERS',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.2,
+                color: isWorldCup ? _C.primary : _C.muted,
+              ),
             ),
           ),
           if (leaders.topScorers.isNotEmpty)
             _LeaderCard(
               title: 'Top Scorer',
               icon: Icons.sports_soccer_rounded,
-              accent: _C.blue,
+              accent: _C.secondary,
               entries: leaders.topScorers,
               statSuffix: 'G',
+              isWorldCup: isWorldCup,
             ),
           if (leaders.topAssists.isNotEmpty) ...[
             const SizedBox(height: 10),
             _LeaderCard(
               title: 'Top Assists',
               icon: Icons.assistant_direction_rounded,
-              accent: _C.green,
+              accent: _C.primary,
               entries: leaders.topAssists,
               statSuffix: 'A',
+              isWorldCup: isWorldCup,
             ),
           ],
           if (leaders.mostYellowCards.isNotEmpty) ...[
@@ -869,6 +1263,7 @@ class _LeadersSection extends StatelessWidget {
               accent: _C.amber,
               entries: leaders.mostYellowCards,
               statSuffix: '',
+              isWorldCup: isWorldCup,
             ),
           ],
           if (leaders.mostRedCards.isNotEmpty) ...[
@@ -879,6 +1274,7 @@ class _LeadersSection extends StatelessWidget {
               accent: _C.red,
               entries: leaders.mostRedCards,
               statSuffix: '',
+              isWorldCup: isWorldCup,
             ),
           ],
         ],
@@ -893,6 +1289,7 @@ class _LeaderCard extends StatelessWidget {
   final Color accent;
   final List<LeaderEntry> entries;
   final String statSuffix;
+  final bool isWorldCup;
 
   const _LeaderCard({
     required this.title,
@@ -900,6 +1297,7 @@ class _LeaderCard extends StatelessWidget {
     required this.accent,
     required this.entries,
     required this.statSuffix,
+    required this.isWorldCup,
   });
 
   @override
@@ -920,7 +1318,11 @@ class _LeaderCard extends StatelessWidget {
                 Icon(icon, size: 15, color: accent),
                 const SizedBox(width: 8),
                 Text(title,
-                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: _C.text)),
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: _C.text,
+                    )),
               ],
             ),
           ),
@@ -941,7 +1343,11 @@ class _LeaderCard extends StatelessWidget {
           SizedBox(
             width: 20,
             child: Text('${index + 1}',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _C.muted)),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: index == 0 ? _C.primary : _C.muted,
+                )),
           ),
           Container(
             width: 30, height: 30,
@@ -952,7 +1358,8 @@ class _LeaderCard extends StatelessWidget {
                 imageUrl: entry.headshot,
                 fit: BoxFit.cover,
                 placeholder: (_, __) => const SizedBox(),
-                errorWidget: (_, __, ___) => const Icon(Icons.person_rounded, size: 16, color: _C.muted),
+                errorWidget: (_, __, ___) =>
+                const Icon(Icons.person_rounded, size: 16, color: _C.muted),
               )
                   : const Icon(Icons.person_rounded, size: 16, color: _C.muted),
             ),
@@ -966,7 +1373,11 @@ class _LeaderCard extends StatelessWidget {
                   entry.name.isNotEmpty ? entry.name : 'Unknown',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _C.text),
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: _C.text,
+                  ),
                 ),
                 if (entry.teamAbbreviation.isNotEmpty)
                   Text(
@@ -979,12 +1390,16 @@ class _LeaderCard extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: _C.blueLight,
+              color: _C.primaryLight,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
               statSuffix.isNotEmpty ? '${entry.value.toInt()} $statSuffix' : '${entry.value.toInt()}',
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: _C.blue),
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: _C.primaryDark,
+              ),
             ),
           ),
         ],
@@ -993,7 +1408,7 @@ class _LeaderCard extends StatelessWidget {
   }
 }
 
-// ─── Loading / Error / Empty States ───────────────────────────────────────────
+// ─── Loading / Error / Empty States ────────────────────────────────────────
 
 class _LoadingState extends StatelessWidget {
   const _LoadingState();
@@ -1037,7 +1452,7 @@ class _ErrorState extends StatelessWidget {
             ElevatedButton(
               onPressed: () => onRetry(),
               style: ElevatedButton.styleFrom(
-                backgroundColor: _C.blue,
+                backgroundColor: _C.primary,
                 foregroundColor: _C.white,
                 elevation: 0,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),

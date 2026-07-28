@@ -21,17 +21,32 @@ void main() async {
 
   try {
     await Hive.initFlutter();
-
-    // ─── Initialize all services ──────────────────────────────────────────
-    await CacheService().init();
-    await PreferencesService().init();
-    await ProfileService().init();
-    await QuizService().init();
-
-    print('[Main] All services initialized successfully');
   } catch (e) {
-    print('[Main] Initialization error: $e');
+    print('[Main] Hive.initFlutter error: $e');
   }
+
+  try {
+    await CacheService().init();
+  } catch (e) {
+    print('[Main] CacheService init error: $e');
+  }
+  try {
+    await PreferencesService().init();
+  } catch (e) {
+    print('[Main] PreferencesService init error: $e');
+  }
+  try {
+    await ProfileService().init();
+  } catch (e) {
+    print('[Main] ProfileService init error: $e');
+  }
+  try {
+    await QuizService().init();
+  } catch (e) {
+    print('[Main] QuizService init error: $e');
+  }
+
+  print('[Main] Service initialization complete');
 
   runApp(const MyApp());
 }
@@ -77,6 +92,15 @@ class MyApp extends StatelessWidget {
       case '/onboarding':
         return MaterialPageRoute(
           builder: (_) => const OnboardingScreen(),
+          settings: settings,
+        );
+      case '/standings':
+      // Optional league code passed as the route argument (e.g. from
+      // tapping a favourited league on the home screen). Falls back to
+      // the default FIFA World Cup view when no argument is supplied.
+        final leagueCode = settings.arguments as String?;
+        return MaterialPageRoute(
+          builder: (_) => StandingsScreen(initialLeagueCode: leagueCode),
           settings: settings,
         );
       default:
@@ -159,7 +183,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
             label: 'Profile',
           ),
         ],
-        selectedItemColor: const Color(0xFF1A62C8),
+        selectedItemColor: const Color(0xFF16A34A),
         unselectedItemColor: const Color(0xFF6B7A96),
         backgroundColor: Colors.white,
         elevation: 8,

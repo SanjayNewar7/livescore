@@ -21,23 +21,36 @@ class ProfileService {
   static const String _profileKey = 'profile';
   static const String _imageFileName = 'profile_photo.jpg';
 
-  late Box _box;
-
   static final ProfileService _instance = ProfileService._internal();
   factory ProfileService() => _instance;
   ProfileService._internal();
 
   Future<void> init() async {
-    _box = await Hive.openBox(_boxName);
+    await _ensureBox();
+  }
+
+  /// Every read/write goes through this instead of a cached `late Box`
+  /// field. That field-based pattern is a footgun: if `init()` never ran
+  /// (e.g. an earlier, unrelated service's init() threw during app
+  /// startup and short-circuited a shared try/catch block in main.dart),
+  /// every subsequent call throws a silent `LateInitializationError` deep
+  /// inside an unawaited Future — no crash screen, no snackbar, nothing
+  /// visibly happens. Going through `Hive.box`/`Hive.openBox` directly
+  /// makes the service open its own box on first use if needed, so a
+  /// profile save works correctly even if startup init was skipped.
+  Future<Box> _ensureBox() async {
+    if (Hive.isBoxOpen(_boxName)) return Hive.box(_boxName);
+    return Hive.openBox(_boxName);
   }
 
   UserProfile get profile {
     if (!Hive.isBoxOpen(_boxName)) return UserProfile.empty;
-    return UserProfile.fromMap(_box.get(_profileKey) as Map?);
+    return UserProfile.fromMap(Hive.box(_boxName).get(_profileKey) as Map?);
   }
 
   Future<void> saveProfile(UserProfile profile) async {
-    await _box.put(_profileKey, profile.toMap());
+    final box = await _ensureBox();
+    await box.put(_profileKey, profile.toMap());
   }
 
   Future<UserProfile> updateBasicInfo({String? name, String? bio}) async {

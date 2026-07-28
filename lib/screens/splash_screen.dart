@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:livescore/providers/app_provider.dart';
-import 'package:livescore/services/preferences_service.dart';
 import 'package:provider/provider.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -17,18 +17,40 @@ class _SplashScreenState extends State<SplashScreen>
     with SingleTickerProviderStateMixin {
   late final AnimationController _logoController;
   late final Animation<double> _logoAnimation;
+  late final Animation<double> _fadeAnimation;
 
-  bool _isLoading = true;
   bool _hasError = false;
   String? _errorMessage;
 
   StreamSubscription<ConnectivityResult>? _connectivitySubscription;
 
-  static const Color _primaryBlue = Color(0xFF1565C0);
-  static const Color _primaryGreen = Color(0xFF2E7D32);
-  static const Color _background = Colors.white;
+  // ─── Rotating Slogans ────────────────────────────────────────────────
+  static const List<String> _slogans = [
+    ' Live Scores. Instant Updates.',
+    ' Your Ultimate Football Companion.',
+    ' Every Goal. Every Moment.',
+    ' Never Miss a Match Again.',
+    ' Real-time Stats at Your Fingertips.',
+    ' Global Football, One App.',
+    ' Where Football Lives.',
+    ' Score Predictions & Analysis.',
+    ' Football in Your Pocket.',
+    ' Faster Than the Final Whistle.',
+    '️ From Kickoff to Final Whistle.',
+    ' Your Matchday Essential.',
+    ' Live Tables, Live Thrills.',
+    ' The Pulse of Football.',
+    ' Your Daily Football Fix.',
+  ];
 
-  static const Duration _minimumSplashTime = Duration(milliseconds: 1500);
+  int _currentSloganIndex = 0;
+  Timer? _sloganTimer;
+
+  static const Color _primary = Color(0xFF16A34A);
+  static const Color _primaryDark = Color(0xFF0E7C39);
+  static const Color _white = Color(0xFFFFFFFF);
+
+  static const Duration _minimumSplashTime = Duration(milliseconds: 1800);
   final Stopwatch _stopwatch = Stopwatch();
 
   @override
@@ -39,11 +61,11 @@ class _SplashScreenState extends State<SplashScreen>
 
     _logoController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 1000),
     );
 
     _logoAnimation = Tween<double>(
-      begin: 0.85,
+      begin: 0.7,
       end: 1.0,
     ).animate(
       CurvedAnimation(
@@ -52,7 +74,26 @@ class _SplashScreenState extends State<SplashScreen>
       ),
     );
 
+    _fadeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(
+      CurvedAnimation(
+        parent: _logoController,
+        curve: const Interval(0.3, 1.0, curve: Curves.easeOut),
+      ),
+    );
+
     _logoController.forward();
+
+    // Start rotating slogans every 2.5 seconds
+    _sloganTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
+      if (mounted) {
+        setState(() {
+          _currentSloganIndex = (_currentSloganIndex + 1) % _slogans.length;
+        });
+      }
+    });
 
     _listenToConnectivity();
     _initializeApp();
@@ -66,7 +107,6 @@ class _SplashScreenState extends State<SplashScreen>
           if (result == ConnectivityResult.none) {
             setState(() {
               _hasError = true;
-              _isLoading = false;
               _errorMessage = 'No internet connection.\nPlease check your network.';
             });
           }
@@ -77,7 +117,6 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
 
     setState(() {
-      _isLoading = true;
       _hasError = false;
       _errorMessage = null;
     });
@@ -87,7 +126,6 @@ class _SplashScreenState extends State<SplashScreen>
 
       if (connectivity == ConnectivityResult.none) {
         setState(() {
-          _isLoading = false;
           _hasError = true;
           _errorMessage = 'No internet connection.\nPlease check your network.';
         });
@@ -111,13 +149,11 @@ class _SplashScreenState extends State<SplashScreen>
 
       if (!mounted) return;
 
-      // Use named route navigation instead of pushing new instance
       Navigator.pushReplacementNamed(context, '/home');
     } on TimeoutException {
       if (!mounted) return;
 
       setState(() {
-        _isLoading = false;
         _hasError = true;
         _errorMessage = 'Connection timeout.\nPlease try again.';
       });
@@ -125,7 +161,6 @@ class _SplashScreenState extends State<SplashScreen>
       if (!mounted) return;
 
       setState(() {
-        _isLoading = false;
         _hasError = true;
         _errorMessage = 'Something went wrong.\nPlease try again.';
       });
@@ -136,19 +171,31 @@ class _SplashScreenState extends State<SplashScreen>
   void dispose() {
     _connectivitySubscription?.cancel();
     _logoController.dispose();
+    _sloganTimer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _background,
-      body: SafeArea(
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 250),
-          child: _hasError
-              ? _buildErrorWidget()
-              : _buildSplashContent(),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF16A34A),
+              Color(0xFF0E7C39),
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            child: _hasError
+                ? _buildErrorWidget()
+                : _buildSplashContent(),
+          ),
         ),
       ),
     );
@@ -161,63 +208,123 @@ class _SplashScreenState extends State<SplashScreen>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            // ── App Icon ──────────────────────────────────────────────
             ScaleTransition(
               scale: _logoAnimation,
               child: Image.asset(
-                'assets/icons/splash_logo.png',
-                width: 110,
-                height: 110,
+                'assets/icons/app_icon_bg.png',
+                width: 120,
+                height: 120,
               ),
             ),
-            const SizedBox(height: 24),
-            RichText(
-              text: const TextSpan(
-                children: [
-                  TextSpan(
-                    text: 'LIVE',
-                    style: TextStyle(
-                      color: _primaryBlue,
-                      fontSize: 30,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1,
+            const SizedBox(height: 32),
+
+            // ── App Name ──────────────────────────────────────────────
+            FadeTransition(
+              opacity: _fadeAnimation,
+              child: const Text(
+                'LiveGoal',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 38,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // ── Rotating Slogan ──────────────────────────────────────
+            FadeTransition(
+              opacity: _fadeAnimation,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 600),
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, 0.3),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
+                    ),
+                  );
+                },
+                child: Container(
+                  key: ValueKey(_currentSloganIndex),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Text(
+                    _slogans[_currentSloganIndex],
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.3,
                     ),
                   ),
-                  TextSpan(
-                    text: 'SCORE',
+                ),
+              ),
+            ),
+            const SizedBox(height: 60),
+
+            // ── Loading Indicator ──────────────────────────────────────
+            FadeTransition(
+              opacity: _fadeAnimation,
+              child: Column(
+                children: [
+                  const SizedBox(
+                    width: 32,
+                    height: 32,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    'Loading matches...',
                     style: TextStyle(
-                      color: _primaryGreen,
-                      fontSize: 30,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1,
+                      color: Colors.white.withOpacity(0.8),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0.3,
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Live Football Scores',
-              style: TextStyle(
-                color: Colors.grey.shade600,
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(height: 60),
-            const SizedBox(
-              width: 28,
-              height: 28,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.5,
-                valueColor: AlwaysStoppedAnimation<Color>(_primaryGreen),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Loading...',
-              style: TextStyle(
-                color: Colors.grey.shade500,
-                fontSize: 13,
+
+            const SizedBox(height: 50),
+
+            // ── Footer ──────────────────────────────────────────────────
+            FadeTransition(
+              opacity: _fadeAnimation,
+              child: Column(
+                children: [
+                  Container(
+                    width: 60,
+                    height: 3,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.4),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Real-time scores from 50+ leagues worldwide',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.5),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -233,55 +340,89 @@ class _SplashScreenState extends State<SplashScreen>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
-              Icons.wifi_off_rounded,
-              size: 70,
-              color: _primaryBlue,
+            // ── Error Icon ──────────────────────────────────────────────
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.15),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.wifi_off_rounded,
+                size: 36,
+                color: Colors.white,
+              ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 28),
+
+            // ── Error Title ─────────────────────────────────────────────
             const Text(
-              'No Internet Connection',
+              'Connection Lost',
               style: TextStyle(
+                color: Colors.white,
                 fontSize: 22,
                 fontWeight: FontWeight.w700,
+                letterSpacing: -0.3,
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
+
+            // ── Error Message ──────────────────────────────────────────
             Text(
-              _errorMessage ?? '',
+              _errorMessage ?? 'Unable to connect to the server.',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Colors.grey.shade600,
+                color: Colors.white.withOpacity(0.8),
                 fontSize: 14,
-                height: 1.5,
+                height: 1.6,
+                fontWeight: FontWeight.w400,
               ),
             ),
-            const SizedBox(height: 30),
+            const SizedBox(height: 32),
+
+            // ── Retry Button ──────────────────────────────────────────
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: _initializeApp,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: _primaryBlue,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  backgroundColor: Colors.white,
+                  foregroundColor: _primary,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(14),
                   ),
+                  elevation: 0,
                 ),
                 child: const Text(
                   'Retry',
-                  style: TextStyle(fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                    letterSpacing: 0.5,
+                  ),
                 ),
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
+
+            // ── Skip Button ────────────────────────────────────────────
             TextButton(
               onPressed: () {
-                // Use named route navigation
                 Navigator.pushReplacementNamed(context, '/home');
               },
-              child: const Text('Continue with cached data'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white.withOpacity(0.7),
+              ),
+              child: Text(
+                'Continue with cached data',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.6),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ),
           ],
         ),

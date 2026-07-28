@@ -1,13 +1,12 @@
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
 android {
     namespace = "com.example.livescore"
-    compileSdk = 34  // ⚠️ Set explicitly to 34
+    compileSdk = 36  // ✅ Changed from 34 to 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -21,9 +20,9 @@ android {
 
     defaultConfig {
         applicationId = "com.example.livescore"
-        // ✅ FIX: Set minSdk to 21 explicitly (required for permission_handler)
-        minSdk = flutter.minSdkVersion  // ← CHANGE THIS
-        targetSdk = 34
+        // ✅ Keep minSdk as 21 (or flutter.minSdkVersion)
+        minSdk = flutter.minSdkVersion  // ✅ Keep this as 21
+        targetSdk = 36  // ✅ Changed from 34 to 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }

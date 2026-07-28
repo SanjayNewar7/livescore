@@ -6,6 +6,7 @@ import 'package:livescore/models/game_model.dart';
 import 'package:livescore/models/standing_model.dart';
 import 'package:livescore/screens/players_screen.dart';
 import 'package:livescore/services/sport_service.dart';
+import 'package:livescore/services/sportsdb_service.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/utils/helpers.dart';
 import 'package:livescore/utils/theme.dart';
@@ -182,10 +183,14 @@ class _GameDetailScreenState extends State<GameDetailScreen>
   late Future<Map<String, TeamAnalyticsData>> _analyticsFuture;
 
   final SportService _sport = SportService();
+  final SportsDbService _sportsDb = SportsDbService();
   Timer? _clockTimer;
   Timer? _analyticsTimer;
   int _liveTick = 0;
   Duration _countdown = Duration.zero;
+
+  // Cache for SportsDB headshots
+  Map<String, String> _sportsDbHeadshots = {};
 
   bool get _isLive     => widget.game.status == 'STATUS_LIVE' || widget.game.isActuallyLive;
   bool get _isDone     => widget.game.status == 'STATUS_FINAL';
@@ -229,8 +234,78 @@ class _GameDetailScreenState extends State<GameDetailScreen>
   void _refresh() {
     _detailFuture    = _sport.getGameDetail(widget.game.id);
     _standingsFuture = _fetchStandings();
-    _lineupFuture    = _fetchLineup();
+    _lineupFuture    = _fetchLineupWithHeadshots();
     _analyticsFuture = _fetchAnalytics();
+  }
+
+  /// Fetch lineup with SportsDB headshot enrichment
+  Future<MatchLineup?> _fetchLineupWithHeadshots() async {
+    try {
+      // First get the lineup from ESPN
+      final lineup = await _sport.getMatchLineup(widget.game.id);
+      if (lineup == null) return null;
+
+      // Get SportsDB headshots for both teams
+      final headshots = await _sportsDb.getLineupHeadshots(
+        homeEspnTeamId: widget.game.homeTeam.id,
+        awayEspnTeamId: widget.game.awayTeam.id,
+      );
+
+      // Cache the headshots
+      _sportsDbHeadshots = headshots;
+      print('[GameDetail] SportsDB headshots loaded: ${headshots.length}');
+
+      // Enrich home players with SportsDB headshots
+      final enrichedHomePlayers = lineup.homePlayers.map((player) {
+        final sdbHeadshot = headshots[player.id] ?? '';
+        if (sdbHeadshot.isNotEmpty && (player.headshot.isEmpty || player.headshot.contains('combiner'))) {
+          return LineupPlayer(
+            id: player.id,
+            name: player.name,
+            shortName: player.shortName,
+            number: player.number,
+            position: player.position,
+            isStarter: player.isStarter,
+            isHome: player.isHome,
+            rating: player.rating,
+            headshot: sdbHeadshot,
+          );
+        }
+        return player;
+      }).toList();
+
+      // Enrich away players with SportsDB headshots
+      final enrichedAwayPlayers = lineup.awayPlayers.map((player) {
+        final sdbHeadshot = headshots[player.id] ?? '';
+        if (sdbHeadshot.isNotEmpty && (player.headshot.isEmpty || player.headshot.contains('combiner'))) {
+          return LineupPlayer(
+            id: player.id,
+            name: player.name,
+            shortName: player.shortName,
+            number: player.number,
+            position: player.position,
+            isStarter: player.isStarter,
+            isHome: player.isHome,
+            rating: player.rating,
+            headshot: sdbHeadshot,
+          );
+        }
+        return player;
+      }).toList();
+
+      print('[GameDetail] Enriched ${enrichedHomePlayers.where((p) => p.headshot.isNotEmpty).length} home players');
+      print('[GameDetail] Enriched ${enrichedAwayPlayers.where((p) => p.headshot.isNotEmpty).length} away players');
+
+      return MatchLineup(
+        homeFormation: lineup.homeFormation,
+        awayFormation: lineup.awayFormation,
+        homePlayers: enrichedHomePlayers,
+        awayPlayers: enrichedAwayPlayers,
+      );
+    } catch (e) {
+      print('[GameDetail] Lineup fetch error: $e');
+      return null;
+    }
   }
 
   Future<Map<String, TeamAnalyticsData>> _fetchAnalytics() async {
@@ -290,11 +365,6 @@ class _GameDetailScreenState extends State<GameDetailScreen>
     return _sport.getStandings(forceRefresh: false);
   }
 
-  Future<MatchLineup?> _fetchLineup() async {
-    try { return await _sport.getMatchLineup(widget.game.id); }
-    catch (_) { return null; }
-  }
-
   @override
   void dispose() {
     _tabController.dispose();
@@ -311,9 +381,6 @@ class _GameDetailScreenState extends State<GameDetailScreen>
     return _C.blue;
   }
 
-  // Derives a darker "secondary" tone from a club's primary color so the
-  // header gradient always feels tied to the team's own identity, even
-  // when only a single brand color is available.
   Color _darken(Color c, [double amt = 0.28]) {
     final hsl = HSLColor.fromColor(c);
     return hsl.withLightness((hsl.lightness * (1 - amt)).clamp(0.0, 1.0)).toColor();
@@ -377,8 +444,6 @@ class _GameDetailScreenState extends State<GameDetailScreen>
               background: Stack(
                 fit: StackFit.expand,
                 children: [
-                  // Base gradient built from each club's own primary color,
-                  // deepened toward the edges for a clean, futuristic feel.
                   Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -395,7 +460,6 @@ class _GameDetailScreenState extends State<GameDetailScreen>
                       ),
                     ),
                   ),
-                  // Soft radial glow behind the score for depth/focus.
                   Align(
                     alignment: const Alignment(0, 0.35),
                     child: Container(
@@ -411,7 +475,6 @@ class _GameDetailScreenState extends State<GameDetailScreen>
                       ),
                     ),
                   ),
-                  // A hairline top-to-bottom fade so the AppBar title stays legible.
                   Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -447,7 +510,7 @@ class _GameDetailScreenState extends State<GameDetailScreen>
             Container(
               padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
               decoration: BoxDecoration(
-                color: _C.surface,  // ← MOVED HERE
+                color: _C.surface,
                 border: const Border(
                   bottom: BorderSide(color: _C.border, width: 1),
                 ),
@@ -798,7 +861,7 @@ class _Pill extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 1 — MATCH
+//  TAB 1 — MATCH (unchanged)
 // ═══════════════════════════════════════════════════════════════════════════════
 class _MatchTab extends StatelessWidget {
   final Game game;
@@ -1086,7 +1149,7 @@ class _VenueCard extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 2 — STATS
+//  TAB 2 — STATS (unchanged)
 // ═══════════════════════════════════════════════════════════════════════════════
 class _StatsTab extends StatefulWidget {
   final Game game;
@@ -1110,22 +1173,20 @@ class _StatsTab extends StatefulWidget {
 class _StatsTabState extends State<_StatsTab> {
   bool _showAll = false;
 
-  // ─── UPDATED STATS ORDER ──────────────────────────────────────────────
   static const List<String> _primaryKeys = [
-    'possessionPct',      // 1. Possession
-    'passes',             // 2. Total passes
-    'passingAccuracy',    // 3. Accurate passes (shown as %)
-    'totalShots',         // 4. Total shots
-    'shotsOnTarget',      // 5. Shots on target
-    'crosses',            // 6. Total crosses
-    'accurateCrosses',    // 7. Accurate crosses
-    'fouls',              // 8. Fouls
-    'offsides',            // 9. Offsides
-    'yellowCards',         // 10. Yellow cards
-    'redCards',             // 11. Red cards
+    'possessionPct',
+    'passes',
+    'passingAccuracy',
+    'totalShots',
+    'shotsOnTarget',
+    'crosses',
+    'accurateCrosses',
+    'fouls',
+    'offsides',
+    'yellowCards',
+    'redCards',
   ];
 
-  // Extra stats for "See more"
   static const List<String> _extraKeys = [
     'saves',
     'corners',
@@ -1434,7 +1495,6 @@ class _StatBarRow extends StatelessWidget {
     final total = aNum + hNum;
     final aFrac = total > 0 ? aNum / total : 0.5;
 
-    // Format display values
     final awayDisplay = isPossession || isPercentage ? '$awayValue%' : awayValue;
     final homeDisplay = isPossession || isPercentage ? '$homeValue%' : homeValue;
 
@@ -1487,8 +1547,9 @@ class _StatBarRow extends StatelessWidget {
 
   double _toNum(String v) => double.tryParse(v.replaceAll('%', '').replaceAll(',', '')) ?? 0;
 }
+
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 3 — LINEUP
+//  TAB 3 — LINEUP (with SportsDB headshots)
 // ═══════════════════════════════════════════════════════════════════════════════
 class _LineupTab extends StatelessWidget {
   final Future<MatchLineup?> lineupFuture;
@@ -1502,10 +1563,6 @@ class _LineupTab extends StatelessWidget {
     this.countdown = Duration.zero,
   });
 
-  // ESPN (and most providers) only publish confirmed lineups roughly
-  // 10-15 minutes before kickoff. Before that window there's genuinely
-  // nothing to show yet, so we tell the user when to check back instead
-  // of implying the data failed to load.
   static const _lineupAnnounceWindow = Duration(minutes: 15);
 
   @override
@@ -1663,10 +1720,7 @@ class _LineupViewState extends State<_LineupView> {
     );
   }
 
-// In game_detail_screen.dart, replace the _showPlayerSheet method:
-
   void _showPlayerSheet(BuildContext context, PitchPlayer player) {
-    // Navigate to full player screen
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -1835,7 +1889,7 @@ class _ToggleChip extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 4 — TIMELINE
+//  TAB 4 — TIMELINE (unchanged)
 // ═══════════════════════════════════════════════════════════════════════════════
 class _TimelineTab extends StatelessWidget {
   final Game game;
@@ -2114,7 +2168,7 @@ class _TimelineRow extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 5 — STANDINGS
+//  TAB 5 — STANDINGS (unchanged)
 // ═══════════════════════════════════════════════════════════════════════════════
 class _StandingsTab extends StatelessWidget {
   final Future<List<Standing>> future;
@@ -2283,7 +2337,7 @@ class _StandingsRow extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 6 — ANALYTICS
+//  TAB 6 — ANALYTICS (unchanged)
 // ═══════════════════════════════════════════════════════════════════════════════
 class _AnalyticsTab extends StatelessWidget {
   final Future<Map<String, TeamAnalyticsData>> analyticsFuture;
@@ -2418,7 +2472,6 @@ class _AnalyticsTab extends StatelessWidget {
         return ListView(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           children: [
-            // ── Live Status Banner ──────────────────────────────────────────
             if (isLive) ...[
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -2467,7 +2520,6 @@ class _AnalyticsTab extends StatelessWidget {
               const SizedBox(height: 14),
             ],
 
-            // ── AWAY TEAM PERFORMANCE ──────────────────────────────────────
             _TeamPerformanceCard(
               teamName: game.awayTeam.abbreviation,
               teamFullName: game.awayTeam.displayName,
@@ -2479,7 +2531,6 @@ class _AnalyticsTab extends StatelessWidget {
 
             const SizedBox(height: 14),
 
-            // ── HOME TEAM PERFORMANCE ──────────────────────────────────────
             _TeamPerformanceCard(
               teamName: game.homeTeam.abbreviation,
               teamFullName: game.homeTeam.displayName,
@@ -2491,7 +2542,6 @@ class _AnalyticsTab extends StatelessWidget {
 
             const SizedBox(height: 14),
 
-            // ── ATTACKING PRODUCTION ────────────────────────────────────────
             _ComparisonCard(
               title: 'ATTACKING PRODUCTION',
               children: [
@@ -2517,7 +2567,7 @@ class _AnalyticsTab extends StatelessWidget {
                   homeValue: '${homeData.shotsOnTarget} (${homeData.shotAccuracy.toStringAsFixed(0)}%)',
                   awayColor: awayColor,
                   homeColor: homeColor,
-                  icon: Icons.my_location,  // ← FIXED: Use Icons.target
+                  icon: Icons.my_location,
                 ),
                 _ComparisonRow(
                   label: 'SHOT CONVERSION',
@@ -2537,7 +2587,6 @@ class _AnalyticsTab extends StatelessWidget {
 
             const SizedBox(height: 14),
 
-            // ── DEFENSIVE & DISCIPLINE ──────────────────────────────────────
             _ComparisonCard(
               title: 'DEFENSIVE & DISCIPLINE',
               children: [
@@ -2581,7 +2630,6 @@ class _AnalyticsTab extends StatelessWidget {
 
             const SizedBox(height: 14),
 
-            // ── TACTICAL DOMINANCE ──────────────────────────────────────────
             _ComparisonCard(
               title: 'TACTICAL DOMINANCE',
               children: [
@@ -2621,38 +2669,14 @@ class _AnalyticsTab extends StatelessWidget {
   }
 
   Map<String, double> _calculateTeamAnalytics(TeamAnalyticsData data) {
-    // ── ATTACK SCORE ──────────────────────────────────────────────────────
-    // Improved attack metrics based on:
-    // 1. Goals scored (direct output) - 35% weight
-    // 2. Total shots (volume) - 20% weight
-    // 3. Shots on target (accuracy) - 20% weight
-    // 4. Shot conversion rate (efficiency) - 15% weight
-    // 5. Goals per shot (clinical finishing) - 10% weight
-
     double attackScore = 0;
-
-    // ── Goals (35% weight) ──────────────────────────────────────────────
-    // 0 goals = 0, 1 goal = 17.5, 2 goals = 35, 3+ goals = 52.5 (max 52.5)
     double goalsScore = (data.goals * 17.5).clamp(0.0, 52.5);
-
-    // ── Total Shots (20% weight) ────────────────────────────────────────
-    // 0 shots = 0, 10 shots = 15, 20+ shots = 30 (max 30)
     double shotsScore = (data.totalShots * 1.5).clamp(0.0, 30.0);
-
-    // ── Shots on Target (20% weight) ────────────────────────────────────
-    // 0 SOT = 0, 5 SOT = 20, 10+ SOT = 30 (max 30)
-    // FIXED: Convert int to double using .toDouble()
     double shotsOnTargetScore = (data.shotsOnTarget * 3.0).clamp(0.0, 30.0);
-
-    // ── Shot Conversion Rate (15% weight) ──────────────────────────────
-    // Goals / Total Shots * 100 (max 22.5 points)
     double conversionRate = data.totalShots > 0
         ? (data.goals / data.totalShots * 100)
         : 0.0;
     double conversionScore = (conversionRate / 100 * 22.5).clamp(0.0, 22.5);
-
-    // ── Goals per Shot Efficiency (10% weight) ──────────────────────────
-    // Shots on Target / Total Shots * 100 (max 15 points)
     double shotEfficiency = data.totalShots > 0
         ? (data.shotsOnTarget / data.totalShots * 100)
         : 0.0;
@@ -2661,50 +2685,20 @@ class _AnalyticsTab extends StatelessWidget {
     attackScore = (goalsScore + shotsScore + shotsOnTargetScore + conversionScore + efficiencyScore)
         .clamp(0.0, 100.0);
 
-    // ── DEFENSE SCORE ──────────────────────────────────────────────────────
-    // Saves (40%) + Clean Sheet Bonus (30%) + Fouls (30%)
     double defenseScore = 0;
-
-    // Saves contribution (max 40 points for 10+ saves)
-    // FIXED: Convert int to double using .toDouble()
     double savesScore = (data.saves * 4.0).clamp(0.0, 40.0);
-
-    // Clean sheet bonus (max 30 points if 0 goals conceded)
     double cleanSheetScore = data.saves >= 5 ? 20.0 : 0;
-
-    // Fouls (lower is better) - max 30 points for 0 fouls
     double foulsScore = ((1 - (data.fouls / 30.0)) * 30).clamp(0.0, 30.0);
-
     defenseScore = (savesScore + cleanSheetScore + foulsScore).clamp(0.0, 100.0);
 
-    // ── POSSESSION SCORE ──────────────────────────────────────────────────
     double possessionScore = data.possession.clamp(0.0, 100.0);
-
-    // ── MIDFIELD SCORE ────────────────────────────────────────────────────
-    // Passing Accuracy (60%) + Possession (40%)
     double midfieldScore = ((data.passingAccuracy * 0.6) + (data.possession * 0.4))
         .clamp(0.0, 100.0);
 
-    // ── DISCIPLINE SCORE ─────────────────────────────────────────────────
-    // Yellow cards (60%) + Red cards (40%)
     double disciplineScore = 0;
-
-    // Yellow cards (max 60 points for 0 yellows)
     double yellowScore = ((1 - (data.yellowCards / 10.0)) * 60).clamp(0.0, 60.0);
-
-    // Red cards (max 40 points for 0 reds)
     double redScore = ((1 - (data.redCards / 3.0)) * 40).clamp(0.0, 40.0);
-
     disciplineScore = (yellowScore + redScore).clamp(0.0, 100.0);
-
-    // ── Debug output ──────────────────────────────────────────────────────
-    print('[Analytics] Attack breakdown:');
-    print('  Goals: ${data.goals} → goalsScore: $goalsScore');
-    print('  Total Shots: ${data.totalShots} → shotsScore: $shotsScore');
-    print('  Shots on Target: ${data.shotsOnTarget} → sotScore: $shotsOnTargetScore');
-    print('  Conversion Rate: ${conversionRate.toStringAsFixed(1)}% → convScore: $conversionScore');
-    print('  Shot Efficiency: ${shotEfficiency.toStringAsFixed(1)}% → effScore: $efficiencyScore');
-    print('  Total Attack Score: $attackScore');
 
     return {
       'Attack': attackScore,
@@ -2754,7 +2748,6 @@ class _TeamPerformanceCard extends StatelessWidget {
       ),
       child: Column(
         children: [
-          // ── Header ────────────────────────────────────────────────────────
           Container(
             padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
             decoration: BoxDecoration(
@@ -2831,7 +2824,6 @@ class _TeamPerformanceCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                // Rating score
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
@@ -2857,15 +2849,12 @@ class _TeamPerformanceCard extends StatelessWidget {
               ],
             ),
           ),
-
-          // ── Radar Chart ──────────────────────────────────────────────────
-          // ── Radar Chart ──────────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.all(12),
             child: SizedBox(
               width: 200,
               height: 200,
-              child: CustomPaint(  // Wrap with CustomPaint
+              child: CustomPaint(
                 painter: _SingleRadarPainter(
                   stats: analytics,
                   color: color,
@@ -2874,7 +2863,6 @@ class _TeamPerformanceCard extends StatelessWidget {
               ),
             ),
           ),
-          // ── Stats Labels ──────────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             child: Wrap(
@@ -2948,7 +2936,6 @@ class _SingleRadarPainter extends CustomPainter {
     final int sides = keys.length;
     final double angle = (2 * math.pi) / sides;
 
-    // Grid lines
     final gridPaint = Paint()
       ..color = isDarkMode
           ? Colors.white.withOpacity(0.08)
@@ -2968,7 +2955,6 @@ class _SingleRadarPainter extends CustomPainter {
       canvas.drawPath(path, gridPaint);
     }
 
-    // Radial lines
     for (int i = 0; i < sides; i++) {
       final a = i * angle - (math.pi / 2);
       canvas.drawLine(
@@ -2978,7 +2964,6 @@ class _SingleRadarPainter extends CustomPainter {
       );
     }
 
-    // Build the data path first so we can size the gradient/glow to it.
     final secondary = _shadeLighten(color, 0.22);
     final dataPath = Path();
     for (int i = 0; i < sides; i++) {
@@ -2990,7 +2975,6 @@ class _SingleRadarPainter extends CustomPainter {
     }
     dataPath.close();
 
-    // Soft outer glow using the club's primary color for a futuristic feel.
     final glowPaint = Paint()
       ..color = color.withOpacity(0.22)
       ..style = PaintingStyle.stroke
@@ -2998,7 +2982,6 @@ class _SingleRadarPainter extends CustomPainter {
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
     canvas.drawPath(dataPath, glowPaint);
 
-    // Fill area — primary → lighter secondary gradient, radiating from center.
     final fillPaint = Paint()
       ..shader = RadialGradient(
         colors: [secondary.withOpacity(0.38), color.withOpacity(0.16)],
@@ -3016,7 +2999,6 @@ class _SingleRadarPainter extends CustomPainter {
     canvas.drawPath(dataPath, fillPaint);
     canvas.drawPath(dataPath, strokePaint);
 
-    // Data points — small dual-tone dots so each vertex pops.
     for (int i = 0; i < sides; i++) {
       final a = i * angle - (math.pi / 2);
       final val = (stats[keys[i]] ?? 0).clamp(0.0, 100.0) / 100.0;
@@ -3027,7 +3009,6 @@ class _SingleRadarPainter extends CustomPainter {
       canvas.drawCircle(pt, 1.6, Paint()..color = secondary);
     }
 
-    // Labels
     final textStyle = TextStyle(
       color: isDarkMode ? Colors.white.withOpacity(0.6) : Colors.black.withOpacity(0.6),
       fontSize: 9,
@@ -3264,7 +3245,6 @@ class _CardComparisonRow extends StatelessWidget {
               ),
             ),
           ),
-          // Away team cards
           Row(
             children: [
               if (awayYellow > 0 || awayRed > 0) ...[
@@ -3340,7 +3320,6 @@ class _CardComparisonRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          // Home team cards
           Row(
             children: [
               if (homeYellow > 0 || homeRed > 0) ...[

@@ -427,9 +427,15 @@ class _PlayerCircle extends StatelessWidget {
                         ? Image.network(
                       player.imageUrl!,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _Initials(name: player.name, color: teamColor),
+                      errorBuilder: (_, __, ___) => _PlayerFallbackAvatar(
+                        name: player.name,
+                        color: teamColor,
+                      ),
                     )
-                        : _Initials(name: player.name, color: teamColor),
+                        : _PlayerFallbackAvatar(
+                      name: player.name,
+                      color: teamColor,
+                    ),
                   ),
                 ),
 
@@ -510,21 +516,51 @@ class _PlayerCircle extends StatelessWidget {
   }
 }
 
-class _Initials extends StatelessWidget {
+/// Fallback avatar with initials or person icon
+class _PlayerFallbackAvatar extends StatelessWidget {
   final String name;
   final Color color;
-  const _Initials({required this.name, required this.color});
+
+  const _PlayerFallbackAvatar({
+    required this.name,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
     final parts = name.trim().split(' ');
-    final initials = parts.length >= 2
-        ? '${parts.first[0]}${parts.last[0]}'.toUpperCase()
-        : (name.isNotEmpty ? name[0].toUpperCase() : '?');
+    String initials = '?';
+    if (parts.length >= 2) {
+      initials = '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+    } else if (name.isNotEmpty) {
+      initials = name[0].toUpperCase();
+    }
+
+    // If initials is just '?' or empty, show a person icon
+    if (initials == '?' || initials.isEmpty) {
+      return Container(
+        color: color.withOpacity(0.12),
+        child: Center(
+          child: Icon(
+            Icons.person_rounded,
+            color: color.withOpacity(0.5),
+            size: 18,
+          ),
+        ),
+      );
+    }
+
     return Container(
       color: color.withOpacity(0.12),
       child: Center(
-        child: Text(initials, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w900)),
+        child: Text(
+          initials,
+          style: TextStyle(
+            color: color,
+            fontSize: 14,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
       ),
     );
   }
@@ -680,7 +716,7 @@ class _SubChip extends StatelessWidget {
         border: Border.all(color: const Color(0xFFDDE3F0)),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        // Avatar or jersey number
+        // Avatar
         Container(
           width: 26, height: 26,
           decoration: BoxDecoration(
@@ -689,9 +725,22 @@ class _SubChip extends StatelessWidget {
             border: Border.all(color: color.withOpacity(0.4)),
           ),
           child: (player.imageUrl != null && player.imageUrl!.isNotEmpty)
-              ? ClipOval(child: Image.network(player.imageUrl!, fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => _jerseyText(player.number, color)))
-              : _jerseyText(player.number, color),
+              ? ClipOval(
+            child: Image.network(
+              player.imageUrl!,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _SubChipFallbackAvatar(
+                name: player.name,
+                number: player.number,
+                color: color,
+              ),
+            ),
+          )
+              : _SubChipFallbackAvatar(
+            name: player.name,
+            number: player.number,
+            color: color,
+          ),
         ),
         const SizedBox(width: 7),
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -719,15 +768,56 @@ class _SubChip extends StatelessWidget {
     );
   }
 
-  Widget _jerseyText(String number, Color color) {
-    return Center(child: Text(number.isEmpty ? '?' : number,
-        style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w900)));
-  }
-
   Color _ratingColor(double r) {
     if (r >= 8.0) return const Color(0xFF16A34A);
     if (r >= 6.5) return const Color(0xFF1A56DB);
     if (r >= 5.0) return const Color(0xFFCA8A04);
     return const Color(0xFFDC2626);
+  }
+}
+
+/// Fallback avatar for substitute chips
+class _SubChipFallbackAvatar extends StatelessWidget {
+  final String name;
+  final String number;
+  final Color color;
+
+  const _SubChipFallbackAvatar({
+    required this.name,
+    required this.number,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = name.trim().split(' ');
+    String initials = '?';
+    if (parts.length >= 2) {
+      initials = '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+    } else if (name.isNotEmpty) {
+      initials = name[0].toUpperCase();
+    }
+
+    // If initials is just '?' or empty, show a person icon
+    if (initials == '?' || initials.isEmpty) {
+      return Center(
+        child: Icon(
+          Icons.person_rounded,
+          color: color.withOpacity(0.4),
+          size: 14,
+        ),
+      );
+    }
+
+    return Center(
+      child: Text(
+        initials,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
   }
 }

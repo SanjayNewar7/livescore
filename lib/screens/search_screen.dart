@@ -12,137 +12,32 @@ import 'package:livescore/providers/app_provider.dart';
 import 'package:livescore/screens/team_detail_screen.dart';
 import 'package:livescore/screens/players_screen.dart';
 import 'package:livescore/widgets/football_pitch_lineup.dart';
+import 'package:livescore/utils/theme.dart';
+import 'package:livescore/utils/predefined_data.dart' as seed;
 
-// ─── Design Tokens ────────────────────────────────────────────────────────────
+// ─── Design Tokens ───────────────────────────────────────────────────────────
+// Previously this screen used a one-off blue (0xFF1A62C8) that didn't match
+// the rest of the app. These now map directly onto AppTheme's palette
+// (see lib/utils/theme.dart) so Search looks like it belongs to the same
+// app as everywhere else.
 class _C {
-  static const blue      = Color(0xFF1A62C8);
-  static const blueLight = Color(0xFFE8F0FC);
-  static const white     = Color(0xFFFFFFFF);
-  static const offWhite  = Color(0xFFF5F7FB);
+  static const blue      = AppTheme.primaryBlue;   // was 0xFF1A62C8
+  static const blueLight = AppTheme.lightBlue;      // was 0xFFE8F0FC
+  static const white     = AppTheme.pureWhite;
+  static const offWhite  = AppTheme.extraLightGray; // was 0xFFF5F7FB
   static const border    = Color(0xFFE2E8F2);
   static const text      = Color(0xFF0F1623);
-  static const muted     = Color(0xFF6B7A96);
-  static const green     = Color(0xFF16A34A);
-  static const orange    = Color(0xFFF59E0B);
+  static const muted     = AppTheme.lightGray;      // was 0xFF6B7A96
+  static const green     = AppTheme.successGreen;   // was 0xFF16A34A
+  static const orange    = AppTheme.warningOrange;  // was 0xFFF59E0B
+
+  // ─── Dark mode variants ────────────────────────────────────────────────
+  static const darkSurface     = AppTheme.darkGray;
+  static const darkBackground  = AppTheme.pureBlack;
+  static const darkBorder      = Color(0xFF2C2C2E);
+  static const darkText        = AppTheme.pureWhite;
+  static const darkBlueLight   = Color(0xFF14243A);
 }
-
-// ─── PREDEFINED FAMOUS PLAYERS WITH CLOUDINARY IMAGE URLs ──────────────────
-const List<Map<String, dynamic>> famousPlayers = [
-  {
-    'id': '22774',
-    'name': 'Cristiano Ronaldo',
-    'teamName': 'Al Nassr',
-    'teamId': '12765',
-    'position': 'FW',
-    'jersey': '7',
-    'nationality': 'Portugal',
-    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784612724/62fa9c82669f48668f1dce7df614884b_pst8ln.jpg',
-  },
-  {
-    'id': '45843',
-    'name': 'Lionel Messi',
-    'teamName': 'Inter Miami',
-    'teamId': '16052',
-    'position': 'FW',
-    'jersey': '10',
-    'nationality': 'Argentina',
-    'imageUrl': 'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/45843.png&w=96&h=70&cb=1',
-  },
-  {
-    'id': '231388',
-    'name': 'Kylian Mbappé',
-    'teamName': 'Real Madrid',
-    'teamId': '86',
-    'position': 'FW',
-    'jersey': '9',
-    'nationality': 'France',
-    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784613639/5bcfbffeeca706844f78b3fb07b168af_mktcmp.jpg',
-  },
-  {
-    'id': '253989',
-    'name': 'Erling Haaland',
-    'teamName': 'Manchester City',
-    'teamId': '382',
-    'position': 'FW',
-    'jersey': '9',
-    'nationality': 'Norway',
-    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784612927/0a8c8599fb5d8dc4268666d6cd376303_vd0ieu.jpg',
-  },
-  {
-    'id': '362150',
-    'name': 'Lamine Yamal',
-    'teamName': 'Barcelona',
-    'teamId': '83',
-    'position': 'FW',
-    'jersey': '19',
-    'nationality': 'Spain',
-    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784613098/afbe98ac83049fec7a8f16be1df7e5fb_cpgcw3.jpg',
-  },
-  {
-    'id': '291281',
-    'name': 'Jude Bellingham',
-    'teamName': 'Real Madrid',
-    'teamId': '86',
-    'position': 'MF',
-    'jersey': '5',
-    'nationality': 'England',
-    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784613715/735ce113be1b125fa453f10721d95b60_kblifj.jpg',
-  },
-  {
-    'id': '142200',
-    'name': 'Harry Kane',
-    'teamName': 'Bayern Munich',
-    'teamId': '132',
-    'position': 'FW',
-    'jersey': '9',
-    'nationality': 'England',
-    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784613085/32433dade363bf766c66aeff2f34efbc_rz3fp4.jpg',
-  },
-  {
-    'id': '189281',
-    'name': 'Ousmane Dembélé',
-    'teamName': 'PSG',
-    'teamId': '160',
-    'position': 'FW',
-    'jersey': '10',
-    'nationality': 'France',
-    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784613084/c01348e00137360e854bdd89186d474c_anykow.jpg',
-  },
-  {
-    'id': '270126',
-    'name': 'Vinícius Júnior',
-    'teamName': 'Real Madrid',
-    'teamId': '86',
-    'position': 'FW',
-    'jersey': '7',
-    'nationality': 'Brazil',
-    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784613770/caba416e19a425b1285b73cd6466bd60_fx7so5.jpg',
-  },
-  {
-    'id': '280903',
-    'name': 'Bukayo Saka',
-    'teamName': 'Arsenal',
-    'teamId': '359',
-    'position': 'FW',
-    'jersey': '7',
-    'nationality': 'England',
-    'imageUrl': 'https://res.cloudinary.com/dkk7zqgnz/image/upload/v1784613083/4b187e38059de04124d37a6139938e02_ljtp9a.jpg',
-  },
-];
-
-// ─── PREDEFINED FAMOUS CLUBS ──────────────────────────────────────────────
-const List<Map<String, String>> famousClubs = [
-  {'id': '86', 'name': 'Real Madrid', 'league': 'esp.1', 'leagueName': 'La Liga'},
-  {'id': '83', 'name': 'Barcelona', 'league': 'esp.1', 'leagueName': 'La Liga'},
-  {'id': '359', 'name': 'Arsenal', 'league': 'eng.1', 'leagueName': 'Premier League'},
-  {'id': '360', 'name': 'Manchester United', 'league': 'eng.1', 'leagueName': 'Premier League'},
-  {'id': '382', 'name': 'Manchester City', 'league': 'eng.1', 'leagueName': 'Premier League'},
-  {'id': '160', 'name': 'PSG', 'league': 'fra.1', 'leagueName': 'Ligue 1'},
-  {'id': '132', 'name': 'Bayern Munich', 'league': 'ger.1', 'leagueName': 'Bundesliga'},
-  {'id': '111', 'name': 'Juventus', 'league': 'ita.1', 'leagueName': 'Serie A'},
-  {'id': '363', 'name': 'Chelsea', 'league': 'eng.1', 'leagueName': 'Premier League'},
-  {'id': '364', 'name': 'Liverpool', 'league': 'eng.1', 'leagueName': 'Premier League'},
-];
 
 // ─── Search Screen ───────────────────────────────────────────────────────────
 
@@ -174,7 +69,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   void _buildPredefinedData() {
-    final players = famousPlayers.map((p) {
+    final players = seed.famousPlayers.map((p) {
       return SearchResult(
         id: p['id'] as String,
         name: p['name'] as String,
@@ -189,7 +84,7 @@ class _SearchScreenState extends State<SearchScreen> {
       );
     }).toList();
 
-    final clubs = famousClubs.map((c) {
+    final clubs = seed.famousClubs.map((c) {
       return SearchResult(
         id: c['id']!,
         name: c['name']!,
@@ -232,29 +127,38 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _C.offWhite,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _SearchBar(
-              controller: _searchController,
-              focusNode: _focusNode,
-              onSearch: _performSearch,
-              onClear: () {
-                _searchController.clear();
-                _lastSearchedQuery = '';
-                context.read<AppProvider>().clearSearch();
-                setState(() {});
-              },
-            ),
-            Expanded(
-              child: _SearchResults(
-                predefinedData: _predefinedData,
-                lastSearchedQuery: _lastSearchedQuery,
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      // Explicit status bar style (same fix as PlayerScreen) so the icons
+      // always contrast with this screen's background, in both themes.
+      value: isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+      child: Scaffold(
+        backgroundColor: isDark ? _C.darkBackground : _C.offWhite,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _SearchBar(
+                controller: _searchController,
+                focusNode: _focusNode,
+                isDark: isDark,
+                onSearch: _performSearch,
+                onClear: () {
+                  _searchController.clear();
+                  _lastSearchedQuery = '';
+                  context.read<AppProvider>().clearSearch();
+                  setState(() {});
+                },
               ),
-            ),
-          ],
+              Expanded(
+                child: _SearchResults(
+                  predefinedData: _predefinedData,
+                  lastSearchedQuery: _lastSearchedQuery,
+                  isDark: isDark,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -266,32 +170,39 @@ class _SearchScreenState extends State<SearchScreen> {
 class _SearchBar extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
+  final bool isDark;
   final VoidCallback onSearch;
   final VoidCallback onClear;
 
   const _SearchBar({
     required this.controller,
     required this.focusNode,
+    required this.isDark,
     required this.onSearch,
     required this.onClear,
   });
 
   @override
   Widget build(BuildContext context) {
+    final surface = isDark ? _C.darkSurface : _C.white;
+    final field = isDark ? _C.darkBackground : _C.offWhite;
+    final border = isDark ? _C.darkBorder : _C.border;
+    final text = isDark ? _C.darkText : _C.text;
+
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      color: _C.white,
+      color: surface,
       child: Row(
         children: [
           Container(
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: _C.offWhite,
+              color: field,
               borderRadius: BorderRadius.circular(10),
             ),
             child: IconButton(
-              icon: const Icon(Icons.arrow_back_rounded, size: 20),
+              icon: Icon(Icons.arrow_back_rounded, size: 20, color: text),
               onPressed: () {
                 context.read<AppProvider>().clearSearch();
                 Navigator.pop(context);
@@ -305,22 +216,22 @@ class _SearchBar extends StatelessWidget {
             child: Container(
               height: 40,
               decoration: BoxDecoration(
-                color: _C.offWhite,
+                color: field,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: _C.border),
+                border: Border.all(color: border),
               ),
               child: TextField(
                 controller: controller,
                 focusNode: focusNode,
                 onSubmitted: (_) => onSearch(),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w500,
-                  color: _C.text,
+                  color: text,
                 ),
                 decoration: InputDecoration(
                   hintText: 'Search players, teams, leagues...',
-                  hintStyle: const TextStyle(
+                  hintStyle: TextStyle(
                     fontSize: 14,
                     color: _C.muted,
                   ),
@@ -328,7 +239,7 @@ class _SearchBar extends StatelessWidget {
                   contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                   prefixIcon: GestureDetector(
                     onTap: onSearch,
-                    child: const Icon(
+                    child: Icon(
                       Icons.search_rounded,
                       size: 20,
                       color: _C.muted,
@@ -336,7 +247,7 @@ class _SearchBar extends StatelessWidget {
                   ),
                   suffixIcon: controller.text.isNotEmpty
                       ? IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 18),
+                    icon: Icon(Icons.close_rounded, size: 18, color: text),
                     onPressed: onClear,
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
@@ -372,10 +283,12 @@ class _SearchBar extends StatelessWidget {
 class _SearchResults extends StatelessWidget {
   final SearchResponse predefinedData;
   final String lastSearchedQuery;
+  final bool isDark;
 
   const _SearchResults({
     required this.predefinedData,
     required this.lastSearchedQuery,
+    required this.isDark,
   });
 
   @override
@@ -415,14 +328,15 @@ class _SearchResults extends StatelessWidget {
     }
 
     if (query.isNotEmpty && results.isNotEmpty) {
-      return _buildSearchResults(results);
+      return _buildSearchResults(results, provider.isSearchFallback);
     }
 
     if (query.isNotEmpty && results.isEmpty && !isSearching) {
-      return const _EmptyState(
+      return _EmptyState(
         icon: Icons.search_off_rounded,
         title: 'No results found',
         subtitle: 'Try searching with different keywords',
+        isDark: isDark,
       );
     }
 
@@ -430,10 +344,11 @@ class _SearchResults extends StatelessWidget {
       return _buildPredefinedData();
     }
 
-    return const _EmptyState(
+    return _EmptyState(
       icon: Icons.search_rounded,
       title: 'Search for anything',
       subtitle: 'Find players, teams, and leagues',
+      isDark: isDark,
     );
   }
 
@@ -442,10 +357,11 @@ class _SearchResults extends StatelessWidget {
     final clubs = predefinedData.teams;
 
     if (players.isEmpty && clubs.isEmpty) {
-      return const _EmptyState(
+      return _EmptyState(
         icon: Icons.search_rounded,
         title: 'Search for anything',
         subtitle: 'Find players, teams, and leagues',
+        isDark: isDark,
       );
     }
 
@@ -485,7 +401,7 @@ class _SearchResults extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          ...players.map((result) => _SearchResultTile(result: result)),
+          ...players.map((result) => _SearchResultTile(result: result, isDark: isDark)),
         ],
 
         if (players.isNotEmpty && clubs.isNotEmpty)
@@ -524,7 +440,7 @@ class _SearchResults extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          ...clubs.map((result) => _SearchResultTile(result: result)),
+          ...clubs.map((result) => _SearchResultTile(result: result, isDark: isDark)),
         ],
 
         const SizedBox(height: 24),
@@ -532,26 +448,66 @@ class _SearchResults extends StatelessWidget {
     );
   }
 
-  Widget _buildSearchResults(SearchResponse results) {
+  Widget _buildSearchResults(SearchResponse results, bool isFallback) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        if (isFallback) _FallbackNotice(isDark: isDark),
         if (results.leagues.isNotEmpty) ...[
           _SectionHeader('LEAGUES', results.leagues.length),
-          ...results.leagues.map((result) => _SearchResultTile(result: result)),
+          ...results.leagues.map((result) => _SearchResultTile(result: result, isDark: isDark)),
         ],
         if (results.teams.isNotEmpty) ...[
           if (results.leagues.isNotEmpty) const SizedBox(height: 16),
           _SectionHeader('TEAMS', results.teams.length),
-          ...results.teams.map((result) => _SearchResultTile(result: result)),
+          ...results.teams.map((result) => _SearchResultTile(result: result, isDark: isDark)),
         ],
         if (results.players.isNotEmpty) ...[
           if (results.teams.isNotEmpty || results.leagues.isNotEmpty)
             const SizedBox(height: 16),
           _SectionHeader('PLAYERS', results.players.length),
-          ...results.players.map((result) => _SearchResultTile(result: result)),
+          ...results.players.map((result) => _SearchResultTile(result: result, isDark: isDark)),
         ],
       ],
+    );
+  }
+}
+
+// ─── Fallback Notice ─────────────────────────────────────────────────────────
+// Shown above results when the live search API is unavailable/rate-limited
+// and we're serving offline predefined data instead.
+
+class _FallbackNotice extends StatelessWidget {
+  final bool isDark;
+
+  const _FallbackNotice({required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: _C.orange.withOpacity(isDark ? 0.16 : 0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _C.orange.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline_rounded, size: 16, color: _C.orange),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Live search is unavailable right now — showing popular suggestions instead.',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: isDark ? _C.darkText : _C.text,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -605,18 +561,21 @@ class _SectionHeader extends StatelessWidget {
 
 class _SearchResultTile extends StatelessWidget {
   final SearchResult result;
+  final bool isDark;
 
-  const _SearchResultTile({required this.result});
+  const _SearchResultTile({required this.result, required this.isDark});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: _C.white,
+        color: isDark ? _C.darkSurface : _C.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _C.border),
-        boxShadow: [
+        border: Border.all(color: isDark ? _C.darkBorder : _C.border),
+        boxShadow: isDark
+            ? []
+            : [
           BoxShadow(
             color: Colors.black.withOpacity(0.03),
             blurRadius: 4,
@@ -633,7 +592,7 @@ class _SearchResultTile extends StatelessWidget {
             padding: const EdgeInsets.all(12),
             child: Row(
               children: [
-                _Avatar(result: result),
+                _Avatar(result: result, isDark: isDark),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -641,10 +600,10 @@ class _SearchResultTile extends StatelessWidget {
                     children: [
                       Text(
                         result.displayName,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
-                          color: _C.text,
+                          color: isDark ? _C.darkText : _C.text,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -731,7 +690,7 @@ class _SearchResultTile extends StatelessWidget {
       abbreviation: result.abbreviation ??
           (result.name.length > 3 ? result.name.substring(0, 3).toUpperCase() : result.name.toUpperCase()),
       logo: result.imageUrl ?? 'https://a.espncdn.com/i/teamlogos/soccer/500/${result.id}.png',
-      color: '#1A62C8',
+      color: '#007AFF',  // AppTheme.primaryBlue
       alternateColor: '#FFFFFF',
       record: '0-0-0',
     );
@@ -761,7 +720,7 @@ class _SearchResultTile extends StatelessWidget {
 
     TeamInfo? teamInfo;
     if (result.teamId != null && result.teamId!.isNotEmpty) {
-      final clubData = famousClubs.firstWhere(
+      final clubData = seed.famousClubs.firstWhere(
             (c) => c['id'] == result.teamId,
         orElse: () => {'id': result.teamId!, 'name': result.teamName ?? 'Unknown Team'},
       );
@@ -774,7 +733,7 @@ class _SearchResultTile extends StatelessWidget {
             ? clubData['name']!.substring(0, 3).toUpperCase()
             : clubData['name']!.toUpperCase(),
         logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/${clubData['id']}.png',
-        color: '#1A62C8',
+        color: '#007AFF',  // AppTheme.primaryBlue
         alternateColor: '#FFFFFF',
         record: '0-0-0',
       );
@@ -787,19 +746,21 @@ class _SearchResultTile extends StatelessWidget {
           player: pitchPlayer,
           teamInfo: teamInfo,
           game: null,
+          leagueCode: result.leagueCode,
         ),
       ),
     );
   }
 
   void _showLeagueInfo(BuildContext context) {
+    final sheetIsDark = Theme.of(context).brightness == Brightness.dark;
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (_) => Container(
-        decoration: const BoxDecoration(
-          color: _C.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        decoration: BoxDecoration(
+          color: sheetIsDark ? _C.darkSurface : _C.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         ),
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
         child: Column(
@@ -809,19 +770,19 @@ class _SearchResultTile extends StatelessWidget {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: _C.border,
+                color: sheetIsDark ? _C.darkBorder : _C.border,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
             const SizedBox(height: 16),
-            _Avatar(result: result, size: 64),
+            _Avatar(result: result, size: 64, isDark: sheetIsDark),
             const SizedBox(height: 12),
             Text(
               result.displayName,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
-                color: _C.text,
+                color: sheetIsDark ? _C.darkText : _C.text,
               ),
             ),
             const SizedBox(height: 4),
@@ -867,12 +828,13 @@ class _SearchResultTile extends StatelessWidget {
 class _Avatar extends StatelessWidget {
   final SearchResult result;
   final double size;
+  final bool isDark;
 
-  const _Avatar({required this.result, this.size = 44});
+  const _Avatar({required this.result, this.size = 44, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
-    final bgColor = _C.blueLight;
+    final bgColor = isDark ? _C.darkBlueLight : _C.blueLight;
 
     String imageUrl = result.imageUrl ?? '';
     if (result.type == 'team' && result.id.isNotEmpty) {
@@ -885,17 +847,17 @@ class _Avatar extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: bgColor,
-        border: Border.all(color: _C.border, width: 1.5),
+        border: Border.all(color: isDark ? _C.darkBorder : _C.border, width: 1.5),
       ),
       child: ClipOval(
         child: imageUrl.isNotEmpty
             ? CachedNetworkImage(
           imageUrl: imageUrl,
           fit: BoxFit.cover,
-          placeholder: (_, __) => _Placeholder(result: result, size: size),
-          errorWidget: (_, __, ___) => _Placeholder(result: result, size: size),
+          placeholder: (_, __) => _Placeholder(result: result, size: size, isDark: isDark),
+          errorWidget: (_, __, ___) => _Placeholder(result: result, size: size, isDark: isDark),
         )
-            : _Placeholder(result: result, size: size),
+            : _Placeholder(result: result, size: size, isDark: isDark),
       ),
     );
   }
@@ -906,8 +868,9 @@ class _Avatar extends StatelessWidget {
 class _Placeholder extends StatelessWidget {
   final SearchResult result;
   final double size;
+  final bool isDark;
 
-  const _Placeholder({required this.result, required this.size});
+  const _Placeholder({required this.result, required this.size, this.isDark = false});
 
   @override
   Widget build(BuildContext context) {
@@ -922,7 +885,7 @@ class _Placeholder extends StatelessWidget {
     return Container(
       width: size,
       height: size,
-      color: _C.blueLight,
+      color: isDark ? _C.darkBlueLight : _C.blueLight,
       child: Center(
         child: Text(
           text.isNotEmpty ? (text.length > 2 ? text.substring(0, 2) : text) : '?',
@@ -986,11 +949,13 @@ class _EmptyState extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
+  final bool isDark;
 
   const _EmptyState({
     required this.icon,
     required this.title,
     required this.subtitle,
+    this.isDark = false,
   });
 
   @override
@@ -1005,7 +970,7 @@ class _EmptyState extends StatelessWidget {
               width: 72,
               height: 72,
               decoration: BoxDecoration(
-                color: _C.blueLight,
+                color: isDark ? _C.darkBlueLight : _C.blueLight,
                 borderRadius: BorderRadius.circular(18),
               ),
               child: Icon(
@@ -1017,10 +982,10 @@ class _EmptyState extends StatelessWidget {
             const SizedBox(height: 16),
             Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
-                color: _C.text,
+                color: isDark ? _C.darkText : _C.text,
               ),
             ),
             const SizedBox(height: 8),

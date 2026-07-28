@@ -17,6 +17,8 @@ class CacheService {
   static const String _teamPageBox   = 'cached_team_pages';
   static const String _searchTeamsBox = 'search_teams';
   static const String _searchPlayersBox = 'search_players';
+  static const String _sportsDbBox = 'cached_sportsdb';
+  static const String _playerStatsBox = 'cached_player_stats';
 
   static const Duration cacheDuration = Duration(minutes: 5);
 
@@ -26,6 +28,16 @@ class CacheService {
   /// far longer than scores/standings to stay well within quota even with
   /// many users/screens hitting the Standings tab throughout the day.
   static const Duration leadersCacheDuration = Duration(hours: 3);
+
+  /// The FIFA World Cup 2026 has concluded, so its final stat leaders
+  /// (top scorer / assists / yellow cards / red cards, each already
+  /// enriched with a SportsDB/ESPN headshot URL) can never change again.
+  /// A 7-day cache means a returning user's device re-reads this from
+  /// disk instead of re-hitting SportsDB/ESPN search for every player on
+  /// every visit — no network round trip, no waiting on stale rate limits.
+  /// It still refreshes weekly rather than being permanent, in case a
+  /// headshot URL needs to be re-resolved down the line.
+  static const Duration worldCupLeadersCacheDuration = Duration(days: 7);
 
   /// Squad player headshots are fetched once per team per 7 days.
   ///
@@ -46,6 +58,20 @@ class CacheService {
   /// so a 24-hour cache is safe and significantly improves performance.
   static const Duration searchCacheDuration = Duration(hours: 24);
 
+  /// TheSportsDB free key allows only 30 requests/minute, and both the
+  /// per-league team list and per-team roster it backs are very slow
+  /// moving (squads change on transfer windows, not daily). Cache for
+  /// 7 days — same rationale as the ESPN headshot cache above.
+  static const Duration sportsDbCacheDuration = Duration(days: 7);
+
+  /// API-Football player season statistics (goals/shots/passes/tackles
+  /// breakdown for the league the player is currently playing in). These
+  /// update after every match the player features in, so a much shorter
+  /// window than search/headshots is used — but still long enough to keep
+  /// the free 100-requests/day plan from being burned by repeat visits to
+  /// the same player screen within a day.
+  static const Duration playerStatsCacheDuration = Duration(hours: 12);
+
   /// Maximum number of news articles kept in any single cache slot.
   /// Set to 25 — enough for one full page (20) plus a small buffer.
   static const int _maxCachedNewsArticles = 25;
@@ -59,6 +85,8 @@ class CacheService {
   late Box _teamPageBoxRef;
   late Box _searchTeamsBoxRef;
   late Box _searchPlayersBoxRef;
+  late Box _sportsDbBoxRef;
+  late Box _playerStatsBoxRef;
 
   bool _isInitialized = false;
 
@@ -78,6 +106,8 @@ class CacheService {
     _teamPageBoxRef   = await Hive.openBox(_teamPageBox);
     _searchTeamsBoxRef = await Hive.openBox(_searchTeamsBox);
     _searchPlayersBoxRef = await Hive.openBox(_searchPlayersBox);
+    _sportsDbBoxRef = await Hive.openBox(_sportsDbBox);
+    _playerStatsBoxRef = await Hive.openBox(_playerStatsBox);
 
     _isInitialized = true;
   }
@@ -254,6 +284,43 @@ class CacheService {
     }
   }
 
+  // ── FIFA World Cup 2026 Final Stat Leaders ───────────────────────────────────
+  //
+  // Separate from cacheLeagueLeaders/getCachedLeagueLeaders above because
+  // those are tied to leadersCacheDuration (3 hours), which is meant for
+  // leagues still being played. The World Cup is over, so this pair uses
+  // worldCupLeadersCacheDuration (7 days) instead, under its own key in the
+  // same box. The cached payload already carries each player's resolved
+  // headshot CDN URL (LeagueLeaders -> LeaderEntry.headshot), so a cache
+  // hit needs zero SportsDB/ESPN network calls; CachedNetworkImage then
+  // persists the actual image bytes to disk the first time each URL renders.
+  static const String _worldCupLeadersKey = 'fifa.world.2026.final';
+
+  Future<void> cacheWorldCupLeaders(LeagueLeaders leaders) async {
+    await _ensureInitialized();
+    await _leadersBoxRef.put(_worldCupLeadersKey, {
+      'data': leaders.toJson(),
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  Future<LeagueLeaders?> getCachedWorldCupLeaders() async {
+    await _ensureInitialized();
+    final raw = _leadersBoxRef.get(_worldCupLeadersKey);
+    if (raw == null) return null;
+
+    try {
+      final cached    = _castMap(raw);
+      final timestamp = cached['timestamp'] as int;
+      if (DateTime.now().millisecondsSinceEpoch - timestamp >
+          worldCupLeadersCacheDuration.inMilliseconds) return null;
+      return LeagueLeaders.fromJson(_castMap(cached['data']));
+    } catch (e) {
+      print('Cache read error (world cup leaders): $e');
+      return null;
+    }
+  }
+
   // ── Squad Player Headshots ───────────────────────────────────────────────────
   //
   // Stores a Map<playerId, headshotUrl> per team, cached for 7 days.
@@ -319,6 +386,91 @@ class CacheService {
     await _ensureInitialized();
     await _headshotsBoxRef.delete('headshots_$teamId');
     print('[CacheService] Headshot cache cleared for team "$teamId"');
+  }
+
+  // ── TheSportsDB Cache (7 days) ──────────────────────────────────────────────
+  //
+  // Two things get cached here:
+  //  1. The per-league ESPN-team-id → SportsDB-team-id map (built once from
+  //     search_all_teams.php?l=<league>, which is the only free-tier team
+  //     search endpoint that actually works for arbitrary leagues).
+  //  2. The per-team ESPN-player-id → SportsDB headshot URL map (built from
+  //     lookup_all_players.php?id=<sportsDbTeamId>), used as a fallback
+  //     when ESPN's own lineup headshot is missing.
+  //
+  Future<void> cacheSportsDbLeagueTeamMap(
+      String leagueCode, Map<String, String> espnToSportsDbTeamId) async {
+    await _ensureInitialized();
+    final key = 'sdb_league_$leagueCode';
+    await _sportsDbBoxRef.put(key, {
+      'data': espnToSportsDbTeamId,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    });
+    print('[CacheService] Cached SportsDB team map for league "$leagueCode" '
+        '(${espnToSportsDbTeamId.length} teams)');
+  }
+
+  Future<Map<String, String>?> getCachedSportsDbLeagueTeamMap(
+      String leagueCode) async {
+    await _ensureInitialized();
+    final key = 'sdb_league_$leagueCode';
+    final raw = _sportsDbBoxRef.get(key);
+    if (raw == null) return null;
+
+    try {
+      final cached = _castMap(raw);
+      final timestamp = cached['timestamp'] as int;
+      if (DateTime.now().millisecondsSinceEpoch - timestamp >
+          sportsDbCacheDuration.inMilliseconds) {
+        return null;
+      }
+      final rawData = cached['data'];
+      if (rawData is! Map) return null;
+      final result = <String, String>{};
+      rawData.forEach((k, v) => result[k.toString()] = v?.toString() ?? '');
+      return result;
+    } catch (e) {
+      print('Cache read error (sportsdb league map): $e');
+      return null;
+    }
+  }
+
+  Future<void> cacheSportsDbTeamHeadshots(
+      String espnTeamId, Map<String, String> espnPlayerIdToHeadshot) async {
+    await _ensureInitialized();
+    final key = 'sdb_headshots_$espnTeamId';
+    await _sportsDbBoxRef.put(key, {
+      'data': espnPlayerIdToHeadshot,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    });
+    final hits = espnPlayerIdToHeadshot.values.where((v) => v.isNotEmpty).length;
+    print('[CacheService] Cached SportsDB headshots for ESPN team '
+        '"$espnTeamId" (${espnPlayerIdToHeadshot.length} players, $hits with URL)');
+  }
+
+  Future<Map<String, String>?> getCachedSportsDbTeamHeadshots(
+      String espnTeamId) async {
+    await _ensureInitialized();
+    final key = 'sdb_headshots_$espnTeamId';
+    final raw = _sportsDbBoxRef.get(key);
+    if (raw == null) return null;
+
+    try {
+      final cached = _castMap(raw);
+      final timestamp = cached['timestamp'] as int;
+      if (DateTime.now().millisecondsSinceEpoch - timestamp >
+          sportsDbCacheDuration.inMilliseconds) {
+        return null;
+      }
+      final rawData = cached['data'];
+      if (rawData is! Map) return null;
+      final result = <String, String>{};
+      rawData.forEach((k, v) => result[k.toString()] = v?.toString() ?? '');
+      return result;
+    } catch (e) {
+      print('Cache read error (sportsdb headshots): $e');
+      return null;
+    }
   }
 
   // ── Team Page Data Cache (6 hours) ─────────────────────────────────────────
@@ -639,6 +791,133 @@ class CacheService {
     }
   }
 
+  // In cache_service.dart - Add these methods
+
+  /// Cache SportsDB player data
+  Future<void> cacheSportsDbPlayer(String key, Player player) async {
+    await _ensureInitialized();
+    await _sportsDbBoxRef.put(key, {
+      'data': player.toJson(),
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  // ─── SportsDB Search Cache ──────────────────────────────────────────────────
+
+
+
+  /// Get cached SportsDB player
+  Future<Player?> getCachedSportsDbPlayer(String key) async {
+    await _ensureInitialized();
+    final raw = _sportsDbBoxRef.get(key);
+    if (raw == null) return null;
+
+    try {
+      final cached = _castMap(raw);
+      final timestamp = cached['timestamp'] as int;
+      if (DateTime.now().millisecondsSinceEpoch - timestamp >
+          sportsDbCacheDuration.inMilliseconds) {
+        return null;
+      }
+      return Player.fromJson(_castMap(cached['data']));
+    } catch (e) {
+      print('Cache read error (sportsdb player): $e');
+      return null;
+    }
+  }
+
+  /// Cache SportsDB player raw data (for search results)
+  Future<void> cacheSportsDbPlayerData(String key, Map<String, dynamic> data) async {
+    await _ensureInitialized();
+    await _sportsDbBoxRef.put(key, {
+      'data': data,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  /// Get cached SportsDB player raw data
+  Future<Map<String, dynamic>?> getCachedSportsDbPlayerData(String key) async {
+    await _ensureInitialized();
+    final raw = _sportsDbBoxRef.get(key);
+    if (raw == null) return null;
+
+    try {
+      final cached = _castMap(raw);
+      final timestamp = cached['timestamp'] as int;
+      if (DateTime.now().millisecondsSinceEpoch - timestamp >
+          sportsDbCacheDuration.inMilliseconds) {
+        return null;
+      }
+      return cached['data'] as Map<String, dynamic>?;
+    } catch (e) {
+      print('Cache read error (sportsdb player data): $e');
+      return null;
+    }
+  }
+
+  /// Cache SportsDB search result
+  Future<void> cacheSportsDbSearch(String key, Map<String, dynamic> data) async {
+    await _ensureInitialized();
+    await _sportsDbBoxRef.put(key, {
+      'data': data,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  /// Get cached SportsDB search result
+  Future<Map<String, dynamic>?> getCachedSportsDbSearch(String key) async {
+    await _ensureInitialized();
+    final raw = _sportsDbBoxRef.get(key);
+    if (raw == null) return null;
+
+    try {
+      final cached = _castMap(raw);
+      final timestamp = cached['timestamp'] as int;
+      if (DateTime.now().millisecondsSinceEpoch - timestamp >
+          sportsDbCacheDuration.inMilliseconds) {
+        return null;
+      }
+      return cached['data'] as Map<String, dynamic>?;
+    } catch (e) {
+      print('Cache read error (sportsdb search): $e');
+      return null;
+    }
+  }
+
+  // ─── API-Football player season statistics ──────────────────────────────
+
+  /// Cache a normalized player-season-statistics map (goals, shots, passes,
+  /// tackles, etc. for one player/league/season combo).
+  Future<void> cachePlayerSeasonStats(String key, Map<String, dynamic> data) async {
+    await _ensureInitialized();
+    await _playerStatsBoxRef.put(key, {
+      'data': data,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  /// Get cached player-season-statistics map, or null if missing/expired.
+  Future<Map<String, dynamic>?> getCachedPlayerSeasonStats(String key) async {
+    await _ensureInitialized();
+    final raw = _playerStatsBoxRef.get(key);
+    if (raw == null) return null;
+
+    try {
+      final cached = _castMap(raw);
+      final timestamp = cached['timestamp'] as int;
+      if (DateTime.now().millisecondsSinceEpoch - timestamp >
+          playerStatsCacheDuration.inMilliseconds) {
+        return null;
+      }
+      return cached['data'] as Map<String, dynamic>?;
+    } catch (e) {
+      print('Cache read error (player season stats): $e');
+      return null;
+    }
+  }
+
+
+
   /// Clears search cache (teams and players).
   Future<void> clearSearchCache() async {
     await _ensureInitialized();
@@ -659,6 +938,7 @@ class CacheService {
     await _teamPageBoxRef.clear();
     await _searchTeamsBoxRef.clear();
     await _searchPlayersBoxRef.clear();
+    await _sportsDbBoxRef.clear();
     print('[CacheService] All cache cleared.');
   }
 
