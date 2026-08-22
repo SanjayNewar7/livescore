@@ -459,23 +459,8 @@ class _PlayerCircle extends StatelessWidget {
                   ),
                 ),
 
-                // ── Rating badge (top, overlapping avatar) ────────────────────
-                if (showRating && player.rating != null)
-                  Positioned(
-                    top: -7,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1.5),
-                      decoration: BoxDecoration(
-                        color: _ratingColor(player.rating!),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: Colors.white, width: 1.2),
-                      ),
-                      child: Text(
-                        player.rating!.toStringAsFixed(1),
-                        style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w800, height: 1),
-                      ),
-                    ),
-                  ),
+                // Note: player ratings aren't reliably available from ESPN or
+                // SportsDB for these leagues, so no rating badge is shown here.
               ],
             ),
 
@@ -508,12 +493,6 @@ class _PlayerCircle extends StatelessWidget {
     );
   }
 
-  Color _ratingColor(double r) {
-    if (r >= 8.0) return const Color(0xFF16A34A);
-    if (r >= 6.5) return const Color(0xFF1A56DB);
-    if (r >= 5.0) return const Color(0xFFCA8A04);
-    return const Color(0xFFDC2626);
-  }
 }
 
 /// Fallback avatar with initials or person icon
@@ -750,29 +729,10 @@ class _SubChip extends StatelessWidget {
           ),
           Text(player.position, style: const TextStyle(fontSize: 10, color: Color(0xFF6B7A96))),
         ]),
-        if (player.rating != null) ...[
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-            decoration: BoxDecoration(
-              color: _ratingColor(player.rating!).withOpacity(0.12),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              player.rating!.toStringAsFixed(1),
-              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: _ratingColor(player.rating!)),
-            ),
-          ),
-        ],
+        // Note: ratings aren't shown here — ESPN/SportsDB don't reliably
+        // provide per-match player ratings for these leagues.
       ]),
     );
-  }
-
-  Color _ratingColor(double r) {
-    if (r >= 8.0) return const Color(0xFF16A34A);
-    if (r >= 6.5) return const Color(0xFF1A56DB);
-    if (r >= 5.0) return const Color(0xFFCA8A04);
-    return const Color(0xFFDC2626);
   }
 }
 

@@ -14,7 +14,7 @@ class TeamsScreen extends StatefulWidget {
 
 class _TeamsScreenState extends State<TeamsScreen> {
   final SportService _sportService = SportService();
-  String _selectedLeagueCode = 'fifa.world';
+  String _selectedLeagueCode = 'esp.1';
   List<TeamInfo> _teams = [];
   List<TeamInfo> _filteredTeams = [];
   bool _isLoading = true;
@@ -207,26 +207,13 @@ class _TeamsScreenState extends State<TeamsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Mark + title + count pill ──────────────────────────────
+            // ── Title + count pill ──────────────────────────────────────────
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [_accent, _accent.withOpacity(0.72)],
-                      ),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.shield_rounded, size: 17, color: Colors.white),
-                  ),
-                  const SizedBox(width: 12),
+                  // ─── Icon removed ─────────────────────────────────────
                   Text(
                     'Teams',
                     style: TextStyle(

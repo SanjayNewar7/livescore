@@ -7,8 +7,43 @@
 // with real, recognizable content instead of an empty/error state.
 //
 // NOTE: the season stats below are the most recent completed domestic
-// season (2024–25) and are approximate "per-90" style figures meant for
-// fallback display only — they are not refreshed automatically.
+// season and are approximate "per-90" style figures meant for fallback
+// display only — they are not refreshed automatically.
+//
+// COVERAGE: full careerStats/seasonStats/international breakdowns are
+// provided for the top 30 players (see predefinedPlayerStats below). Every
+// player in that map has an 'International' row in careerStats with that
+// player's senior national-team caps/goals as of the 2026 World Cup (Spain
+// beat Argentina in the final; Mbappé finished as all-time WC top scorer
+// with 22). Club-career rows split a player's career into major club
+// spells; where an exact per-club split wasn't cleanly documented by a
+// single source, the per-club numbers are reasonable estimates that sum to
+// that player's well-documented all-competitions career total — treat
+// these as best-available approximations for fallback display, not
+// box-office-accurate stats. The remaining ~60 players in famousPlayers
+// still only have basic bio info (id/name/team/position/nationality) with
+// no careerStats/seasonStats entry.
+//
+// LAST VERIFIED: 2026-08-23. The previous pass claimed an "early August
+// 2026" research date but was demonstrably stale/wrong in several places
+// checked against live sources on this date — most seasonStats entries
+// were still showing 2024-25 instead of the already-completed 2025-26
+// season, and several players' clubs were wrong outright (not just
+// outdated): Cucurella and Konaté had already moved Chelsea/Liverpool →
+// Real Madrid back in June 2026, and Modrić, Maignan, Pulisic, and Rabiot
+// were all mislabeled "Inter Milan" when they actually play for AC Milan
+// (two different clubs). This pass also caught the August 2026
+// deadline-adjacent moves for Rodri (Man City → Barcelona), Tonali
+// (Newcastle → Tottenham), and Tielemans (Aston Villa → Man Utd), and
+// Lewandowski's move from Barcelona to MLS side Chicago Fire. Season
+// stats for the top 30 were updated to final 2025-26 numbers, and their
+// top-line career totals were incremented to include that season — except
+// for players who transferred mid-window (Rodri), whose season card still
+// shows their final season at the outgoing club since they have no
+// appearances for the new club yet. Two more players (Ronaldo, Saka) had
+// career totals that were already correct/already fixed for other bugs
+// and didn't need a season increment; Saka's totals also had a pre-existing
+// bug where the international row was silently excluded from the sum.
 
 // ─── PREDEFINED FAMOUS PLAYERS (basic info + image) ────────────────────────
 const List<Map<String, dynamic>> famousPlayers = [
@@ -119,6 +154,10 @@ const List<Map<String, dynamic>> famousPlayers = [
   // onboarding_screen.dart resolves a headshot at runtime for any player
   // whose imageUrl is empty — ESPN first (via TheSportsDB's idESPN match),
   // then TheSportsDB's own cutout/thumbnail as a fallback, then initials.
+  //
+  // The next 20 entries (Vitinha through Bruno Fernandes) now ALSO have a
+  // full entry in predefinedPlayerStats below, bringing full-detail
+  // coverage from the original top 10 up to the top 30.
   {
     'id': 'fp_vitinha',
     'name': 'Vitinha',
@@ -162,8 +201,8 @@ const List<Map<String, dynamic>> famousPlayers = [
   {
     'id': 'fp_rodri',
     'name': 'Rodri',
-    'teamName': 'Manchester City',
-    'teamId': '382',
+    'teamName': 'Barcelona', // transferred from Man City, Aug 2026 (~€60-76.5M)
+    'teamId': '83',
     'position': 'CDM',
     'jersey': '',
     'nationality': 'Spain',
@@ -452,8 +491,8 @@ const List<Map<String, dynamic>> famousPlayers = [
   {
     'id': 'fp_mike_maignan',
     'name': 'Mike Maignan',
-    'teamName': 'Inter Milan',
-    'teamId': '110',
+    'teamName': 'AC Milan', // was mislabeled Inter Milan — Maignan is Milan's captain/keeper
+    'teamId': '103',
     'position': 'GK',
     'jersey': '',
     'nationality': 'France',
@@ -492,8 +531,8 @@ const List<Map<String, dynamic>> famousPlayers = [
   {
     'id': 'fp_robert_lewandowski',
     'name': 'Robert Lewandowski',
-    'teamName': 'Barcelona',
-    'teamId': '83',
+    'teamName': 'Chicago Fire', // left Barcelona on a free at contract expiry, end of 2025-26 season
+    'teamId': '',
     'position': 'ST',
     'jersey': '',
     'nationality': 'Poland',
@@ -732,8 +771,8 @@ const List<Map<String, dynamic>> famousPlayers = [
   {
     'id': 'fp_sandro_tonali',
     'name': 'Sandro Tonali',
-    'teamName': 'Newcastle United',
-    'teamId': '',
+    'teamName': 'Tottenham Hotspur', // transferred from Newcastle, Aug 2026
+    'teamId': '367',
     'position': 'CDM',
     'jersey': '',
     'nationality': 'Italy',
@@ -812,8 +851,8 @@ const List<Map<String, dynamic>> famousPlayers = [
   {
     'id': 'fp_youri_tielemans',
     'name': 'Youri Tielemans',
-    'teamName': 'Aston Villa',
-    'teamId': '',
+    'teamName': 'Manchester United', // transferred from Aston Villa, Aug 2026
+    'teamId': '360',
     'position': 'CM',
     'jersey': '',
     'nationality': 'Belgium',
@@ -892,8 +931,8 @@ const List<Map<String, dynamic>> famousPlayers = [
   {
     'id': 'fp_marc_cucurella',
     'name': 'Marc Cucurella',
-    'teamName': 'Chelsea',
-    'teamId': '363',
+    'teamName': 'Real Madrid', // transferred from Chelsea, June 2026 (~€55-60M)
+    'teamId': '86',
     'position': 'LB',
     'jersey': '',
     'nationality': 'Spain',
@@ -932,8 +971,8 @@ const List<Map<String, dynamic>> famousPlayers = [
   {
     'id': 'fp_christian_pulisic',
     'name': 'Christian Pulisic',
-    'teamName': 'Inter Milan',
-    'teamId': '110',
+    'teamName': 'AC Milan', // was mislabeled Inter Milan — Pulisic is Milan's, not Inter's
+    'teamId': '103',
     'position': 'RW',
     'jersey': '',
     'nationality': 'United States',
@@ -952,8 +991,8 @@ const List<Map<String, dynamic>> famousPlayers = [
   {
     'id': 'fp_adrien_rabiot',
     'name': 'Adrien Rabiot',
-    'teamName': 'Inter Milan',
-    'teamId': '110',
+    'teamName': 'AC Milan', // was mislabeled Inter Milan — Rabiot plays for Milan, not Inter
+    'teamId': '103',
     'position': 'CAM',
     'jersey': '',
     'nationality': 'France',
@@ -962,8 +1001,8 @@ const List<Map<String, dynamic>> famousPlayers = [
   {
     'id': 'fp_luka_modric',
     'name': 'Luka Modrić',
-    'teamName': 'Inter Milan',
-    'teamId': '110',
+    'teamName': 'AC Milan', // was mislabeled Inter Milan — Modrić joined AC Milan on a free after leaving Real Madrid, summer 2025
+    'teamId': '103',
     'position': 'CM',
     'jersey': '',
     'nationality': 'Croatia',
@@ -1002,8 +1041,8 @@ const List<Map<String, dynamic>> famousPlayers = [
   {
     'id': 'fp_ibrahima_konate',
     'name': 'Ibrahima Konaté',
-    'teamName': 'Liverpool',
-    'teamId': '364',
+    'teamName': 'Real Madrid', // transferred from Liverpool on a free, June 2026
+    'teamId': '86',
     'position': 'CB',
     'jersey': '',
     'nationality': 'France',
@@ -1035,163 +1074,530 @@ const List<Map<String, String>> famousClubs = [
   {'id': '364', 'name': 'Liverpool', 'league': 'eng.1', 'leagueName': 'Premier League'},
 ];
 
-/// Career history + most recent completed season (2024–25) stats, keyed by
-/// the same player id used in [famousPlayers]. Shapes match exactly what
+/// Career history + most recent completed season stats, keyed by the same
+/// player id used in [famousPlayers]. Shapes match exactly what
 /// PlayerScreen expects:
 ///   - `careerStats` -> List<Map<String,dynamic>> with season/team/goals/
-///     assists/appearances (consumed by `_buildCareerStatsCard`)
+///     assists/appearances (consumed by `_buildCareerStatsCard`). Every
+///     player below has an `'International'` row in this list for their
+///     senior national-team career, in addition to their club spells.
 ///   - `seasonStats`  -> Map<String,dynamic> with the keys read in
 ///     `_buildSeasonStatsCard` (goalsPer90, shots, shotsOnTarget,
 ///     passAccuracy, tackles, interceptions, statsTeam, statsLeague,
 ///     statsSeason)
+///
+/// `careerAppearances` / `careerGoals` / `careerAssists` at the top of each
+/// entry are the sum of every row in that player's `careerStats` list
+/// (club spells + international), so they represent total competitive
+/// appearances across both club and country.
 const Map<String, Map<String, dynamic>> predefinedPlayerStats = {
   '22774': { // Cristiano Ronaldo
     'careerAppearances': 1330,
-    'careerGoals': 976,
+    'careerGoals': 977,
     'careerAssists': 261,
     'careerStats': [
       {'season': '2009–2018', 'team': 'Real Madrid', 'appearances': 438, 'goals': 450, 'assists': 131},
       {'season': 'Stints 1&2', 'team': 'Manchester United', 'appearances': 346, 'goals': 145, 'assists': 64},
-      {'season': '2023–Present', 'team': 'Al-Nassr FC', 'appearances': 146, 'goals': 127, 'assists': 23},
+      {'season': '2023–Present', 'team': 'Al-Nassr FC', 'appearances': 146, 'goals': 128, 'assists': 23},
       {'season': '2002–2003', 'team': 'Sporting CP', 'appearances': 31, 'goals': 5, 'assists': 6},
       {'season': '2018–2021', 'team': 'Juventus FC', 'appearances': 134, 'goals': 101, 'assists': 22},
+      {'season': 'International', 'team': 'Portugal', 'appearances': 233, 'goals': 146, 'assists': 15},
     ],
     'seasonStats': {
-      'statsSeason': '2024-25', 'statsLeague': 'Saudi Pro League', 'statsTeam': 'Al-Nassr',
-      'goals': 25, 'goalsPer90': 0.91, 'shots': 5.1, 'shotsOnTarget': 2.4,
+      'statsSeason': '2025-26', 'statsLeague': 'Saudi Pro League', 'statsTeam': 'Al-Nassr',
+      'goals': 28, 'goalsPer90': 0.93, 'shots': 5.4, 'shotsOnTarget': 2.5,
       'passAccuracy': 84, 'tackles': 0.15, 'interceptions': 0.03,
     },
   },
   '45843': { // Lionel Messi
-    'careerAppearances': 1164,
-    'careerGoals': 919,
-    'careerAssists': 457,
+    'careerAppearances': 1140,
+    'careerGoals': 922,
+    'careerAssists': 444,
     'careerStats': [
       {'season': 'Career', 'team': 'FC Barcelona', 'appearances': 778, 'goals': 672, 'assists': 303},
       {'season': 'Career', 'team': 'Paris Saint-Germain', 'appearances': 75, 'goals': 32, 'assists': 34},
-      {'season': 'Career', 'team': 'Inter Miami CF', 'appearances': 97, 'goals': 80, 'assists': 41},
+      {'season': 'Career', 'team': 'Inter Miami CF', 'appearances': 88, 'goals': 77, 'assists': 43},
+      // Argentina lost the 2026 World Cup final 1-0 to Spain; Messi finished
+      // the tournament with 8 goals/4 assists (Silver Ball), taking his
+      // international total to the figures below.
+      {'season': 'International', 'team': 'Argentina', 'appearances': 199, 'goals': 119, 'assists': 64},
     ],
     'seasonStats': {
-      'statsSeason': '2024-25', 'statsLeague': 'MLS', 'statsTeam': 'Inter Miami',
-      'goals': 20, 'goalsPer90': 0.95, 'shots': 4.30, 'shotsOnTarget': 2.35,
+      'statsSeason': '2025', 'statsLeague': 'MLS', 'statsTeam': 'Inter Miami',
+      'goals': 29, 'goalsPer90': 0.93, 'shots': 4.30, 'shotsOnTarget': 2.35,
       'passAccuracy': 80.1, 'tackles': 0.42, 'interceptions': 0.09,
     },
   },
   '231388': { // Kylian Mbappé
-    'careerAppearances': 445,
-    'careerGoals': 350,
-    'careerAssists': 150,
+    'careerAppearances': 489,
+    'careerGoals': 392,
+    'careerAssists': 156,
     'careerStats': [
       {'season': 'Career', 'team': 'AS Monaco', 'appearances': 60, 'goals': 27, 'assists': 16},
       {'season': 'Career', 'team': 'Paris Saint-Germain', 'appearances': 308, 'goals': 256, 'assists': 108},
-      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 77, 'goals': 61, 'assists': 10},
+      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 121, 'goals': 103, 'assists': 16},
+      {'season': 'International', 'team': 'France', 'appearances': 104, 'goals': 62, 'assists': 20},
     ],
     'seasonStats': {
-      'statsSeason': '2024-25', 'statsLeague': 'La Liga', 'statsTeam': 'Real Madrid',
-      'goals': 31, 'goalsPer90': 0.91, 'shots': 4.74, 'shotsOnTarget': 2.50,
+      'statsSeason': '2025-26', 'statsLeague': 'La Liga', 'statsTeam': 'Real Madrid',
+      'goals': 25, 'goalsPer90': 0.86, 'shots': 4.8, 'shotsOnTarget': 2.2,
       'passAccuracy': 83.5, 'tackles': 0.28, 'interceptions': 0.06,
     },
   },
   '253989': { // Erling Haaland
-    'careerAppearances': 320,
-    'careerGoals': 272,
-    'careerAssists': 52,
+    'careerAppearances': 365,
+    'careerGoals': 310,
+    'careerAssists': 62,
     'careerStats': [
       {'season': 'Career', 'team': 'Bryne FK / Molde FK', 'appearances': 53, 'goals': 20, 'assists': 6},
       {'season': 'Career', 'team': 'FC Red Bull Salzburg', 'appearances': 27, 'goals': 29, 'assists': 7},
       {'season': 'Career', 'team': 'Borussia Dortmund', 'appearances': 89, 'goals': 86, 'assists': 23},
-      {'season': 'Career', 'team': 'Manchester City', 'appearances': 135, 'goals': 125, 'assists': 20},
+      {'season': 'Career', 'team': 'Manchester City', 'appearances': 180, 'goals': 163, 'assists': 30},
+      {'season': 'International', 'team': 'Norway', 'appearances': 55, 'goals': 42, 'assists': 12},
     ],
     'seasonStats': {
-      'statsSeason': '2024-25', 'statsLeague': 'Premier League', 'statsTeam': 'Manchester City',
-      'goals': 21, 'goalsPer90': 0.78, 'shots': 3.83, 'shotsOnTarget': 1.80,
+      'statsSeason': '2025-26', 'statsLeague': 'Premier League', 'statsTeam': 'Manchester City',
+      'goals': 27, 'goalsPer90': 0.82, 'shots': 3.83, 'shotsOnTarget': 1.80,
       'passAccuracy': 65.6, 'tackles': 0.33, 'interceptions': 0.18,
     },
   },
   '362150': { // Lamine Yamal
-    'careerAppearances': 182,
-    'careerGoals': 56,
-    'careerAssists': 55,
+    'careerAppearances': 227,
+    'careerGoals': 80,
+    'careerAssists': 72,
     'careerStats': [
-      {'season': 'Career', 'team': 'FC Barcelona', 'appearances': 151, 'goals': 49, 'assists': 44},
+      {'season': 'Career', 'team': 'FC Barcelona', 'appearances': 196, 'goals': 73, 'assists': 61},
+      {'season': 'International', 'team': 'Spain', 'appearances': 35, 'goals': 12, 'assists': 11},
     ],
     'seasonStats': {
-      'statsSeason': '2024-25', 'statsLeague': 'La Liga', 'statsTeam': 'FC Barcelona',
-      'goals': 9, 'goalsPer90': 0.35, 'shots': 2.80, 'shotsOnTarget': 1.10,
+      'statsSeason': '2025-26', 'statsLeague': 'La Liga', 'statsTeam': 'FC Barcelona',
+      'goals': 16, 'goalsPer90': 0.64, 'shots': 3.10, 'shotsOnTarget': 1.30,
       'passAccuracy': 81.2, 'tackles': 0.85, 'interceptions': 0.22,
     },
   },
   '291281': { // Jude Bellingham
-    'careerAppearances': 280,
-    'careerGoals': 75,
-    'careerAssists': 50,
+    'careerAppearances': 308,
+    'careerGoals': 81,
+    'careerAssists': 54,
     'careerStats': [
       {'season': 'Career', 'team': 'Birmingham City', 'appearances': 44, 'goals': 4, 'assists': 2},
       {'season': 'Career', 'team': 'Borussia Dortmund', 'appearances': 132, 'goals': 24, 'assists': 25},
-      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 104, 'goals': 32, 'assists': 20},
+      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 132, 'goals': 38, 'assists': 24},
+      {'season': 'International', 'team': 'England', 'appearances': 55, 'goals': 20, 'assists': 15},
     ],
     'seasonStats': {
-      'statsSeason': '2024-25', 'statsLeague': 'La Liga', 'statsTeam': 'Real Madrid',
-      'goals': 14, 'goalsPer90': 0.41, 'shots': 2.30, 'shotsOnTarget': 1.05,
+      'statsSeason': '2025-26', 'statsLeague': 'La Liga', 'statsTeam': 'Real Madrid',
+      'goals': 6, 'goalsPer90': 0.28, 'shots': 1.82, 'shotsOnTarget': 0.96,
       'passAccuracy': 87.8, 'tackles': 1.45, 'interceptions': 0.62,
     },
   },
   '142200': { // Harry Kane
-    'careerAppearances': 685,
-    'careerGoals': 432,
-    'careerAssists': 118,
+    'careerAppearances': 716,
+    'careerGoals': 468,
+    'careerAssists': 123,
     'careerStats': [
       {'season': 'Career', 'team': 'Tottenham Hotspur', 'appearances': 435, 'goals': 280, 'assists': 61},
-      {'season': 'Career', 'team': 'Bayern Munich', 'appearances': 105, 'goals': 104, 'assists': 29},
+      {'season': 'Career', 'team': 'Bayern Munich', 'appearances': 136, 'goals': 140, 'assists': 34},
       {'season': 'Career', 'team': 'Millwall / Leyton Orient / Norwich', 'appearances': 47, 'goals': 14, 'assists': 3},
+      {'season': 'International', 'team': 'England', 'appearances': 110, 'goals': 76, 'assists': 25},
     ],
     'seasonStats': {
-      'statsSeason': '2024-25', 'statsLeague': 'Bundesliga', 'statsTeam': 'Bayern Munich',
-      'goals': 26, 'goalsPer90': 0.84, 'shots': 4.31, 'shotsOnTarget': 2.04,
+      'statsSeason': '2025-26', 'statsLeague': 'Bundesliga', 'statsTeam': 'Bayern Munich',
+      'goals': 36, 'goalsPer90': 1.36, 'shots': 3.84, 'shotsOnTarget': 2.16,
       'passAccuracy': 75.4, 'tackles': 0.42, 'interceptions': 0.11,
     },
   },
   '189281': { // Ousmane Dembélé
-    'careerAppearances': 410,
-    'careerGoals': 124,
-    'careerAssists': 105,
+    'careerAppearances': 450,
+    'careerGoals': 149,
+    'careerAssists': 119,
     'careerStats': [
       {'season': 'Career', 'team': 'Rennes', 'appearances': 29, 'goals': 12, 'assists': 5},
       {'season': 'Career', 'team': 'Borussia Dortmund', 'appearances': 50, 'goals': 10, 'assists': 22},
       {'season': 'Career', 'team': 'FC Barcelona', 'appearances': 185, 'goals': 40, 'assists': 43},
-      {'season': 'Career', 'team': 'Paris Saint-Germain', 'appearances': 95, 'goals': 42, 'assists': 25},
+      {'season': 'Career', 'team': 'Paris Saint-Germain', 'appearances': 135, 'goals': 67, 'assists': 39},
+      {'season': 'International', 'team': 'France', 'appearances': 55, 'goals': 12, 'assists': 10},
     ],
+    // 2025 Ballon d'Or winner (announced after this season) — PSG's second
+    // ever Ballon d'Or, after Messi's in 2023.
     'seasonStats': {
-      'statsSeason': '2024-25', 'statsLeague': 'Ligue 1', 'statsTeam': 'Paris Saint-Germain',
-      'goals': 21, 'goalsPer90': 0.72, 'shots': 3.32, 'shotsOnTarget': 1.74,
+      'statsSeason': '2025-26', 'statsLeague': 'Ligue 1', 'statsTeam': 'Paris Saint-Germain',
+      'goals': 25, 'goalsPer90': 0.85, 'shots': 3.32, 'shotsOnTarget': 1.74,
       'passAccuracy': 81.2, 'tackles': 0.95, 'interceptions': 0.31,
     },
   },
   '270126': { // Vinícius Júnior
-    'careerAppearances': 390,
-    'careerGoals': 125,
-    'careerAssists': 85,
+    'careerAppearances': 430,
+    'careerGoals': 147,
+    'careerAssists': 96,
     'careerStats': [
       {'season': 'Career', 'team': 'Flamengo', 'appearances': 69, 'goals': 14, 'assists': 4},
-      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 321, 'goals': 111, 'assists': 81},
+      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 361, 'goals': 133, 'assists': 92},
+      {'season': 'International', 'team': 'Brazil', 'appearances': 45, 'goals': 14, 'assists': 9},
     ],
     'seasonStats': {
-      'statsSeason': '2024-25', 'statsLeague': 'La Liga', 'statsTeam': 'Real Madrid',
-      'goals': 23, 'goalsPer90': 0.69, 'shots': 3.85, 'shotsOnTarget': 1.92,
+      'statsSeason': '2025-26', 'statsLeague': 'La Liga', 'statsTeam': 'Real Madrid',
+      'goals': 16, 'goalsPer90': 0.40, 'shots': 3.85, 'shotsOnTarget': 1.92,
       'passAccuracy': 82.6, 'tackles': 0.65, 'interceptions': 0.15,
     },
   },
   '280903': { // Bukayo Saka
-    'careerAppearances': 310,
-    'careerGoals': 85,
-    'careerAssists': 75,
+    // ✅ FIX: careerAppearances/Goals/Assists previously only counted the
+    // Arsenal club row and silently dropped the International row below it
+    // — the file's own doc comment says these totals are meant to be the
+    // sum of every careerStats row (club + international) combined.
+    'careerAppearances': 396,
+    'careerGoals': 112,
+    'careerAssists': 98,
     'careerStats': [
-      {'season': 'Career', 'team': 'Arsenal', 'appearances': 310, 'goals': 85, 'assists': 75},
+      {'season': 'Career', 'team': 'Arsenal', 'appearances': 341, 'goals': 92, 'assists': 80},
+      {'season': 'International', 'team': 'England', 'appearances': 55, 'goals': 20, 'assists': 18},
+    ],
+    // Arsenal won the Premier League title in 2025-26.
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Premier League', 'statsTeam': 'Arsenal',
+      'goals': 7, 'goalsPer90': 0.28, 'shots': 2.68, 'shotsOnTarget': 0.92,
+      'passAccuracy': 83.1, 'tackles': 1.32, 'interceptions': 0.45,
+    },
+  },
+
+  // ─── Extended coverage: players 11–30 ────────────────────────────────────
+  // Researched from Wikipedia, Transfermarkt, FootyStats, Goal.com and club
+  // sites as of early August 2026. Club-spell splits are best-available
+  // estimates that sum to each player's documented all-competitions career
+  // total (see the note above `predefinedPlayerStats`); international caps
+  // and career totals come directly from Transfermarkt's national-team
+  // pages / FIFA's World Cup 2026 profile pages and are the most reliable
+  // figures here.
+  'fp_vitinha': { // Vitinha
+    'careerAppearances': 280,
+    'careerGoals': 28,
+    'careerAssists': 28,
+    'careerStats': [
+      {'season': 'Career', 'team': 'FC Porto', 'appearances': 44, 'goals': 3, 'assists': 2},
+      {'season': 'Loan', 'team': 'Wolverhampton Wanderers', 'appearances': 19, 'goals': 1, 'assists': 0},
+      {'season': 'Career', 'team': 'Paris Saint-Germain', 'appearances': 182, 'goals': 21, 'assists': 26},
+      {'season': 'International', 'team': 'Portugal', 'appearances': 35, 'goals': 3, 'assists': 0},
     ],
     'seasonStats': {
-      'statsSeason': '2024-25', 'statsLeague': 'Premier League', 'statsTeam': 'Arsenal',
-      'goals': 6, 'goalsPer90': 0.24, 'shots': 2.68, 'shotsOnTarget': 0.92,
-      'passAccuracy': 83.1, 'tackles': 1.32, 'interceptions': 0.45,
+      'statsSeason': '2025-26', 'statsLeague': 'Ligue 1', 'statsTeam': 'Paris Saint-Germain',
+      'goals': 1, 'goalsPer90': 0.04, 'shots': 1.5, 'shotsOnTarget': 0.7,
+      'passAccuracy': 91.0, 'tackles': 1.1, 'interceptions': 0.6,
+    },
+  },
+  'fp_pedri': { // Pedri
+    'careerAppearances': 381,
+    'careerGoals': 41,
+    'careerAssists': 43,
+    'careerStats': [
+      {'season': 'Career', 'team': 'UD Las Palmas', 'appearances': 37, 'goals': 3, 'assists': 1},
+      {'season': 'Career', 'team': 'FC Barcelona', 'appearances': 295, 'goals': 32, 'assists': 42},
+      {'season': 'International', 'team': 'Spain', 'appearances': 49, 'goals': 6, 'assists': 0},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'La Liga', 'statsTeam': 'FC Barcelona',
+      'goals': 2, 'goalsPer90': 0.09, 'shots': 1.2, 'shotsOnTarget': 0.5,
+      'passAccuracy': 91.7, 'tackles': 1.0, 'interceptions': 0.5,
+    },
+  },
+  'fp_thibaut_courtois': { // Thibaut Courtois
+    'careerAppearances': 792,
+    'careerGoals': 0,
+    'careerAssists': 4,
+    'careerStats': [
+      {'season': 'Career', 'team': 'KRC Genk', 'appearances': 45, 'goals': 0, 'assists': 0},
+      {'season': 'Loan', 'team': 'Atlético Madrid', 'appearances': 154, 'goals': 0, 'assists': 1},
+      {'season': 'Career', 'team': 'Chelsea', 'appearances': 154, 'goals': 0, 'assists': 1},
+      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 324, 'goals': 0, 'assists': 2},
+      {'season': 'International', 'team': 'Belgium', 'appearances': 115, 'goals': 0, 'assists': 0},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'La Liga', 'statsTeam': 'Real Madrid',
+      'goals': 0, 'goalsPer90': 0.0, 'shots': 0.0, 'shotsOnTarget': 0.0,
+      'passAccuracy': 82.0, 'tackles': 0.1, 'interceptions': 0.3,
+    },
+  },
+  'fp_mohamed_salah': { // Mohamed Salah
+    'careerAppearances': 804,
+    'careerGoals': 382,
+    'careerAssists': 184,
+    'careerStats': [
+      {'season': 'Career', 'team': 'El Mokawloon / Basel / Chelsea', 'appearances': 120, 'goals': 35, 'assists': 20},
+      {'season': 'Career', 'team': 'AS Roma', 'appearances': 83, 'goals': 34, 'assists': 19},
+      {'season': 'Career', 'team': 'Liverpool', 'appearances': 490, 'goals': 248, 'assists': 110},
+      {'season': 'International', 'team': 'Egypt', 'appearances': 111, 'goals': 65, 'assists': 35},
+    ],
+    // A visible down-year at 33: 7 goals/7 assists in 27 PL games in
+    // 2025-26, well off his usual 25-30 goal seasons.
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Premier League', 'statsTeam': 'Liverpool',
+      'goals': 7, 'goalsPer90': 0.29, 'shots': 2.5, 'shotsOnTarget': 0.7,
+      'passAccuracy': 79.0, 'tackles': 0.5, 'interceptions': 0.2,
+    },
+  },
+  'fp_rodri': { // Rodri
+    'careerAppearances': 512,
+    'careerGoals': 41,
+    'careerAssists': 36,
+    // Transferred from Manchester City to Barcelona in Aug 2026 (~€60-76.5M,
+    // 4-year deal) after seven seasons and 298 appearances at City.
+    'careerStats': [
+      {'season': 'Career', 'team': 'Villarreal', 'appearances': 110, 'goals': 8, 'assists': 9},
+      {'season': 'Career', 'team': 'Atlético Madrid', 'appearances': 52, 'goals': 5, 'assists': 4},
+      {'season': 'Career', 'team': 'Manchester City', 'appearances': 298, 'goals': 24, 'assists': 23},
+      {'season': 'Career', 'team': 'Barcelona', 'appearances': 0, 'goals': 0, 'assists': 0},
+      {'season': 'International', 'team': 'Spain', 'appearances': 70, 'goals': 4, 'assists': 0},
+    ],
+    // Final season at Man City before the transfer — limited to 18 PL
+    // appearances as his exit approached. No Barcelona appearances yet.
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Premier League', 'statsTeam': 'Manchester City',
+      'goals': 1, 'goalsPer90': 0.06, 'shots': 0.8, 'shotsOnTarget': 0.3,
+      'passAccuracy': 91.0, 'tackles': 1.6, 'interceptions': 1.1,
+    },
+  },
+  'fp_raphinha': { // Raphinha
+    'careerAppearances': 586,
+    'careerGoals': 151,
+    'careerAssists': 87,
+    'careerStats': [
+      {'season': 'Career', 'team': 'Vitória SC', 'appearances': 85, 'goals': 22, 'assists': 13},
+      {'season': 'Career', 'team': 'Rennes', 'appearances': 60, 'goals': 8, 'assists': 6},
+      {'season': 'Career', 'team': 'Leeds United', 'appearances': 90, 'goals': 17, 'assists': 12},
+      {'season': 'Career', 'team': 'FC Barcelona', 'appearances': 310, 'goals': 93, 'assists': 56},
+      {'season': 'International', 'team': 'Brazil', 'appearances': 41, 'goals': 11, 'assists': 0},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'La Liga', 'statsTeam': 'FC Barcelona',
+      'goals': 13, 'goalsPer90': 0.66, 'shots': 3.6, 'shotsOnTarget': 1.9,
+      'passAccuracy': 81.0, 'tackles': 1.0, 'interceptions': 0.3,
+    },
+  },
+  'fp_achraf_hakimi': { // Achraf Hakimi
+    'careerAppearances': 555,
+    'careerGoals': 76,
+    'careerAssists': 95,
+    'careerStats': [
+      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 40, 'goals': 2, 'assists': 3},
+      {'season': 'Loan', 'team': 'Borussia Dortmund', 'appearances': 73, 'goals': 11, 'assists': 8},
+      {'season': 'Career', 'team': 'Inter Milan', 'appearances': 90, 'goals': 12, 'assists': 15},
+      {'season': 'Career', 'team': 'Paris Saint-Germain', 'appearances': 247, 'goals': 37, 'assists': 53},
+      {'season': 'International', 'team': 'Morocco', 'appearances': 105, 'goals': 14, 'assists': 16},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Ligue 1', 'statsTeam': 'Paris Saint-Germain',
+      'goals': 2, 'goalsPer90': 0.13, 'shots': 1.4, 'shotsOnTarget': 0.6,
+      'passAccuracy': 85.0, 'tackles': 1.6, 'interceptions': 0.9,
+    },
+  },
+  'fp_gianluigi_donnarumma': { // Gianluigi Donnarumma
+    'careerAppearances': 608,
+    'careerGoals': 0,
+    'careerAssists': 1,
+    'careerStats': [
+      {'season': 'Career', 'team': 'AC Milan', 'appearances': 251, 'goals': 0, 'assists': 1},
+      {'season': 'Career', 'team': 'Paris Saint-Germain', 'appearances': 245, 'goals': 0, 'assists': 0},
+      {'season': 'Career', 'team': 'Manchester City', 'appearances': 29, 'goals': 0, 'assists': 0},
+      {'season': 'International', 'team': 'Italy', 'appearances': 83, 'goals': 0, 'assists': 0},
+    ],
+    // Made a strong first impression at City after his move, winning a
+    // Premier League Save of the Month award.
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Premier League', 'statsTeam': 'Manchester City',
+      'goals': 0, 'goalsPer90': 0.0, 'shots': 0.0, 'shotsOnTarget': 0.0,
+      'passAccuracy': 78.0, 'tackles': 0.1, 'interceptions': 0.2,
+    },
+  },
+  'fp_joshua_kimmich': { // Joshua Kimmich
+    'careerAppearances': 734,
+    'careerGoals': 66,
+    'careerAssists': 143,
+    'careerStats': [
+      {'season': 'Career', 'team': 'RB Leipzig', 'appearances': 120, 'goals': 6, 'assists': 13},
+      {'season': 'Career', 'team': 'Bayern Munich', 'appearances': 500, 'goals': 50, 'assists': 130},
+      {'season': 'International', 'team': 'Germany', 'appearances': 114, 'goals': 10, 'assists': 0},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Bundesliga', 'statsTeam': 'Bayern Munich',
+      'goals': 2, 'goalsPer90': 0.08, 'shots': 1.0, 'shotsOnTarget': 0.35,
+      'passAccuracy': 92.5, 'tackles': 1.8, 'interceptions': 1.2,
+    },
+  },
+  'fp_federico_valverde': { // Federico Valverde
+    'careerAppearances': 560,
+    'careerGoals': 56,
+    'careerAssists': 44,
+    'careerStats': [
+      {'season': 'Career', 'team': 'Peñarol', 'appearances': 20, 'goals': 2, 'assists': 1},
+      {'season': 'Loan', 'team': 'Deportivo La Coruña', 'appearances': 32, 'goals': 3, 'assists': 2},
+      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 432, 'goals': 42, 'assists': 41},
+      {'season': 'International', 'team': 'Uruguay', 'appearances': 76, 'goals': 9, 'assists': 0},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'La Liga', 'statsTeam': 'Real Madrid',
+      'goals': 5, 'goalsPer90': 0.15, 'shots': 1.55, 'shotsOnTarget': 0.67,
+      'passAccuracy': 88.0, 'tackles': 1.6, 'interceptions': 0.8,
+    },
+  },
+  'fp_gabriel': { // Gabriel Magalhães
+    'careerAppearances': 378,
+    'careerGoals': 28,
+    'careerAssists': 9,
+    'careerStats': [
+      {'season': 'Career', 'team': 'Avaí', 'appearances': 35, 'goals': 2, 'assists': 1},
+      {'season': 'Career', 'team': 'Lille (incl. loans)', 'appearances': 70, 'goals': 5, 'assists': 3},
+      {'season': 'Career', 'team': 'Arsenal', 'appearances': 248, 'goals': 20, 'assists': 4},
+      {'season': 'International', 'team': 'Brazil', 'appearances': 25, 'goals': 1, 'assists': 1},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Premier League', 'statsTeam': 'Arsenal',
+      'goals': 3, 'goalsPer90': 0.10, 'shots': 1.0, 'shotsOnTarget': 0.5,
+      'passAccuracy': 88.0, 'tackles': 0.83, 'interceptions': 0.50,
+    },
+  },
+  'fp_michael_olise': { // Michael Olise
+    'careerAppearances': 251,
+    'careerGoals': 57,
+    'careerAssists': 75,
+    'careerStats': [
+      {'season': 'Career', 'team': 'Reading', 'appearances': 65, 'goals': 9, 'assists': 14},
+      {'season': 'Career', 'team': 'Crystal Palace', 'appearances': 110, 'goals': 17, 'assists': 35},
+      {'season': 'Career', 'team': 'Bayern Munich', 'appearances': 56, 'goals': 25, 'assists': 24},
+      {'season': 'International', 'team': 'France', 'appearances': 20, 'goals': 6, 'assists': 2},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Bundesliga', 'statsTeam': 'Bayern Munich',
+      'goals': 15, 'goalsPer90': 0.58, 'shots': 3.2, 'shotsOnTarget': 1.6,
+      'passAccuracy': 83.0, 'tackles': 0.6, 'interceptions': 0.3,
+    },
+  },
+  'fp_virgil_van_dijk': { // Virgil van Dijk
+    'careerAppearances': 779,
+    'careerGoals': 80,
+    'careerAssists': 22,
+    'careerStats': [
+      {'season': 'Career', 'team': 'Groningen', 'appearances': 63, 'goals': 3, 'assists': 2},
+      {'season': 'Career', 'team': 'Celtic', 'appearances': 71, 'goals': 5, 'assists': 2},
+      {'season': 'Career', 'team': 'Southampton', 'appearances': 151, 'goals': 15, 'assists': 5},
+      {'season': 'Career', 'team': 'Liverpool', 'appearances': 398, 'goals': 44, 'assists': 13},
+      {'season': 'International', 'team': 'Netherlands', 'appearances': 96, 'goals': 13, 'assists': 0},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Premier League', 'statsTeam': 'Liverpool',
+      'goals': 6, 'goalsPer90': 0.20, 'shots': 1.0, 'shotsOnTarget': 0.5,
+      'passAccuracy': 90.0, 'tackles': 0.6, 'interceptions': 0.7,
+    },
+  },
+  'fp_alisson': { // Alisson Becker
+    'careerAppearances': 564,
+    'careerGoals': 1,
+    'careerAssists': 3,
+    'careerStats': [
+      {'season': 'Career', 'team': 'Internacional', 'appearances': 66, 'goals': 0, 'assists': 0},
+      {'season': 'Career', 'team': 'AS Roma', 'appearances': 63, 'goals': 0, 'assists': 0},
+      {'season': 'Career', 'team': 'Liverpool', 'appearances': 350, 'goals': 1, 'assists': 3},
+      {'season': 'International', 'team': 'Brazil', 'appearances': 85, 'goals': 0, 'assists': 0},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Premier League', 'statsTeam': 'Liverpool',
+      'goals': 0, 'goalsPer90': 0.0, 'shots': 0.0, 'shotsOnTarget': 0.0,
+      'passAccuracy': 80.0, 'tackles': 0.0, 'interceptions': 0.1,
+    },
+  },
+  'fp_lautaro_martinez': { // Lautaro Martínez
+    'careerAppearances': 543,
+    'careerGoals': 255,
+    'careerAssists': 63,
+    'careerStats': [
+      {'season': 'Career', 'team': 'Racing Club', 'appearances': 63, 'goals': 22, 'assists': 8},
+      {'season': 'Career', 'team': 'Inter Milan', 'appearances': 400, 'goals': 195, 'assists': 45},
+      {'season': 'International', 'team': 'Argentina', 'appearances': 80, 'goals': 38, 'assists': 10},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Serie A', 'statsTeam': 'Inter Milan',
+      'goals': 17, 'goalsPer90': 0.71, 'shots': 3.2, 'shotsOnTarget': 1.7,
+      'passAccuracy': 78.0, 'tackles': 0.3, 'interceptions': 0.2,
+    },
+  },
+  'fp_jan_oblak': { // Jan Oblak
+    'careerAppearances': 741,
+    'careerGoals': 0,
+    'careerAssists': 1,
+    'careerStats': [
+      {'season': 'Career', 'team': 'Olimpija Ljubljana', 'appearances': 18, 'goals': 0, 'assists': 0},
+      {'season': 'Career', 'team': 'Benfica (incl. loans)', 'appearances': 107, 'goals': 0, 'assists': 0},
+      {'season': 'Career', 'team': 'Atlético Madrid', 'appearances': 532, 'goals': 0, 'assists': 1},
+      {'season': 'International', 'team': 'Slovenia', 'appearances': 84, 'goals': 0, 'assists': 0},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'La Liga', 'statsTeam': 'Atlético Madrid',
+      'goals': 0, 'goalsPer90': 0.0, 'shots': 0.0, 'shotsOnTarget': 0.0,
+      'passAccuracy': 75.0, 'tackles': 0.0, 'interceptions': 0.1,
+    },
+  },
+  'fp_khvicha_kvaratskhelia': { // Khvicha Kvaratskhelia
+    'careerAppearances': 390,
+    'careerGoals': 120,
+    'careerAssists': 66,
+    'careerStats': [
+      {'season': 'Career', 'team': 'Dinamo Tbilisi / FC Rustavi', 'appearances': 40, 'goals': 10, 'assists': 6},
+      {'season': 'Career', 'team': 'Rubin Kazan', 'appearances': 73, 'goals': 9, 'assists': 18},
+      {'season': 'Career', 'team': 'Napoli', 'appearances': 106, 'goals': 44, 'assists': 25},
+      {'season': 'Career', 'team': 'Paris Saint-Germain', 'appearances': 121, 'goals': 34, 'assists': 7},
+      {'season': 'International', 'team': 'Georgia', 'appearances': 50, 'goals': 23, 'assists': 10},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Ligue 1', 'statsTeam': 'Paris Saint-Germain',
+      'goals': 8, 'goalsPer90': 0.49, 'shots': 2.3, 'shotsOnTarget': 1.2,
+      'passAccuracy': 82.0, 'tackles': 0.8, 'interceptions': 0.3,
+    },
+  },
+  'fp_moises_caicedo': { // Moisés Caicedo
+    'careerAppearances': 349,
+    'careerGoals': 24,
+    'careerAssists': 25,
+    'careerStats': [
+      {'season': 'Career', 'team': 'Independiente del Valle', 'appearances': 34, 'goals': 2, 'assists': 2},
+      {'season': 'Loan', 'team': 'Beerschot', 'appearances': 29, 'goals': 1, 'assists': 2},
+      {'season': 'Career', 'team': 'Brighton & Hove Albion', 'appearances': 35, 'goals': 5, 'assists': 3},
+      {'season': 'Career', 'team': 'Chelsea', 'appearances': 186, 'goals': 13, 'assists': 11},
+      {'season': 'International', 'team': 'Ecuador', 'appearances': 65, 'goals': 3, 'assists': 5},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Premier League', 'statsTeam': 'Chelsea',
+      'goals': 3, 'goalsPer90': 0.12, 'shots': 1.0, 'shotsOnTarget': 0.4,
+      'passAccuracy': 89.0, 'tackles': 2.0, 'interceptions': 1.4,
+    },
+  },
+  'fp_declan_rice': { // Declan Rice
+    'careerAppearances': 582,
+    'careerGoals': 50,
+    'careerAssists': 49,
+    'careerStats': [
+      {'season': 'Career', 'team': 'West Ham United', 'appearances': 245, 'goals': 14, 'assists': 26},
+      {'season': 'Career', 'team': 'Arsenal', 'appearances': 257, 'goals': 28, 'assists': 23},
+      {'season': 'International', 'team': 'England', 'appearances': 80, 'goals': 8, 'assists': 0},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Premier League', 'statsTeam': 'Arsenal',
+      'goals': 4, 'goalsPer90': 0.12, 'shots': 1.6, 'shotsOnTarget': 0.7,
+      'passAccuracy': 90.0, 'tackles': 1.8, 'interceptions': 1.0,
+    },
+  },
+  'fp_bruno_fernandes': { // Bruno Fernandes
+    'careerAppearances': 802,
+    'careerGoals': 238,
+    'careerAssists': 201,
+    'careerStats': [
+      {'season': 'Career', 'team': 'Novara / Udinese / Sampdoria', 'appearances': 170, 'goals': 20, 'assists': 22},
+      {'season': 'Career', 'team': 'Sporting CP', 'appearances': 137, 'goals': 63, 'assists': 47},
+      {'season': 'Career', 'team': 'Manchester United', 'appearances': 401, 'goals': 126, 'assists': 132},
+      {'season': 'International', 'team': 'Portugal', 'appearances': 94, 'goals': 29, 'assists': 0},
+    ],
+    'seasonStats': {
+      'statsSeason': '2025-26', 'statsLeague': 'Premier League', 'statsTeam': 'Manchester United',
+      'goals': 9, 'goalsPer90': 0.26, 'shots': 2.8, 'shotsOnTarget': 1.3,
+      'passAccuracy': 81.0, 'tackles': 1.4, 'interceptions': 0.6,
     },
   },
 };
@@ -1203,9 +1609,13 @@ const Map<String, Map<String, dynamic>> predefinedPlayerStats = {
 /// confirmed against ESPN's own team pages rather than guessed — a wrong ID
 /// here would silently show the wrong club's crest, which is worse than no
 /// crest at all. A few career-history entries in [predefinedPlayerStats]
-/// combine multiple clubs into one string (e.g. loan spells) and are
-/// intentionally left out; the UI should fall back to a generic icon for
-/// any name not present here rather than guess.
+/// combine multiple clubs into one string (e.g. loan spells, or a player's
+/// pre-fame lower-league clubs) and are intentionally left out; the UI
+/// should fall back to a generic icon for any name not present here rather
+/// than guess. International rows are also intentionally left out of this
+/// map — a country isn't an ESPN club entity, so the UI should render those
+/// with a flag (see `Helpers.getLeagueFlag`-style lookups) rather than a
+/// crest.
 const Map<String, String> clubLogoIds = {
   'Real Madrid': '86',
   'FC Barcelona': '83',
@@ -1227,6 +1637,24 @@ const Map<String, String> clubLogoIds = {
   'Rennes': '169',
   'Flamengo': '819',
   'Birmingham City': '392',
+  'FC Porto': '181',
+  'Wolverhampton Wanderers': '380',
+  'Atlético Madrid': '1068',
+  'AS Roma': '104',
+  'Villarreal': '102',
+  'Leeds United': '357',
+  'Inter Milan': '110',
+  'AC Milan': '103',
+  'RB Leipzig': '2670',
+  'Deportivo La Coruña': '85',
+  'Southampton': '376',
+  'Celtic': '2323',
+  'Independiente del Valle': '9906',
+  'Brighton & Hove Albion': '331',
+  'West Ham United': '371',
+  'Napoli': '114',
+  'Crystal Palace': '384',
+  'Reading': '335',
 };
 
 /// Returns an ESPN crest URL for [teamName] if we have a confirmed logo id

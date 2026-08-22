@@ -34,17 +34,12 @@ class NewsArticle {
   @HiveField(9)
   final Map<String, dynamic>? links;
 
-  // ── New fields added for richer display ──────────────────────────────────────
-  /// Caption/alt-text for the hero image (from ESPN images[].caption)
   @HiveField(10)
   final String imageCaption;
 
-  /// Direct web URL for opening in browser / WebView
-  /// Extracted from links.web.href
   @HiveField(11)
   final String? webUrl;
 
-  /// Article type returned by ESPN: 'story', 'video', 'media', etc.
   @HiveField(12)
   final String articleType;
 
@@ -64,10 +59,8 @@ class NewsArticle {
     this.articleType = 'story',
   });
 
-  /// True when this article is a video-type item
   bool get isVideo => articleType == 'video' || videoUrl != null;
 
-  /// Best URL to open — web URL first, then video, then null
   String? get openUrl => webUrl ?? videoUrl;
 
   Map<String, dynamic> toJson() {
@@ -97,12 +90,10 @@ class NewsArticle {
       imageUrl: json['imageUrl']?.toString() ?? '',
       publishedAt: json['publishedAt']?.toString() ?? '',
       author: json['author']?.toString() ?? 'ESPN',
-      categories: (json['categories'] as List?)
-          ?.map((c) => c.toString())
-          .toList() ??
-          [],
+      categories: (json['categories'] as List?)?.map((c) => c.toString()).toList() ?? [],
       videoUrl: json['videoUrl']?.toString(),
-      links: json['links'] as Map<String, dynamic>?,
+      // ✅ FIX: safe conversion for Hive-deserialized maps
+      links: json['links']?.cast<String, dynamic>(),
       imageCaption: json['imageCaption']?.toString() ?? '',
       webUrl: json['webUrl']?.toString(),
       articleType: json['articleType']?.toString() ?? 'story',

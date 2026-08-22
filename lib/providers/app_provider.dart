@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:livescore/services/sport_service.dart';
 import 'package:livescore/services/preferences_service.dart';
+import 'package:livescore/services/notification_service.dart';
 import 'package:livescore/models/game_model.dart';
 import 'package:livescore/models/standing_model.dart';
 import 'package:livescore/models/league_leader_model.dart';
@@ -37,6 +38,85 @@ bool _isFootballArticle(NewsArticle a) {
 class AppProvider extends ChangeNotifier {
   final SportService _sportService = SportService();
   final PreferencesService _prefs = PreferencesService();
+  final NotificationService _notificationService = NotificationService();
+
+  // Local, on-device notification center — favorite-club/player news +
+  // favorite-team full-time results. See services/notification_service.dart.
+  int _unreadNotificationCount = 0;
+  int get unreadNotificationCount => _unreadNotificationCount;
+
+  void _refreshUnreadNotificationCount() {
+    _unreadNotificationCount = _notificationService.unreadCount;
+  }
+
+  /// Scans the currently-loaded news + today's/yesterday's games for
+  /// mentions of favorite clubs/players and favorite-team full-time
+  /// results, and persists any new matches as notifications. Safe to call
+  /// repeatedly — NotificationService de-dupes by content-derived id, so
+  /// this never resets an already-read notification back to unread.
+  Future<void> generateNotifications() async {
+    try {
+      final favTeamNames = favoriteTeamIds
+          .map((id) {
+        final matches = _allTeams.where((t) => t.id == id);
+        if (matches.isEmpty) return null;
+        final team = matches.first;
+        return team.displayName.isNotEmpty ? team.displayName : team.name;
+      })
+          .whereType<String>()
+          .toList();
+
+      await _notificationService.generateNewsNotifications(
+        articles: _news,
+        favoriteTeamNames: favTeamNames,
+        favoritePlayers: favoritePlayers,
+      );
+
+      // Today's games cover most same-day full-time results. A favorite
+      // team's match could also have gone final just before local
+      // midnight, so yesterday's games are fetched here directly through
+      // SportService (which caches internally) rather than reusing
+      // fetchYesterdaysMatches(), which would overwrite the Yesterday
+      // tab's _allGames/_yesterdaysGames state as a side effect.
+      List<Game> yesterdaysGamesForNotifications = _yesterdaysGames;
+      if (yesterdaysGamesForNotifications.isEmpty) {
+        try {
+          yesterdaysGamesForNotifications = await _sportService.getYesterdaysMatches();
+        } catch (e) {
+          print('[Notifications] Could not fetch yesterday\'s games: $e');
+        }
+      }
+
+      final Map<String, Game> uniqueGames = {
+        for (final g in [..._todaysGames, ...yesterdaysGamesForNotifications]) g.id: g,
+      };
+
+      await _notificationService.generateMatchResultNotifications(
+        games: uniqueGames.values.toList(),
+        favoriteTeamIds: favoriteTeamIds,
+      );
+
+      _refreshUnreadNotificationCount();
+      if (_isMounted) notifyListeners();
+    } catch (e) {
+      print('[Notifications] Error generating notifications: $e');
+    }
+  }
+
+  /// Re-reads the unread count from NotificationService and notifies
+  /// listeners. Call this after returning from a screen (e.g.
+  /// NotificationScreen) that may have marked notifications as read
+  /// directly through NotificationService without going through AppProvider.
+  void refreshUnreadNotificationCount() {
+    _refreshUnreadNotificationCount();
+    notifyListeners();
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    await _notificationService.markAllAsRead();
+    _refreshUnreadNotificationCount();
+    notifyListeners();
+  }
 
   // State variables
   List<Game> _allGames = [];
@@ -210,6 +290,7 @@ class AppProvider extends ChangeNotifier {
         fetchNewsConcurrent(),
         fetchAllTeamsConcurrent(),
       ]);
+      await generateNotifications();
     });
   }
 
@@ -259,6 +340,7 @@ class AppProvider extends ChangeNotifier {
           _paginatedNews = allNews;
           _news = List.from(_paginatedNews);
           notifyListeners();
+          generateNotifications();
         },
       );
     } catch (e) {
@@ -293,6 +375,7 @@ class AppProvider extends ChangeNotifier {
         _paginatedNews = [...newArticles, ..._paginatedNews];
         _news = List.from(_paginatedNews);
         if (_isMounted) notifyListeners();
+        generateNotifications();
       }
     } catch (e) {
       print('[SilentNews] Error: $e');
@@ -580,6 +663,7 @@ class AppProvider extends ChangeNotifier {
       await _prefs.addFavoriteTeam(teamId);
     }
     notifyListeners();
+    generateNotifications();
   }
 
   bool isTeamFavorite(String teamId) => _prefs.isTeamFavorite(teamId);
@@ -636,6 +720,7 @@ class AppProvider extends ChangeNotifier {
         _todaysGames = fresh;
         _allGames = fresh;
         notifyListeners();
+        generateNotifications();
       }
     } catch (e) {
       print('[SilentRefresh] Error: $e');

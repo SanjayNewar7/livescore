@@ -25,11 +25,11 @@ import 'team_detail_screen.dart';
 
 // ── App Links ──────────────────────────────────────────────────────
 class _AppLinks {
-  static const String privacyPolicyUrl = 'https://example.com/privacy-policy';
-  static const String developerUrl = 'https://example.com/developer';
+  static const String privacyPolicyUrl = 'https://raw.githubusercontent.com/SanjayNewar7/livescore/master/privacy_policy.md';
+  static const String developerUrl = 'https://sanjayrajbhandari.com.np/';
   static const String feedbackEmail = 'sanjaynewar007@gmail.com';
-  static const String playStoreUrl = 'https://play.google.com/store/apps/details?id=com.sanjaya.moviehub';
-  static const String buyMeCoffeeUrl = 'https://www.buymeacoffee.com/yourusername';
+  static const String playStoreUrl = 'https://play.google.com/store/apps/details?id=com.sanjaya.livegoal';
+  static const String buyMeCoffeeUrl = 'https://buymeacoffee.com/sanjay_newar7';
   static const String appVersion = '1.0.0';
 }
 

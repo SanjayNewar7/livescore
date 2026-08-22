@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:livescore/models/game_model.dart';
@@ -36,6 +37,35 @@ class _ScheduleResult {
       const _ScheduleResult(recentMatches: [], upcoming: []);
 }
 
+// Caps how many ESPN scoreboard requests are in flight at once. The app
+// fires several independent fetch waves (priority/background leagues ×
+// yesterday/today/tomorrow) that can otherwise burst 50+ parallel requests,
+// which trips ESPN's Akamai bot-rate protection and gets requests 403'd.
+class _Semaphore {
+  _Semaphore(this._max);
+  final int _max;
+  int _current = 0;
+  final List<Completer<void>> _waiters = [];
+
+  Future<void> acquire() async {
+    if (_current < _max) {
+      _current++;
+      return;
+    }
+    final completer = Completer<void>();
+    _waiters.add(completer);
+    await completer.future;
+  }
+
+  void release() {
+    if (_waiters.isNotEmpty) {
+      _waiters.removeAt(0).complete();
+    } else {
+      _current--;
+    }
+  }
+}
+
 class ApiService {
   static final ApiService _instance = ApiService._internal();
   factory ApiService() => _instance;
@@ -44,17 +74,49 @@ class ApiService {
   final http.Client _client = http.Client();
   final Map<String, int> _leaguePriorityCache = {};
   final CacheService _cache = CacheService();
+  // Two independent gates rather than one shared budget: the home screen's
+  // background league/date prefetching is bursty and high-volume, while a
+  // user opening a team page is latency-sensitive and low-volume. Sharing
+  // one gate meant an on-demand team page had to queue behind whatever the
+  // home screen was already bursting, making it feel slower than before
+  // the ESPN rate-limit fix was introduced.
+  final _Semaphore _espnGate = _Semaphore(6);
+  final _Semaphore _teamPageGate = _Semaphore(6);
 
   String _currentLeagueCode = 'eng.1';
+
+  Future<http.Response> _espnGetWithGate(
+      String url, _Semaphore gate, {int retries = 2}) async {
+    for (int attempt = 0; ; attempt++) {
+      await gate.acquire();
+      try {
+        final res = await _client
+            .get(Uri.parse(url), headers: _headers)
+            .timeout(const Duration(seconds: 14),
+            onTimeout: () => http.Response('{}', 408));
+        if (res.statusCode == 403 && attempt < retries) {
+          await Future.delayed(Duration(milliseconds: 600 * (attempt + 1)));
+          continue;
+        }
+        return res;
+      } finally {
+        gate.release();
+      }
+    }
+  }
+
+  Future<http.Response> _espnGet(String url, {int retries = 2}) =>
+      _espnGetWithGate(url, _espnGate, retries: retries);
+
+  /// Same retry/backoff behavior as [_espnGet] but drawn from a separate
+  /// concurrency budget so an on-demand team page never has to wait behind
+  /// the home screen's background prefetching.
+  Future<http.Response> _espnGetTeamPage(String url, {int retries = 2}) =>
+      _espnGetWithGate(url, _teamPageGate, retries: retries);
 
   Map<String, String> get _headers => {
     'Content-Type': 'application/json',
     'Accept': 'application/json, image/*',
-    'Referer': 'https://www.espn.com/',
-    'Origin':  'https://www.espn.com',
-    'User-Agent':
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
-        'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
   };
 
   String _normalizeStatus(String raw) {
@@ -683,10 +745,7 @@ class ApiService {
         final leagueCode = league['code']!;
         final url = '${AppConstants.baseUrl}/$leagueCode/scoreboard?dates=$dateStr';
         try {
-          final res = await _client
-              .get(Uri.parse(url), headers: _headers)
-              .timeout(const Duration(seconds: 14),
-              onTimeout: () => http.Response('{}', 408));
+          final res = await _espnGet(url);
 
           if (res.statusCode == 200) {
             try {
@@ -697,11 +756,14 @@ class ApiService {
               }
               return games;
             } catch (e) {
+              print('[API] ⚠️ $leagueCode ($dateStr) parse error: $e');
               return <Game>[];
             }
           }
+          print('[API] ❌ $leagueCode ($dateStr) HTTP ${res.statusCode}: ${res.body.length > 200 ? res.body.substring(0, 200) : res.body}');
           return <Game>[];
         } catch (e) {
+          print('[API] ❌ $leagueCode ($dateStr) request failed: $e');
           return <Game>[];
         }
       }).toList();
@@ -1088,9 +1150,7 @@ class ApiService {
     final dateStr = _fmt(date.toUtc());
     final url = '${AppConstants.baseUrl}/$leagueCode/scoreboard?dates=$dateStr';
     try {
-      final res = await _client
-          .get(Uri.parse(url), headers: _headers)
-          .timeout(const Duration(seconds: 10));
+      final res = await _espnGet(url);
       if (res.statusCode == 200) return _parseGamesFromScoreboard(json.decode(res.body), leagueCode);
     } catch (e) { print('getGamesByDate $leagueCode: $e'); }
     return [];
@@ -1099,9 +1159,7 @@ class ApiService {
   Future<List<Game>> getGamesByDateString(String leagueCode, String dateStr) async {
     final url = '${AppConstants.baseUrl}/$leagueCode/scoreboard?dates=$dateStr';
     try {
-      final res = await _client
-          .get(Uri.parse(url), headers: _headers)
-          .timeout(const Duration(seconds: 10));
+      final res = await _espnGet(url);
       if (res.statusCode == 200) return _parseGamesFromScoreboard(json.decode(res.body), leagueCode);
     } catch (e) { print('getGamesByDateString $leagueCode: $e'); }
     return [];
@@ -1111,9 +1169,7 @@ class ApiService {
     final seasonQuery = (season != null && season.isNotEmpty) ? '?season=$season' : '';
     final url = '${AppConstants.standingsUrl}/$leagueCode/standings$seasonQuery';
     try {
-      final res = await _client
-          .get(Uri.parse(url), headers: _headers)
-          .timeout(const Duration(seconds: 10));
+      final res = await _espnGet(url);
       if (res.statusCode == 200) {
         return _parseSoccerStandingsFixed(json.decode(res.body), leagueCode);
       }
@@ -2189,6 +2245,7 @@ class ApiService {
     88,  // Eredivisie
     71,  // Brasileirão
     253, // MLS
+    307, // Saudi Pro League — see note on AppConstants.apiFootballLeagueIds
   ];
 
   /// API-Football's `search` query param is documented to accept only
@@ -2282,6 +2339,8 @@ class ApiService {
 
     Map<String, dynamic>? bestEntry;
     int bestScore = -1;
+    bool bestIsExactName = false;
+    bool bestHasTeamMatch = false;
 
     for (final entry in response) {
       if (entry is! Map) continue;
@@ -2294,7 +2353,8 @@ class ApiService {
       final combined = '$firstname $lastname'.trim();
 
       int score = 0;
-      if (name == normalizedFull || combined == normalizedFull) {
+      final isExactName = name == normalizedFull || combined == normalizedFull;
+      if (isExactName) {
         score += 5;
       } else if (lastname.isNotEmpty && normalizedFull.contains(lastname)) {
         score += 2;
@@ -2302,6 +2362,7 @@ class ApiService {
         score += 2;
       }
 
+      bool hasTeamMatch = false;
       if (normalizedTeam.isNotEmpty) {
         final statsList = entry['statistics'] as List? ?? [];
         for (final s in statsList) {
@@ -2312,6 +2373,7 @@ class ApiService {
               team.contains(normalizedTeam) ||
               normalizedTeam.contains(team)) {
             score += 4;
+            hasTeamMatch = true;
             break;
           }
         }
@@ -2320,13 +2382,31 @@ class ApiService {
       if (score > bestScore) {
         bestScore = score;
         bestEntry = entry as Map<String, dynamic>;
+        bestIsExactName = isExactName;
+        bestHasTeamMatch = hasTeamMatch;
       }
     }
 
-    // Require at least a partial name match — never fall back to "just
-    // take the first result" purely on a team-name hit with no name
-    // signal at all, since that risks a teammate's stats.
-    if (bestScore < 2) return null;
+    // ✅ FIX: this used to accept ANY match scoring >= 2, which a bare
+    // surname substring hit (e.g. "Ronaldo") satisfies on its own with no
+    // team corroboration at all. That's exactly how a completely different,
+    // unrelated player's real-but-irrelevant stat line (0 goals, 1 assist,
+    // 32 apps) ended up attached to Cristiano Ronaldo: the search walked a
+    // fixed list of European/Americas leagues Ronaldo doesn't even play
+    // in, found some other "Ronaldo" there, and a plain "contains" hit was
+    // considered good enough — producing a non-null, non-empty result that
+    // then blocked the known-good predefined-stats fallback downstream
+    // (see sport_service.dart Step 3.6), since that fallback only checks
+    // "is the result empty", not "is the result actually this player".
+    //
+    // Now we require one of:
+    //   - an exact full-name match (unambiguous on its own), OR
+    //   - a partial name match corroborated by a team-name hit
+    // A team-name hit alone, or a partial-name hit alone, is no longer
+    // enough — we'd rather return nothing and let the caller fall back to
+    // known-good data than silently attach a stranger's numbers.
+    final confidentMatch = bestIsExactName || (bestScore >= 2 && bestHasTeamMatch);
+    if (!confidentMatch) return null;
     return bestEntry;
   }
 
@@ -4042,38 +4122,93 @@ class ApiService {
       }) async {
     print('[TeamPage] ▶ getTeamPageData called: teamId=$teamId leagueCode=$leagueCode');
 
+    // Composed from the two staged methods below so there's a single
+    // source of truth for the club/national fetch + fallback logic.
+    final matches = await getTeamMatchesData(teamId, leagueCode: leagueCode);
+    final squadAnalytics = await getTeamSquadAndAnalytics(
+      teamId,
+      queryLeagueCode: matches.queryLeagueCode,
+      recentMatches: matches.recentMatches,
+    );
+
+    return TeamPageData(
+      leagueCode: matches.leagueCode,
+      standingInfo: matches.standingInfo,
+      recentMatches: matches.recentMatches,
+      upcoming: matches.upcoming,
+      squad: squadAnalytics.squad,
+      analytics: squadAnalytics.analytics,
+      headCoach: matches.headCoach,
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STAGE 1: MATCHES-ONLY (fast path — schedule + standing, no roster)
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  /// Fetches just the schedule + standing so the Matches tab can render as
+  /// soon as possible, without waiting on the (much slower) roster fetch,
+  /// headshot enrichment, and analytics calculation.
+  Future<TeamMatchesData> getTeamMatchesData(
+      String teamId, {
+        String? leagueCode,
+      }) async {
+    print('[TeamPage] ▶ getTeamMatchesData called: teamId=$teamId leagueCode=$leagueCode');
+
     final resolvedLeague = leagueCode ?? await _detectTeamLeague(teamId);
     print('[TeamPage] Resolved league: $resolvedLeague');
 
     // ── National team path: World Cup or other international ──────────────────
     if (AppConstants.isNationalTeamLeague(resolvedLeague)) {
-      return _getTeamPageDataNational(teamId, resolvedLeague);
+      return _getTeamMatchesDataNational(teamId, resolvedLeague);
     }
 
     // ── Club team path with cross-season handling ─────────────────────────────
-    return _getTeamPageDataClub(teamId, resolvedLeague);
+    return _getTeamMatchesDataClub(teamId, resolvedLeague);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STAGE 2: SQUAD + ANALYTICS (background path — roster, headshots, analytics)
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  /// Fetches the roster (with headshot enrichment) and computes analytics
+  /// from it plus the [recentMatches] already fetched in stage 1.
+  /// [queryLeagueCode] must be the `queryLeagueCode` from the
+  /// [TeamMatchesData] returned by [getTeamMatchesData] for the same team,
+  /// so the club/national routing matches stage 1 exactly.
+  Future<TeamSquadAnalyticsData> getTeamSquadAndAnalytics(
+      String teamId, {
+        required String queryLeagueCode,
+        required List<TeamRecentMatch> recentMatches,
+      }) async {
+    print('[TeamPage] ▶ getTeamSquadAndAnalytics called: teamId=$teamId leagueCode=$queryLeagueCode');
+
+    if (AppConstants.isNationalTeamLeague(queryLeagueCode)) {
+      return _getTeamSquadAnalyticsDataNational(teamId, queryLeagueCode, recentMatches);
+    }
+
+    return _getTeamSquadAnalyticsDataClub(teamId, queryLeagueCode, recentMatches);
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
   // CLUB TEAM DATA WITH CROSS-SEASON HANDLING
   // ══════════════════════════════════════════════════════════════════════════════
 
-  Future<TeamPageData> _getTeamPageDataClub(
+  Future<TeamMatchesData> _getTeamMatchesDataClub(
       String teamId,
       String leagueCode,
       ) async {
-    print('[ClubTeam] ▶ _getTeamPageDataClub teamId=$teamId league=$leagueCode');
+    print('[ClubTeam] ▶ _getTeamMatchesDataClub teamId=$teamId league=$leagueCode');
 
-    // Get current season data first
+    // Get current season data first — roster is intentionally NOT fetched
+    // here; it's fetched separately in stage 2 so matches can render sooner.
     final currentResults = await Future.wait([
       _fetchTeamSchedule(teamId, leagueCode),
-      _fetchTeamRosterFull(teamId, leagueCode),
       _fetchTeamStandingInfo(teamId, leagueCode),
     ]);
 
     _ScheduleResult currentSchedule = currentResults[0] as _ScheduleResult;
-    final currentSquad = currentResults[1] as List<TeamSquadPlayer>;
-    final currentStanding = currentResults[2] as TeamStandingInfo;
+    final currentStanding = currentResults[1] as TeamStandingInfo;
 
     print('[ClubTeam] Current season: ${currentSchedule.recentMatches.length} recent, ${currentSchedule.upcoming.length} upcoming');
 
@@ -4090,31 +4225,40 @@ class ApiService {
       } catch (_) {}
     }
 
-    // ── If season hasn't started or all matches are old, fetch last season ──
+    // ── Fetch last-season (recent) and next-season (upcoming) fallbacks in
+    // parallel — they're independent of each other, so there's no reason to
+    // make the second wait for the first to finish.
     _ScheduleResult recentMatchesFromLastSeason = _ScheduleResult.empty();
     _ScheduleResult upcomingFromNextSeason = _ScheduleResult.empty();
 
-    if (currentSchedule.recentMatches.isEmpty || allMatchesOld) {
-      final lastYear = now.year - 1;
-      print('[ClubTeam] Fetching last season ($lastYear) for recent matches');
-      final lastSeasonSchedule = await _fetchTeamScheduleForYear(teamId, leagueCode, lastYear);
-      if (lastSeasonSchedule.recentMatches.isNotEmpty) {
-        recentMatchesFromLastSeason = lastSeasonSchedule;
-        print('[ClubTeam] Found ${recentMatchesFromLastSeason.recentMatches.length} matches from last season');
-      }
+    final needsLastSeason = currentSchedule.recentMatches.isEmpty || allMatchesOld;
+    final needsNextSeason = currentSchedule.upcoming.isEmpty;
+    final lastYear = now.year - 1;
+    final nextYear = now.year + 1;
+
+    if (needsLastSeason) print('[ClubTeam] Fetching last season ($lastYear) for recent matches');
+    if (needsNextSeason) print('[ClubTeam] Fetching next season ($nextYear) for upcoming fixtures');
+
+    final fallbackResults = await Future.wait([
+      needsLastSeason
+          ? _fetchTeamScheduleForYear(teamId, leagueCode, lastYear)
+          : Future.value(_ScheduleResult.empty()),
+      needsNextSeason
+          ? _fetchTeamScheduleForYear(teamId, leagueCode, nextYear)
+          : Future.value(_ScheduleResult.empty()),
+    ]);
+
+    if (needsLastSeason && fallbackResults[0].recentMatches.isNotEmpty) {
+      recentMatchesFromLastSeason = fallbackResults[0];
+      print('[ClubTeam] Found ${recentMatchesFromLastSeason.recentMatches.length} matches from last season');
     }
 
-    // ── If no upcoming fixtures, fetch next season ──────────────────────────
-    if (currentSchedule.upcoming.isEmpty) {
-      final nextYear = now.year + 1;
-      print('[ClubTeam] Fetching next season ($nextYear) for upcoming fixtures');
-      final nextSeasonSchedule = await _fetchTeamScheduleForYear(teamId, leagueCode, nextYear);
-      if (nextSeasonSchedule.upcoming.isNotEmpty) {
-        upcomingFromNextSeason = nextSeasonSchedule;
+    if (needsNextSeason) {
+      if (fallbackResults[1].upcoming.isNotEmpty) {
+        upcomingFromNextSeason = fallbackResults[1];
         print('[ClubTeam] Found ${upcomingFromNextSeason.upcoming.length} upcoming fixtures from next season');
       } else {
-        final currentYear = now.year;
-        final currentYearSchedule = await _fetchTeamScheduleForYear(teamId, leagueCode, currentYear);
+        final currentYearSchedule = await _fetchTeamScheduleForYear(teamId, leagueCode, now.year);
         if (currentYearSchedule.upcoming.isNotEmpty) {
           upcomingFromNextSeason = currentYearSchedule;
           print('[ClubTeam] Found ${upcomingFromNextSeason.upcoming.length} upcoming fixtures from current season');
@@ -4151,13 +4295,6 @@ class ApiService {
     finalUpcoming.sort((a, b) => a.date.compareTo(b.date));
     final upcoming = finalUpcoming.take(5).toList();
 
-    // ── Enrich headshots ──────────────────────────────────────────────────────
-    final squadPlayers = await _enrichRosterHeadshots(
-      currentSquad.isNotEmpty ? currentSquad : await _fetchTeamRosterFull(teamId, leagueCode),
-      leagueCode,
-      teamId: teamId,
-    );
-
     // ── Enrich matches with summary stats ────────────────────────────────────
     final enrichedMatches = await _enrichMatchesWithSummaryStats(
       recent,
@@ -4166,51 +4303,59 @@ class ApiService {
       leagueCode,
     );
 
-    // ── Calculate analytics ──────────────────────────────────────────────────
-    final analytics = _calculateAnalytics(enrichedMatches, squadPlayers);
+    print('[ClubTeam] Matches ready: ${recent.length} recent, ${upcoming.length} upcoming');
 
-    print('[ClubTeam] Final: ${recent.length} recent, ${upcoming.length} upcoming');
-    print('[ClubTeam] Squad: ${squadPlayers.length} players');
-
-    return TeamPageData(
+    return TeamMatchesData(
       leagueCode: leagueCode,
+      queryLeagueCode: leagueCode,
       standingInfo: currentStanding,
       recentMatches: enrichedMatches,
       upcoming: upcoming,
-      squad: squadPlayers,
-      analytics: analytics,
       headCoach: currentSchedule.headCoach ?? recentMatchesFromLastSeason.headCoach,
     );
+  }
+
+  Future<TeamSquadAnalyticsData> _getTeamSquadAnalyticsDataClub(
+      String teamId,
+      String leagueCode,
+      List<TeamRecentMatch> enrichedMatches,
+      ) async {
+    print('[ClubTeam] ▶ _getTeamSquadAnalyticsDataClub teamId=$teamId league=$leagueCode');
+
+    // ── Fetch roster + enrich headshots ──────────────────────────────────────
+    final roster = await _fetchTeamRosterFull(teamId, leagueCode);
+    final squadPlayers = await _enrichRosterHeadshots(roster, leagueCode, teamId: teamId);
+
+    // ── Calculate analytics ──────────────────────────────────────────────────
+    final analytics = _calculateAnalytics(enrichedMatches, squadPlayers);
+
+    print('[ClubTeam] Squad: ${squadPlayers.length} players');
+
+    return TeamSquadAnalyticsData(squad: squadPlayers, analytics: analytics);
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
   // NATIONAL TEAM DATA (World Cup 2026 + International fallback)
   // ══════════════════════════════════════════════════════════════════════════════
 
-  Future<TeamPageData> _getTeamPageDataNational(
+  Future<TeamMatchesData> _getTeamMatchesDataNational(
       String teamId, String leagueCode) async {
-    print('[NationalTeam] ▶ _getTeamPageDataNational teamId=$teamId league=$leagueCode');
+    print('[NationalTeam] ▶ _getTeamMatchesDataNational teamId=$teamId league=$leagueCode');
 
     final primaryLeague = AppConstants.isWorldCup(leagueCode) ? 'fifa.world' : leagueCode;
     final isWorldCup = AppConstants.isWorldCup(leagueCode);
 
     // ── For World Cup 2026, use the specialized fixture fetcher ──────────────
+    // Roster is intentionally NOT fetched here; it's fetched separately in
+    // stage 2 (_getTeamSquadAnalyticsDataNational) so matches render sooner.
     _ScheduleResult scheduleData;
-    List<TeamSquadPlayer> squadPlayers;
     TeamStandingInfo standingInfo;
 
     if (isWorldCup) {
       print('[WorldCup] Using specialized World Cup fixture fetcher');
 
       scheduleData = await _fetchWorldCupFixtures(teamId);
-
-      final results = await Future.wait([
-        _fetchTeamRosterFull(teamId, primaryLeague),
-        _fetchTeamStandingInfo(teamId, primaryLeague),
-      ]);
-
-      squadPlayers = results[0] as List<TeamSquadPlayer>;
-      standingInfo = results[1] as TeamStandingInfo;
+      standingInfo = await _fetchTeamStandingInfo(teamId, primaryLeague);
 
       if (scheduleData.headCoach == null) {
         try {
@@ -4227,13 +4372,11 @@ class ApiService {
       // ── Other national teams (Euro, Copa America, etc.) ──────────────────────
       final results = await Future.wait([
         _fetchTeamSchedule(teamId, primaryLeague),
-        _fetchTeamRosterFull(teamId, primaryLeague),
         _fetchTeamStandingInfo(teamId, primaryLeague),
       ]);
 
       scheduleData = results[0] as _ScheduleResult;
-      squadPlayers = results[1] as List<TeamSquadPlayer>;
-      standingInfo = results[2] as TeamStandingInfo;
+      standingInfo = results[1] as TeamStandingInfo;
 
       print('[NationalTeam] Primary schedule: ${scheduleData.recentMatches.length} recent, ${scheduleData.upcoming.length} upcoming');
 
@@ -4293,15 +4436,6 @@ class ApiService {
       }
     }
 
-    // ── Squad fallback ────────────────────────────────────────────────────────
-    List<TeamSquadPlayer> finalSquad = squadPlayers;
-    if (finalSquad.isEmpty && leagueCode != primaryLeague) {
-      finalSquad = await _fetchTeamRosterFull(teamId, leagueCode);
-    }
-
-    finalSquad = await _enrichRosterHeadshots(finalSquad, primaryLeague,
-        teamId: teamId);
-
     final enrichedMatches = await _enrichMatchesWithSummaryStats(
       scheduleData.recentMatches,
       scheduleData.recentMatchEventIds,
@@ -4309,17 +4443,41 @@ class ApiService {
       primaryLeague,
     );
 
-    final analytics = _calculateAnalytics(enrichedMatches, finalSquad);
+    print('[NationalTeam] Matches ready: ${enrichedMatches.length} recent, ${scheduleData.upcoming.length} upcoming');
 
-    return TeamPageData(
+    return TeamMatchesData(
       leagueCode: primaryLeague,
+      queryLeagueCode: leagueCode,
       standingInfo: standingInfo,
       recentMatches: enrichedMatches,
       upcoming: scheduleData.upcoming,
-      squad: finalSquad,
-      analytics: analytics,
       headCoach: scheduleData.headCoach,
     );
+  }
+
+  Future<TeamSquadAnalyticsData> _getTeamSquadAnalyticsDataNational(
+      String teamId,
+      String leagueCode,
+      List<TeamRecentMatch> enrichedMatches,
+      ) async {
+    print('[NationalTeam] ▶ _getTeamSquadAnalyticsDataNational teamId=$teamId league=$leagueCode');
+
+    final primaryLeague = AppConstants.isWorldCup(leagueCode) ? 'fifa.world' : leagueCode;
+
+    // ── Fetch roster, with domestic-league fallback ──────────────────────────
+    List<TeamSquadPlayer> finalSquad = await _fetchTeamRosterFull(teamId, primaryLeague);
+    if (finalSquad.isEmpty && leagueCode != primaryLeague) {
+      finalSquad = await _fetchTeamRosterFull(teamId, leagueCode);
+    }
+
+    finalSquad = await _enrichRosterHeadshots(finalSquad, primaryLeague,
+        teamId: teamId);
+
+    final analytics = _calculateAnalytics(enrichedMatches, finalSquad);
+
+    print('[NationalTeam] Squad: ${finalSquad.length} players');
+
+    return TeamSquadAnalyticsData(squad: finalSquad, analytics: analytics);
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
@@ -4424,23 +4582,29 @@ class ApiService {
 
   Future<List<TeamUpcomingFixture>> _fetchUpcomingFromAllLeagues(
       String teamId, List<String> leagueCodes) async {
-    final allUpcoming = <TeamUpcomingFixture>[];
     final now = DateTime.now();
 
-    for (final code in leagueCodes) {
+    // Fan out to every fallback league in parallel instead of probing them
+    // one at a time — a sequential loop over a dozen leagues means a dozen
+    // round-trips end-to-end even though none of them depend on each other.
+    final results = await Future.wait(leagueCodes.map((code) async {
       try {
-        final result = await _fetchTeamSchedule(teamId, code);
-        for (final fixture in result.upcoming) {
-          try {
-            final fixtureDate = DateTime.parse(fixture.date);
-            if (fixtureDate.isAfter(now)) {
-              allUpcoming.add(fixture);
-            }
-          } catch (_) {}
-        }
-        if (allUpcoming.length >= 5) break;
+        return await _fetchTeamSchedule(teamId, code);
       } catch (e) {
         print('[NationalTeam] Error fetching upcoming from $code: $e');
+        return _ScheduleResult.empty();
+      }
+    }));
+
+    final allUpcoming = <TeamUpcomingFixture>[];
+    for (final result in results) {
+      for (final fixture in result.upcoming) {
+        try {
+          final fixtureDate = DateTime.parse(fixture.date);
+          if (fixtureDate.isAfter(now)) {
+            allUpcoming.add(fixture);
+          }
+        } catch (_) {}
       }
     }
 
@@ -4457,20 +4621,29 @@ class ApiService {
     final needed = targetCount - existing.length;
     if (needed <= 0) return _ScheduleResult.empty();
 
+    // Same rationale as _fetchUpcomingFromAllLeagues: fetch every fallback
+    // league concurrently rather than stopping-early sequentially, since a
+    // handful of parallel round-trips beats up to a dozen serial ones.
+    final results = await Future.wait(
+      AppConstants.internationalFallbackLeagues.map((code) async {
+        try {
+          return await _fetchTeamSchedule(teamId, code);
+        } catch (_) {
+          return _ScheduleResult.empty();
+        }
+      }),
+    );
+
     final allRecent = <TeamRecentMatch>[];
     final allIds = <String>[];
     final allUpcoming = <TeamUpcomingFixture>[];
     String? headCoach;
 
-    for (final fallbackCode in AppConstants.internationalFallbackLeagues) {
-      if (allRecent.length >= needed) break;
-      try {
-        final result = await _fetchTeamSchedule(teamId, fallbackCode);
-        allRecent.addAll(result.recentMatches);
-        allIds.addAll(result.recentMatchEventIds);
-        if (allUpcoming.isEmpty) allUpcoming.addAll(result.upcoming);
-        headCoach ??= result.headCoach;
-      } catch (_) {}
+    for (final result in results) {
+      allRecent.addAll(result.recentMatches);
+      allIds.addAll(result.recentMatchEventIds);
+      if (allUpcoming.isEmpty) allUpcoming.addAll(result.upcoming);
+      headCoach ??= result.headCoach;
     }
 
     return _ScheduleResult(
@@ -4509,9 +4682,7 @@ class ApiService {
     final url = '${AppConstants.baseUrl}/$leagueCode/teams/$teamId/schedule';
     print('[TeamPage] Fetching schedule: $url');
     try {
-      final res = await _client
-          .get(Uri.parse(url), headers: _headers)
-          .timeout(const Duration(seconds: 12));
+      final res = await _espnGetTeamPage(url);
       print('[TeamPage] Schedule HTTP ${res.statusCode}');
       if (res.statusCode != 200) return _ScheduleResult.empty();
       return _parseTeamSchedule(
@@ -4528,9 +4699,7 @@ class ApiService {
     print('[TeamPage] Fetching schedule for year $year: $url');
 
     try {
-      final res = await _client
-          .get(Uri.parse(url), headers: _headers)
-          .timeout(const Duration(seconds: 10));
+      final res = await _espnGetTeamPage(url);
 
       if (res.statusCode == 200) {
         final data = json.decode(res.body) as Map<String, dynamic>;
@@ -4547,9 +4716,7 @@ class ApiService {
     if (year == DateTime.now().year) {
       url = '${AppConstants.baseUrl}/$leagueCode/teams/$teamId/schedule';
       try {
-        final res = await _client
-            .get(Uri.parse(url), headers: _headers)
-            .timeout(const Duration(seconds: 10));
+        final res = await _espnGetTeamPage(url);
 
         if (res.statusCode == 200) {
           final data = json.decode(res.body) as Map<String, dynamic>;
@@ -5161,9 +5328,7 @@ class ApiService {
   Future<String?> _fetchTeamCoach(String teamId, String leagueCode) async {
     try {
       final url = '${AppConstants.baseUrl}/$leagueCode/teams/$teamId';
-      final res = await _client
-          .get(Uri.parse(url), headers: _headers)
-          .timeout(const Duration(seconds: 5));
+      final res = await _espnGetTeamPage(url);
 
       if (res.statusCode == 200) {
         final data = json.decode(res.body) as Map<String, dynamic>;
@@ -5190,9 +5355,7 @@ class ApiService {
     final url = '${AppConstants.standingsUrl}/$leagueCode/standings';
     print('[TeamPage] Fetching standings: $url');
     try {
-      final res = await _client
-          .get(Uri.parse(url), headers: _headers)
-          .timeout(const Duration(seconds: 8));
+      final res = await _espnGetTeamPage(url);
       print('[TeamPage] Standings HTTP ${res.statusCode}');
       if (res.statusCode != 200) return const TeamStandingInfo();
       return _parseStandingForTeam(
@@ -5405,15 +5568,21 @@ class ApiService {
       }
     }
 
-    final allGames = <Game>[];
+    // Fetch every day in the range concurrently — this used to be a
+    // sequential day-by-day loop, meaning a full tournament-length range
+    // (e.g. World Cup: ~39 days) took 39 serial round-trips end-to-end.
+    final days = <DateTime>[];
     var current = DateTime(startDate.year, startDate.month, startDate.day);
     final end = DateTime(endDate.year, endDate.month, endDate.day);
-
     while (current.isBefore(end) || current.isAtSameMomentAs(end)) {
-      final games = await _fetchAllLeaguesForLocalDay(current, leagues);
-      allGames.addAll(games);
+      days.add(current);
       current = current.add(const Duration(days: 1));
     }
+
+    final dayResults = await Future.wait(
+      days.map((day) => _fetchAllLeaguesForLocalDay(day, leagues)),
+    );
+    final allGames = <Game>[for (final games in dayResults) ...games];
 
     final seen = <String>{};
     final unique = <Game>[];
@@ -5445,9 +5614,7 @@ class ApiService {
         for (final lc in leaguesToTry) {
           final url = '${AppConstants.baseUrl}/$lc/summary?event=$eventId';
           try {
-            final res = await _client
-                .get(Uri.parse(url), headers: _headers)
-                .timeout(const Duration(seconds: 6));
+            final res = await _espnGetTeamPage(url);
             if (res.statusCode == 200) {
               final data = json.decode(res.body) as Map<String, dynamic>;
               return _applyMatchSummaryStats(matches[i], data, teamId);

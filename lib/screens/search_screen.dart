@@ -14,6 +14,7 @@ import 'package:livescore/screens/players_screen.dart';
 import 'package:livescore/widgets/football_pitch_lineup.dart';
 import 'package:livescore/utils/theme.dart';
 import 'package:livescore/utils/predefined_data.dart' as seed;
+import 'package:livescore/services/sportsdb_service.dart';
 
 // ─── Design Tokens ───────────────────────────────────────────────────────────
 // Previously this screen used a one-off blue (0xFF1A62C8) that didn't match
@@ -51,8 +52,20 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
+  final SportsDbService _sportsDbService = SportsDbService();
   SearchResponse _predefinedData = SearchResponse();
   String _lastSearchedQuery = '';
+
+  // ✅ Most of the ~90 entries in predefined_data.dart's famousPlayers list
+  // (everything past the original top 10) use a synthetic id like
+  // 'fp_vitinha' instead of a real ESPN id, and have `imageUrl: ''` — see
+  // that file's own comment: those are meant to be resolved at runtime via
+  // TheSportsDB. This screen previously never did that resolution, so
+  // every one of those players showed a blank initials avatar here even
+  // when a real, current headshot was available. Tracks which player ids
+  // we've already attempted a lookup for, so we don't repeat it every
+  // rebuild (SportsDbService itself also disk-caches the raw API result).
+  final Set<String> _headshotResolutionAttempted = {};
 
   @override
   void initState() {
@@ -101,6 +114,85 @@ class _SearchScreenState extends State<SearchScreen> {
       _predefinedData = SearchResponse(
         players: players,
         teams: clubs,
+      );
+    });
+
+    // Fire-and-forget: fill in real headshots for any predefined player
+    // that doesn't already have a static imageUrl (see field comment on
+    // `_headshotResolutionAttempted` above for why this is needed).
+    _enrichMissingHeadshots();
+  }
+
+  /// Resolves a real headshot from TheSportsDB (by player name) for every
+  /// predefined player currently showing a blank `imageUrl`, and updates
+  /// the list in place as each one resolves. Runs in small concurrent
+  /// batches rather than one request per player at once — TheSportsDB's
+  /// free key is rate-limited, and `SportsDbService` already disk-caches
+  /// each name lookup, so this only does real network work the first time
+  /// a given player is ever shown.
+  Future<void> _enrichMissingHeadshots() async {
+    final candidates = _predefinedData.players
+        .where((p) =>
+    (p.imageUrl ?? '').isEmpty &&
+        !_headshotResolutionAttempted.contains(p.id))
+        .toList();
+    if (candidates.isEmpty) return;
+
+    const batchSize = 5;
+    for (var i = 0; i < candidates.length; i += batchSize) {
+      if (!mounted) return;
+      final batch = candidates.skip(i).take(batchSize);
+      await Future.wait(batch.map((player) async {
+        _headshotResolutionAttempted.add(player.id);
+        try {
+          final data = await _sportsDbService.searchPlayerByName(player.name);
+          if (data == null) return;
+
+          // Prefer the transparent-background cutout, same preference
+          // order used everywhere else this app talks to TheSportsDB
+          // (see sport_service.dart's `_parseSportsDbPlayer`).
+          final cutout = (data['strCutout'] as String?)?.trim() ?? '';
+          final thumb = (data['strThumb'] as String?)?.trim() ?? '';
+          final headshot = cutout.isNotEmpty ? cutout : thumb;
+          if (headshot.isEmpty) return;
+
+          _applyResolvedHeadshot(player.id, headshot);
+        } catch (_) {
+          // Fails silently, same policy as the rest of this app's
+          // TheSportsDB integration — the UI just keeps showing an
+          // initials avatar for this one player.
+        }
+      }));
+    }
+  }
+
+  void _applyResolvedHeadshot(String playerId, String imageUrl) {
+    if (!mounted) return;
+    setState(() {
+      _predefinedData = SearchResponse(
+        players: _predefinedData.players.map((p) {
+          if (p.id != playerId) return p;
+          return SearchResult(
+            id: p.id,
+            name: p.name,
+            displayName: p.displayName,
+            type: p.type,
+            imageUrl: imageUrl,
+            teamName: p.teamName,
+            teamId: p.teamId,
+            leagueName: p.leagueName,
+            leagueCode: p.leagueCode,
+            position: p.position,
+            jerseyNumber: p.jerseyNumber,
+            abbreviation: p.abbreviation,
+            nationality: p.nationality,
+            age: p.age,
+            rating: p.rating,
+          );
+        }).toList(),
+        teams: _predefinedData.teams,
+        leagues: _predefinedData.leagues,
+        hasMore: _predefinedData.hasMore,
       );
     });
   }
@@ -202,7 +294,7 @@ class _SearchBar extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
             ),
             child: IconButton(
-              icon: Icon(Icons.arrow_back_rounded, size: 20, color: text),
+              icon: Icon(Icons.arrow_back_ios_new, size: 18, color: text),
               onPressed: () {
                 context.read<AppProvider>().clearSearch();
                 Navigator.pop(context);

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:livescore/models/game_model.dart';
 import 'package:livescore/models/standing_model.dart';
@@ -48,10 +49,14 @@ class CacheService {
   /// so the enrichment pass is only triggered for genuinely new players.
   static const Duration headshotsCacheDuration = Duration(days: 7);
 
-  /// Team page data (matches, fixtures, squad, analytics) is cached for 6 hours.
-  /// This data changes slowly (match results, upcoming fixtures) and doesn't
-  /// need to be refreshed more frequently than every 6 hours.
-  static const Duration teamPageCacheDuration = Duration(hours: 6);
+  /// Team page data (matches, fixtures, squad, analytics) is kept on-device
+  /// for 3 days so a returning user gets an instant load from disk instead
+  /// of waiting on a live fetch. Freshness within that window comes from
+  /// [SportService]'s stale-while-revalidate flow (show cache instantly,
+  /// silently refetch live, only push + re-cache if something changed) —
+  /// not from this TTL, which is purely a "how long is cache worth keeping
+  /// at all" cap.
+  static const Duration teamPageCacheDuration = Duration(days: 3);
 
   /// Search results (teams and players) are cached for 24 hours.
   /// Teams and players change very slowly (transfers, new signings, etc.)
@@ -473,18 +478,16 @@ class CacheService {
     }
   }
 
-  // ── Team Page Data Cache (6 hours) ─────────────────────────────────────────
+  // ── Team Page Data Cache (3 days, stale-while-revalidate) ───────────────────
   //
-  // Stores complete TeamPageData for a team, cached for 6 hours.
+  // Stores complete TeamPageData for a team on-device for up to 3 days.
   // This includes recent matches, upcoming fixtures, squad, and analytics.
-  // The data changes slowly (match results, upcoming fixtures) so 6 hours
-  // is a reasonable balance between freshness and performance.
   //
-  Future<void> cacheTeamPageData(String key, TeamPageData data) async {
-    await _ensureInitialized();
-
-    // Convert TeamPageData to a serializable map
-    final serialized = {
+  /// Converts [TeamPageData] into a serializable map. Shared by
+  /// [cacheTeamPageData] (persisting to disk) and [teamPageDataEquals]
+  /// (diffing two instances) so both always agree on what "the data" means.
+  Map<String, dynamic> _serializeTeamPageData(TeamPageData data) {
+    return {
       'leagueCode': data.leagueCode,
       'standingInfo': {
         'rank': data.standingInfo.rank,
@@ -556,9 +559,22 @@ class CacheService {
       },
       'headCoach': data.headCoach,
     };
+  }
+
+  /// Deep-equality check between two [TeamPageData] instances, used by the
+  /// stale-while-revalidate flow to decide whether a freshly-fetched team
+  /// page actually differs from what's cached/on-screen — so a revalidation
+  /// that found no real changes never triggers a UI update or a cache write.
+  bool teamPageDataEquals(TeamPageData a, TeamPageData b) {
+    return jsonEncode(_serializeTeamPageData(a)) ==
+        jsonEncode(_serializeTeamPageData(b));
+  }
+
+  Future<void> cacheTeamPageData(String key, TeamPageData data) async {
+    await _ensureInitialized();
 
     await _teamPageBoxRef.put(key, {
-      'data': serialized,
+      'data': _serializeTeamPageData(data),
       'timestamp': DateTime.now().millisecondsSinceEpoch,
     });
 
@@ -567,7 +583,7 @@ class CacheService {
   }
 
   /// Retrieves cached TeamPageData for a team if it exists and is within
-  /// [teamPageCacheDuration] (6 hours). Returns null on miss/expired.
+  /// [teamPageCacheDuration] (3 days). Returns null on miss/expired.
   Future<TeamPageData?> getCachedTeamPageData(String key) async {
     await _ensureInitialized();
     final raw = _teamPageBoxRef.get(key);

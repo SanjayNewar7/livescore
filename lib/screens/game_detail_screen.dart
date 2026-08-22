@@ -15,17 +15,24 @@ import '../models/team_model.dart';
 import 'package:livescore/widgets/football_pitch_lineup.dart';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
+// Matches the app-wide theme: primary = Green, secondary = Blue (see home_screen.dart _C).
 class _C {
-  static const bg        = Color(0xFFF0F4FF);
+  static const bg        = Color(0xFFF2F7F4);
   static const surface   = Color(0xFFFFFFFF);
   static const card      = Color(0xFFFFFFFF);
-  static const border    = Color(0xFFDDE3F0);
+  static const border    = Color(0xFFDCE7E0);
   static const text      = Color(0xFF0D1B3E);
   static const muted     = Color(0xFF6B7A96);
   static const textWhite = Color(0xFFFFFFFF);
-  static const blue      = Color(0xFF1A56DB);
-  static const blueSoft  = Color(0xFFEEF4FF);
-  static const blueLight = Color(0xFF4A7FE5);
+  // Primary — Green (brand / active states / CTAs). Kept the `blue` token name
+  // so every existing call-site automatically picks up the new brand color.
+  static const blue      = Color(0xFF16A34A);
+  static const blueSoft  = Color(0xFFE6F7EC);
+  static const blueLight = Color(0xFF34B85F);
+  // Secondary — true Blue, used for the "home team" accent and any spot that
+  // needs to sit next to the green primary without competing with it.
+  static const secondary     = Color(0xFF1A62C8);
+  static const secondarySoft = Color(0xFFE8F0FC);
   static const liveRed   = Color(0xFFDC2626);
   static const liveRedBg = Color(0x1ADC2626);
   static const liveGlow  = Color(0x22DC2626);
@@ -35,7 +42,7 @@ class _C {
   static const pitchGreen  = Color(0xFF166534);
   static const pitchLight  = Color(0xFF15803D);
   static const pitchLine   = Color(0x88FFFFFF);
-  static const homeAccent  = Color(0xFF1A56DB);
+  static const homeAccent  = Color(0xFF1A62C8);
   static const awayAccent  = Color(0xFFEA580C);
   static const purple     = Color(0xFF7C3AED);
   static const pink       = Color(0xFFEC4899);
@@ -127,7 +134,14 @@ class TeamAnalyticsData {
     this.crossAccuracy = 0,
   });
 
-  factory TeamAnalyticsData.fromStats(Map<String, String> stats) {
+  /// [actualGoals], when provided, overrides whatever (if anything) was
+  /// parsed out of the boxscore `statistics` array. ESPN's soccer boxscore
+  /// stats list generally does NOT include a "goals" entry — goals live on
+  /// the match score / goal-scorers list instead — so relying on the stats
+  /// map alone means this always parses to 0, even when goals were scored.
+  /// Callers should pass the team's actual score in as [actualGoals] so the
+  /// Analytics tab reflects the real match result.
+  factory TeamAnalyticsData.fromStats(Map<String, String> stats, {int? actualGoals}) {
     final possession = double.tryParse(stats['possessionPct']?.replaceAll('%', '') ?? '0') ?? 0;
     final totalPasses = int.tryParse(stats['passes'] ?? '0') ?? 0;
     final accuratePasses = int.tryParse(stats['passingAccuracy']?.replaceAll('%', '') ?? '0') ?? 0;
@@ -141,7 +155,8 @@ class TeamAnalyticsData {
     final offsides = int.tryParse(stats['offsides'] ?? '0') ?? 0;
     final fouls = int.tryParse(stats['fouls'] ?? '0') ?? 0;
     final corners = int.tryParse(stats['corners'] ?? '0') ?? 0;
-    final goals = int.tryParse(stats['goals'] ?? '0') ?? 0;
+    final statsGoals = int.tryParse(stats['goals'] ?? '0') ?? 0;
+    final goals = actualGoals ?? statsGoals;
 
     return TeamAnalyticsData(
       possession: possession,
@@ -331,8 +346,14 @@ class _GameDetailScreenState extends State<GameDetailScreen>
       }
 
       return {
-        'away': TeamAnalyticsData.fromStats(awayStats),
-        'home': TeamAnalyticsData.fromStats(homeStats),
+        'away': TeamAnalyticsData.fromStats(
+          awayStats,
+          actualGoals: int.tryParse(widget.game.awayScore) ?? 0,
+        ),
+        'home': TeamAnalyticsData.fromStats(
+          homeStats,
+          actualGoals: int.tryParse(widget.game.homeScore) ?? 0,
+        ),
       };
     } catch (e) {
       print('Error fetching analytics: $e');
@@ -405,12 +426,10 @@ class _GameDetailScreenState extends State<GameDetailScreen>
             pinned: true,
             elevation: 0,
             backgroundColor: _C.surface,
-            leading: Padding(
-              padding: const EdgeInsets.only(left: 4),
-              child: _GlassIconButton(
-                icon: Icons.arrow_back_ios_rounded,
-                onTap: () => Navigator.pop(context),
-              ),
+            // ─── Changed back button to plain IconButton ──────────────────
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back_ios_new, size: 18),
+              onPressed: () => Navigator.pop(context),
             ),
             actions: [
               Padding(
@@ -589,7 +608,13 @@ class _GameDetailScreenState extends State<GameDetailScreen>
                     controller: _tabController,
                     children: [
                       _MatchTab(game: widget.game, detail: detail),
-                      _StatsTab(game: widget.game, detail: detail, isUpcoming: _isUpcoming, countdown: _countdown, liveTick: _liveTick),
+                      _StatsTab(
+                        game: widget.game,
+                        detail: detail,
+                        isUpcoming: _isUpcoming,
+                        countdown: _countdown,
+                        liveTick: _liveTick,
+                      ),
                       _LineupTab(
                         lineupFuture: _lineupFuture,
                         game: widget.game,
@@ -875,24 +900,33 @@ class _MatchTab extends StatelessWidget {
       children: [
         _card(Row(
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: Image.network(
-                'https://a.espncdn.com/i/leaguelogos/soccer/500/${_leagueLogoId(game.leagueName)}.png',
-                width: 40, height: 40,
-                errorBuilder: (_, __, ___) => Icon(Icons.emoji_events_rounded, size: 30, color: _C.muted),
+            Container(
+              width: 46, height: 46,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: _C.blueSoft,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: Image.network(
+                  'https://a.espncdn.com/i/leaguelogos/soccer/500/${_leagueLogoId(game.leagueName)}.png',
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Icon(Icons.emoji_events_rounded, size: 22, color: _C.blue),
+                ),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(game.leagueName,
-                    style: const TextStyle(color: _C.text, fontSize: 15, fontWeight: FontWeight.w700)),
+                    style: const TextStyle(color: _C.text, fontSize: 15, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 2),
                 Text(
                   game.isNationalTeamGame
                       ? 'International • ${_matchRound(detail)}'
                       : 'Club Football • ${_matchRound(detail)}',
-                  style: const TextStyle(color: _C.muted, fontSize: 11),
+                  style: const TextStyle(color: _C.muted, fontSize: 11.5, fontWeight: FontWeight.w500),
                 ),
               ]),
             ),
@@ -987,13 +1021,22 @@ class _InfoRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(icon, color: _C.blue, size: 16),
-          const SizedBox(width: 10),
-          SizedBox(width: 80, child: Text(label, style: const TextStyle(color: _C.muted, fontSize: 12, fontWeight: FontWeight.w500))),
-          Expanded(child: Text(value, style: const TextStyle(color: _C.text, fontSize: 13, fontWeight: FontWeight.w600), maxLines: 2)),
+          Container(
+            width: 30, height: 30,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _C.blueSoft,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(icon, color: _C.blue, size: 15),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(width: 78, child: Text(label, style: const TextStyle(color: _C.muted, fontSize: 12, fontWeight: FontWeight.w500))),
+          Expanded(child: Text(value, style: const TextStyle(color: _C.text, fontSize: 13, fontWeight: FontWeight.w700), maxLines: 2)),
         ],
       ),
     );
@@ -1027,19 +1070,23 @@ class _HalfTimeTable extends StatelessWidget {
   TableRow _tRow(List<String> vals, {bool isHeader = false}) {
     return TableRow(
       decoration: isHeader
-          ? const BoxDecoration(border: Border(bottom: BorderSide(color: _C.border)))
+          ? BoxDecoration(
+        color: _C.bg.withOpacity(0.6),
+        border: const Border(bottom: BorderSide(color: _C.border)),
+      )
           : null,
       children: vals.map((v) {
         final isFirst = v == vals.first;
         final isLast  = v == vals.last;
         return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 4),
+          padding: EdgeInsets.symmetric(vertical: isHeader ? 8 : 10, horizontal: 4),
           child: Text(v,
             textAlign: isFirst ? TextAlign.left : TextAlign.center,
             style: TextStyle(
               color: isHeader ? _C.muted : (isLast && !isFirst ? _C.blue : _C.text),
               fontSize: isHeader ? 10 : 13,
-              fontWeight: isHeader ? FontWeight.w600 : (isLast ? FontWeight.w800 : FontWeight.w600),
+              fontWeight: isHeader ? FontWeight.w700 : (isLast ? FontWeight.w800 : FontWeight.w600),
+              letterSpacing: isHeader ? 0.4 : 0,
             ),
           ),
         );
@@ -1264,11 +1311,19 @@ class _StatsTabState extends State<_StatsTab> {
         _card(Row(children: [
           _TeamStatHeader(team: widget.game.awayTeam, align: CrossAxisAlignment.start),
           const Spacer(),
-          const Text('STATS', style: TextStyle(color: _C.muted, fontSize: 11, fontWeight: FontWeight.w700)),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: _C.blueSoft,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Text('MATCH STATS',
+                style: TextStyle(color: _C.blue, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+          ),
           const Spacer(),
           _TeamStatHeader(team: widget.game.homeTeam, align: CrossAxisAlignment.end),
         ])),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         _card(Column(
           children: [
             ...displayedKeys.map((key) {
@@ -1490,6 +1545,11 @@ class _StatBarRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // See _readableAccent: a team's real color can be white/near-white,
+    // which would make the value text and progress-bar fill below
+    // invisible.
+    final awayColor = _readableAccent(this.awayColor);
+    final homeColor = _readableAccent(this.homeColor);
     final aNum  = _toNum(awayValue);
     final hNum  = _toNum(homeValue);
     final total = aNum + hNum;
@@ -1527,19 +1587,27 @@ class _StatBarRow extends StatelessWidget {
             ),
           ),
         ]),
-        const SizedBox(height: 5),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: Row(children: [
-            Expanded(
-              flex: (aFrac * 100).round().clamp(5, 95),
-              child: Container(height: 5, color: awayColor),
-            ),
-            Expanded(
-              flex: ((1 - aFrac) * 100).round().clamp(5, 95),
-              child: Container(height: 5, color: homeColor),
-            ),
-          ]),
+        const SizedBox(height: 6),
+        Container(
+          height: 6,
+          decoration: BoxDecoration(
+            color: _C.bg,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: Row(children: [
+              Expanded(
+                flex: (aFrac * 100).round().clamp(5, 95),
+                child: Container(height: 6, color: awayColor),
+              ),
+              const SizedBox(width: 2),
+              Expanded(
+                flex: ((1 - aFrac) * 100).round().clamp(5, 95),
+                child: Container(height: 6, color: homeColor),
+              ),
+            ]),
+          ),
         ),
       ]),
     );
@@ -1697,7 +1765,9 @@ class _LineupViewState extends State<_LineupView> {
           FootballPitch(
             homeTeam: homeLineup,
             awayTeam: awayLineup,
-            showRatings: !widget.isUpcoming,
+            // Player ratings aren't reliably available from ESPN/SportsDB for
+            // these leagues, so we never surface a rating badge here.
+            showRatings: false,
             onPlayerTap: (player) => _showPlayerSheet(context, player),
           ),
 
@@ -1742,7 +1812,6 @@ class _PlayerBottomSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rColor = player.rating != null ? _ratingColor(player.rating!) : _C.blue;
     return Container(
       decoration: const BoxDecoration(
         color: _C.surface,
@@ -1759,8 +1828,8 @@ class _PlayerBottomSheet extends StatelessWidget {
           width: 72, height: 72,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(color: rColor, width: 3),
-            boxShadow: [BoxShadow(color: rColor.withOpacity(0.3), blurRadius: 12)],
+            border: Border.all(color: _C.blue, width: 3),
+            boxShadow: [BoxShadow(color: _C.blue.withOpacity(0.3), blurRadius: 12)],
           ),
           child: ClipOval(
             child: (player.imageUrl != null && player.imageUrl!.isNotEmpty)
@@ -1777,10 +1846,6 @@ class _PlayerBottomSheet extends StatelessWidget {
           _Pill('#${player.number}', _C.muted, _C.blueSoft),
           const SizedBox(width: 6),
           _Pill(player.position, _C.blue, _C.blueSoft),
-          if (player.rating != null) ...[
-            const SizedBox(width: 6),
-            _Pill(player.rating!.toStringAsFixed(1), Colors.white, rColor),
-          ],
         ]),
       ]),
     );
@@ -1795,13 +1860,6 @@ class _PlayerBottomSheet extends StatelessWidget {
       color: _C.blueSoft,
       child: Center(child: Text(txt, style: const TextStyle(color: _C.blue, fontSize: 24, fontWeight: FontWeight.w900))),
     );
-  }
-
-  Color _ratingColor(double r) {
-    if (r >= 8) return _C.green;
-    if (r >= 6.5) return _C.blue;
-    if (r >= 5) return _C.yellow;
-    return _C.red;
   }
 }
 
@@ -1905,15 +1963,53 @@ class _TimelineTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
       children: [
-        Row(children: [
-          Expanded(child: Center(child: Text(game.awayTeam.abbreviation,
-              style: const TextStyle(color: _C.awayAccent, fontSize: 12, fontWeight: FontWeight.w700)))),
-          const SizedBox(width: 56),
-          Expanded(child: Center(child: Text(game.homeTeam.abbreviation,
-              style: const TextStyle(color: _C.homeAccent, fontSize: 12, fontWeight: FontWeight.w700)))),
-        ]),
-        const SizedBox(height: 8),
-        ...events.map((e) => _TimelineRow(event: e, game: game)),
+        _card(Column(
+          children: [
+            Row(children: [
+              Expanded(
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: Image.network(game.awayTeam.logo, width: 18, height: 18,
+                        errorBuilder: (_, __, ___) => const SizedBox(width: 18, height: 18)),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(game.awayTeam.abbreviation,
+                      style: const TextStyle(color: _C.awayAccent, fontSize: 12, fontWeight: FontWeight.w800)),
+                ]),
+              ),
+              const SizedBox(width: 56),
+              Expanded(
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Text(game.homeTeam.abbreviation,
+                      style: const TextStyle(color: _C.homeAccent, fontSize: 12, fontWeight: FontWeight.w800)),
+                  const SizedBox(width: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: Image.network(game.homeTeam.logo, width: 18, height: 18,
+                        errorBuilder: (_, __, ___) => const SizedBox(width: 18, height: 18)),
+                  ),
+                ]),
+              ),
+            ]),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 10),
+              child: Divider(color: _C.border, height: 1),
+            ),
+            Stack(
+              children: [
+                Positioned.fill(
+                  child: Center(
+                    child: Container(width: 2, color: _C.border.withOpacity(0.8)),
+                  ),
+                ),
+                Column(
+                  children: events.map((e) => _TimelineRow(event: e, game: game)).toList(),
+                ),
+              ],
+            ),
+          ],
+        )),
       ],
     );
   }
@@ -2044,9 +2140,10 @@ class _TimelineRow extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 decoration: BoxDecoration(
-                  color: evColor.withOpacity(0.10),
+                  color: _C.surface,
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: evColor.withOpacity(0.5)),
+                  boxShadow: [BoxShadow(color: evColor.withOpacity(0.12), blurRadius: 8, offset: const Offset(0, 2))],
                 ),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   iconW,
@@ -2074,7 +2171,10 @@ class _TimelineRow extends StatelessWidget {
       width: 44,
       padding: const EdgeInsets.symmetric(vertical: 4),
       decoration: BoxDecoration(
-          color: evColor.withOpacity(0.10), borderRadius: BorderRadius.circular(20)),
+        color: _C.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: evColor.withOpacity(0.35), width: 1),
+      ),
       child: Text("${event.minute}'",
           textAlign: TextAlign.center,
           style: TextStyle(color: evColor, fontSize: 10, fontWeight: FontWeight.w800)),
@@ -2472,54 +2572,6 @@ class _AnalyticsTab extends StatelessWidget {
         return ListView(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           children: [
-            if (isLive) ...[
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      _C.liveRed.withOpacity(0.08),
-                      _C.liveRed.withOpacity(0.02),
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _C.liveRed.withOpacity(0.2)),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: _C.liveRed,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    const Expanded(
-                      child: Text(
-                        'LIVE • Stats update every 5 minutes',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: _C.liveRed,
-                        ),
-                      ),
-                    ),
-                    SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: _C.liveRed,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-            ],
-
             _TeamPerformanceCard(
               teamName: game.awayTeam.abbreviation,
               teamFullName: game.awayTeam.displayName,
@@ -2730,6 +2782,11 @@ class _TeamPerformanceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Shadows the raw team color with a readable one for the rest of this
+    // method — this card sits on a white surface, and a team's actual
+    // brand color (Real Madrid, etc.) can be white/near-white, which would
+    // otherwise render every line/text/badge below as invisible.
+    final color = _readableAccent(this.color);
     return Container(
       decoration: BoxDecoration(
         color: _C.surface,
@@ -3132,6 +3189,10 @@ class _ComparisonRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // See _readableAccent: a team's real color can be white/near-white,
+    // which would make these value pills invisible on this white card.
+    final awayColor = _readableAccent(this.awayColor);
+    final homeColor = _readableAccent(this.homeColor);
     return Padding(
       padding: EdgeInsets.only(bottom: isLast ? 0 : 10),
       child: Row(
@@ -3225,6 +3286,10 @@ class _CardComparisonRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // See _readableAccent: a team's real color can be white/near-white,
+    // which would make the yellow/red card counts below invisible.
+    final awayColor = _readableAccent(this.awayColor);
+    final homeColor = _readableAccent(this.homeColor);
     return Padding(
       padding: EdgeInsets.only(bottom: isLast ? 0 : 10),
       child: Row(
@@ -3413,6 +3478,11 @@ class _TacticalRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // See _readableAccent: a team's real color can be white/near-white,
+    // which would make the value text and progress-bar fill below
+    // invisible.
+    final awayColor = _readableAccent(this.awayColor);
+    final homeColor = _readableAccent(this.homeColor);
     final total = awayValue + homeValue;
     final awayFrac = total > 0 ? awayValue / total : 0.5;
 
@@ -3502,6 +3572,21 @@ class _TacticalRow extends StatelessWidget {
 }
 
 // ─── Shared color helpers ─────────────────────────────────────────────────────
+// A team's brand color can be white or near-white (Real Madrid, Espanyol's
+// away kit, etc.) — perfectly fine as a subtle tint, but invisible when
+// used directly as text/line/icon color against this screen's white
+// surfaces (analytics radar chart, stat comparison pills, card-count
+// pills). Rather than guess at a complementary color, fall back to a
+// neutral dark slate — the standard fix for "brand color too light to
+// read" — whenever the color is too light to read on white. Keeps colored
+// (non-white) team colors completely untouched.
+Color _readableAccent(Color color) {
+  if (color.computeLuminance() > 0.75) {
+    return const Color(0xFF374151); // slate-700
+  }
+  return color;
+}
+
 Color _shadeLighten(Color c, [double amt = 0.18]) {
   final hsl = HSLColor.fromColor(c);
   return hsl.withLightness((hsl.lightness + amt).clamp(0.0, 1.0)).toColor();

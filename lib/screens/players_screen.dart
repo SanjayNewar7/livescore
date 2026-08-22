@@ -88,14 +88,51 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
     super.dispose();
   }
 
-  /// Load player details using hybrid approach (ESPN + TheSportsDB)
+  /// Load player details using hybrid approach (ESPN + TheSportsDB).
+  ///
+  /// For a player we already have good offline data for (top-tier players
+  /// in [predefinedPlayerStats] / [famousPlayers]), this used to still wait
+  /// on the full network round-trip before showing anything — the seed data
+  /// only ever kicked in as a fallback *after* the live fetch had already
+  /// finished (or failed), so it never actually saved any time. Now a known
+  /// player paints instantly from the seed, and the live fetch runs
+  /// silently in the background to replace it with current data (latest
+  /// club, up-to-date season stats, etc.) once it resolves.
   Future<void> _loadPlayerDetails() async {
     if (_isRefreshing) return;
 
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+    _primaryColor = widget.teamInfo != null
+        ? _parseColor(widget.teamInfo!.color)
+        : (widget.player.isHome ? _kPrimaryGreen : _kSecondaryBlue);
+
+    final hasPredefinedSeed = widget.player.id.isNotEmpty &&
+        (predefinedPlayerStats.containsKey(widget.player.id) ||
+            findFamousPlayerById(widget.player.id) != null);
+
+    if (hasPredefinedSeed) {
+      setState(() {
+        _playerDetails = _createPlayerFromPitchPlayer(widget.player);
+        _isLoading = false;
+        _error = null;
+      });
+      _animationController.forward();
+
+      // Silent background revalidation — no loading state, no error state;
+      // if this fails the seed data already on screen just stays as-is.
+      _fetchLivePlayerDetails(silent: true);
+      return;
+    }
+
+    await _fetchLivePlayerDetails(silent: false);
+  }
+
+  Future<void> _fetchLivePlayerDetails({required bool silent}) async {
+    if (!silent) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    }
 
     try {
       final leagueCode = (widget.leagueCode != null && widget.leagueCode!.isNotEmpty)
@@ -124,25 +161,28 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
         }
       }
 
+      if (!mounted) return;
+
       if (playerDetails != null && playerDetails.id.isNotEmpty) {
-        _playerDetails = playerDetails;
-      } else {
-        _playerDetails = _createPlayerFromPitchPlayer(widget.player);
+        setState(() {
+          _playerDetails = playerDetails;
+          _isLoading = false;
+        });
+        if (!silent) _animationController.forward();
+      } else if (!silent) {
+        // Foreground load with nothing from the network — fall back to
+        // whatever PitchPlayer info is available so the screen isn't blank.
+        setState(() {
+          _playerDetails = _createPlayerFromPitchPlayer(widget.player);
+          _isLoading = false;
+        });
+        _animationController.forward();
       }
-
-      if (widget.teamInfo != null) {
-        _primaryColor = _parseColor(widget.teamInfo!.color);
-      } else {
-        _primaryColor = widget.player.isHome ? _kPrimaryGreen : _kSecondaryBlue;
-      }
-
-      setState(() {
-        _isLoading = false;
-      });
-
-      _animationController.forward();
+      // else: silent revalidation found nothing better than the seed
+      // already on screen — leave it as-is.
 
     } catch (e) {
+      if (silent || !mounted) return;
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -191,7 +231,20 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
       weight: 0,
       age: 0,
       college: '',
-      statistics: {},
+      // ✅ FIX: this used to be hardcoded to `{}` even when `predefined`
+      // had real careerGoals/careerAssists/careerAppearances sitting right
+      // there — seasonStats and careerStats below were being filled in
+      // from `predefined`, but the top-line totals grid (what the
+      // "Career Totals" row on this screen actually reads) was not, so it
+      // rendered as 0 goals / 0 assists / 0 apps for a known player even
+      // though accurate data existed.
+      statistics: predefined != null
+          ? {
+        'goals': predefined['careerGoals'],
+        'assists': predefined['careerAssists'],
+        'appearances': predefined['careerAppearances'],
+      }
+          : {},
       seasonStats: predefined?['seasonStats'] as Map<String, dynamic>? ?? {},
       careerStats: (predefined?['careerStats'] as List?)?.cast<Map<String, dynamic>>(),
       nationality: famous?['nationality'] as String?,

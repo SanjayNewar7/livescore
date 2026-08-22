@@ -98,6 +98,7 @@ class AppConstants {
     {'code': 'sui.1', 'name': 'Super League',       'flag': '🇨🇭', 'country': 'Switzerland'},
     {'code': 'bra.1', 'name': 'Brasileirão',     'flag': '🇧🇷', 'country': 'Brazil'},
     {'code': 'usa.1', 'name': 'MLS',             'flag': '🇺🇸', 'country': 'USA'},
+    {'code': 'ksa.1', 'name': 'Saudi Pro League','flag': '🇸🇦', 'country': 'Saudi Arabia'},
     {'code': 'mex.1', 'name': 'Liga MX',         'flag': '🇲🇽', 'country': 'Mexico'},
     {'code': 'arg.1', 'name': 'Liga Profesional','flag': '🇦🇷', 'country': 'Argentina'},
     {'code': 'jpn.1', 'name': 'J1 League',  'flag': '🇯🇵', 'country': 'Japan'},
@@ -386,7 +387,11 @@ class AppConstants {
     'bra.1': 71, 'usa.1': 253, 'mex.1': 262, 'arg.1': 128,
 
     // Asia / Scandinavia
-    'jpn.1': 98, 'swe.1': 113, 'nor.1': 103, 'den.1': 119,
+    // NOTE: 307 is API-Football's documented id for the Saudi Pro League as
+    // of this writing — verify against GET /leagues?search=Saudi if player
+    // stats for Saudi-based players (e.g. Ronaldo at Al-Nassr) still don't
+    // resolve, since API-Football does occasionally renumber leagues.
+    'jpn.1': 98, 'swe.1': 113, 'nor.1': 103, 'den.1': 119, 'ksa.1': 307,
 
     // South American club competitions
     'conmebol.libertadores': 13,

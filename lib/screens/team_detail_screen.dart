@@ -39,7 +39,12 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
   final SportsDbService _sportsDb = SportsDbService();
 
   bool _isFollowing = false;
+  // True only until the Matches stage (fast path) has loaded — the rest of
+  // the screen renders as soon as this flips false.
   bool _isLoading = true;
+  // True while Squad + Analytics are being fetched in the background,
+  // after matches are already on screen.
+  bool _squadAnalyticsLoading = true;
   String? _error;
   TeamPageData? _data;
 
@@ -59,22 +64,45 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
     _loadData();
   }
 
+  /// Stage 1 (matches) renders as soon as it's ready; stage 2
+  /// (squad + analytics) then loads in the background and merges in
+  /// once it arrives, without blocking or re-loading the Matches tab.
   Future<void> _loadData() async {
     if (!mounted) return;
-    setState(() { _isLoading = true; _error = null; });
+    setState(() {
+      _isLoading = true;
+      _squadAnalyticsLoading = true;
+      _error = null;
+    });
+
     try {
-      final data = await _sportService.getTeamPageData(
+      await _sportService.getTeamPageDataStaged(
         widget.team.id,
         leagueCode: widget.leagueCode,
+        onMatchesReady: (matchesOnly) {
+          if (!mounted) return;
+          setState(() {
+            _data = matchesOnly;
+            _isLoading = false;
+          });
+        },
+        onSquadAnalyticsReady: (fullData) {
+          if (!mounted) return;
+          setState(() {
+            _data = fullData;
+            _squadAnalyticsLoading = false;
+          });
+          // Load SportsDB headshots now that the squad is in.
+          _loadSportsDbHeadshots();
+        },
       );
-      if (!mounted) return;
-      setState(() { _data = data; _isLoading = false; });
-
-      // Load SportsDB headshots in background
-      _loadSportsDbHeadshots();
     } catch (e) {
       if (!mounted) return;
-      setState(() { _error = 'Failed to load team data'; _isLoading = false; });
+      setState(() {
+        _error = 'Failed to load team data';
+        _isLoading = false;
+        _squadAnalyticsLoading = false;
+      });
     }
   }
 
@@ -108,30 +136,47 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
     try {
       final colorHex = widget.team.color.replaceAll('#', '');
       if (colorHex.length == 6) {
-        return Color(int.parse('FF$colorHex', radix: 16));
+        return _tonedColor(Color(int.parse('FF$colorHex', radix: 16)));
       }
     } catch (_) {}
     return _kPrimaryGreen;
+  }
+
+  /// Tones down colors that are so vividly saturated they clash with the
+  /// rest of the UI — common with flag-derived national team colors
+  /// (pure reds, yellows, greens straight off a flag). Muted/brand colors
+  /// pass through untouched; only very high-saturation, mid-lightness
+  /// colors get pulled back toward something the UI can sit next to.
+  Color _tonedColor(Color color) {
+    final hsl = HSLColor.fromColor(color);
+    final isVivid = hsl.saturation > 0.80 && hsl.lightness > 0.30 && hsl.lightness < 0.72;
+    if (!isVivid) return color;
+    return hsl
+        .withSaturation(0.62)
+        .withLightness(hsl.lightness > 0.5 ? 0.46 : 0.40)
+        .toColor();
   }
 
   /// Returns a badge-safe version of [color].
   /// If the color is too light (luminance > 0.75) it falls back to a dark
   /// neutral so white text remains legible against the badge background.
   Color _safeBadgeColor(Color color) {
-    if (color.computeLuminance() > 0.75) {
+    final toned = _tonedColor(color);
+    if (toned.computeLuminance() > 0.75) {
       return const Color(0xFF374151); // slate-700 — always readable
     }
-    return color;
+    return toned;
   }
 
   /// Background color for the header hero gradient / tint.
   /// When primaryColor is near-white we use a neutral dark so the gradient
   /// still looks intentional rather than blank.
   Color _safeGradientColor(Color color, bool isDarkMode) {
-    if (color.computeLuminance() > 0.75) {
+    final toned = _tonedColor(color);
+    if (toned.computeLuminance() > 0.75) {
       return isDarkMode ? const Color(0xFF374151) : const Color(0xFF6B7280);
     }
-    return color;
+    return toned;
   }
 
   String _getValidLogoUrl() {
@@ -1023,34 +1068,6 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       children: [
-        // ── National team squad banner ────────────────────────────────────
-        if (_isNationalTeam) ...[
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            margin: const EdgeInsets.only(bottom: 16),
-            decoration: BoxDecoration(
-              color: primaryColor.withOpacity(isDarkMode ? 0.12 : 0.06),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: primaryColor.withOpacity(0.2)),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.flag_outlined, size: 16, color: primaryColor),
-                const SizedBox(width: 8),
-                Text(
-                  _isWorldCup
-                      ? 'FIFA World Cup 2026 Squad — ${squad.length} players'
-                      : 'National Squad — ${squad.length} players',
-                  style: TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.w700,
-                    color: isDarkMode ? Colors.white70 : Colors.black54,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-
         // Best player card
         if (_data?.analytics.bestPlayer != null) ...[
           _buildBestPlayerCard(
@@ -1099,7 +1116,9 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
           const SizedBox(height: 20),
         ],
 
-        if (squad.isEmpty)
+        if (squad.isEmpty && _squadAnalyticsLoading)
+          _loadingCard('Loading squad…', surfaceColor, primaryColor)
+        else if (squad.isEmpty)
           _emptyCard('Squad data not available', surfaceColor)
         else
           ...categories.map((cat) {
@@ -1324,40 +1343,20 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
   // ══════════════════════════════════════════════════════════════════════════════
   Widget _buildAnalyticsTab(bool isDarkMode, Color surfaceColor, Color primaryColor) {
     final a = _data?.analytics ?? TeamAnalytics.empty;
+    final hasAnalytics = (_data?.squad.isNotEmpty ?? false) || !_squadAnalyticsLoading;
+
+    if (!hasAnalytics) {
+      return ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        children: [
+          _loadingCard('Loading analytics…', surfaceColor, primaryColor),
+        ],
+      );
+    }
 
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       children: [
-        // ── Data source note for national teams ───────────────────────────
-        if (_isNationalTeam) ...[
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            margin: const EdgeInsets.only(bottom: 16),
-            decoration: BoxDecoration(
-              color: _kSecondaryBlue.withOpacity(isDarkMode ? 0.12 : 0.06),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: _kSecondaryBlue.withOpacity(0.2)),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.analytics_outlined, size: 15, color: _kSecondaryBlue),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _isWorldCup
-                        ? 'Analytics based on FIFA World Cup 2026 data. International results used as fallback when WC data is limited.'
-                        : 'Analytics based on last 5 international matches.',
-                    style: TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.w500,
-                      color: isDarkMode ? Colors.white60 : Colors.black54,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-
         // ── Performance Radar ─────────────────────────────────────────────
         _blockHeader('PERFORMANCE ATTRIBUTES'),
         const SizedBox(height: 12),
@@ -1599,6 +1598,30 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
       decoration: BoxDecoration(color: surfaceColor, borderRadius: BorderRadius.circular(12)),
       child: Center(
         child: Text(message, style: const TextStyle(fontSize: 13, color: AppTheme.lightGray)),
+      ),
+    );
+  }
+
+  /// Inline loading placeholder shown in the Squad/Analytics tabs while
+  /// stage 2 (squad + analytics) is still fetching in the background —
+  /// the Matches tab is already interactive at this point.
+  Widget _loadingCard(String message, Color surfaceColor, Color primaryColor) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(vertical: 32),
+      decoration: BoxDecoration(color: surfaceColor, borderRadius: BorderRadius.circular(12)),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 20, height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2, color: primaryColor),
+            ),
+            const SizedBox(height: 12),
+            Text(message, style: const TextStyle(fontSize: 13, color: AppTheme.lightGray, fontWeight: FontWeight.w600)),
+          ],
+        ),
       ),
     );
   }

@@ -9,6 +9,7 @@ import 'package:livescore/services/cache_service.dart';
 import 'package:livescore/services/preferences_service.dart';
 import 'package:livescore/services/profile_service.dart';
 import 'package:livescore/services/quiz_service.dart';
+import 'package:livescore/services/notification_service.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:livescore/screens/home_screen.dart';
 import 'package:livescore/screens/teams_screen.dart';
@@ -44,6 +45,11 @@ void main() async {
     await QuizService().init();
   } catch (e) {
     print('[Main] QuizService init error: $e');
+  }
+  try {
+    await NotificationService().init();
+  } catch (e) {
+    print('[Main] NotificationService init error: $e');
   }
 
   print('[Main] Service initialization complete');

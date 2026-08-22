@@ -5,21 +5,23 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:livescore/screens/players_screen.dart';
 import 'package:livescore/screens/search_screen.dart';
 import 'package:livescore/screens/favorites_screen.dart';
 import 'package:livescore/screens/news_screen.dart';
+import 'package:livescore/screens/notification_screen.dart';
+import 'package:livescore/screens/players_screen.dart';  // ✅ added import
 import 'package:provider/provider.dart';
 
 import 'package:livescore/models/game_model.dart';
 import 'package:livescore/providers/app_provider.dart';
 import 'package:livescore/screens/settings_screen.dart';
 import 'package:livescore/screens/team_detail_screen.dart';
-import 'package:livescore/services/preferences_service.dart';
 import 'package:livescore/services/profile_service.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/widgets/game_card.dart';
-
 import '../models/team_model.dart';
+import '../widgets/football_pitch_lineup.dart';
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 
@@ -556,12 +558,18 @@ class _TopBarState extends State<_TopBar> {
                     const SizedBox(width: 10),
                   ],
                   _NotificationBell(
-                    showDot: hasLiveGames &&
-                        PreferencesService().preferences.liveScoreAlerts,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const NewsScreen()),
-                    ),
+                    unreadCount: provider.unreadNotificationCount,
+                    onTap: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const NotificationScreen()),
+                      );
+                      // Reading/opening notifications on that screen updates
+                      // Hive directly, so refresh the badge count here on
+                      // return rather than relying on notifyListeners()
+                      // firing from a screen this widget doesn't own.
+                      provider.refreshUnreadNotificationCount();
+                    },
                   ),
                   const SizedBox(width: 10),
                   _ProfileAvatar(
@@ -706,13 +714,16 @@ class _TopBarState extends State<_TopBar> {
 // ─── Notification Bell ─────────────────────────────────────────────────────
 
 class _NotificationBell extends StatelessWidget {
-  final bool showDot;
+  final int unreadCount;
   final VoidCallback onTap;
 
-  const _NotificationBell({required this.showDot, required this.onTap});
+  const _NotificationBell({required this.unreadCount, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
+    final hasUnread = unreadCount > 0;
+    final badgeLabel = unreadCount > 9 ? '9+' : '$unreadCount';
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -725,24 +736,36 @@ class _NotificationBell extends StatelessWidget {
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            const Center(
+            Center(
               child: Icon(
-                Icons.notifications_none_rounded,
+                hasUnread ? Icons.notifications_rounded : Icons.notifications_none_rounded,
                 size: 20,
                 color: _C.text,
               ),
             ),
-            if (showDot)
+            if (hasUnread)
               Positioned(
-                top: 6,
-                right: 6,
+                top: -2,
+                right: -2,
                 child: Container(
-                  width: 8,
-                  height: 8,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  height: 16,
+                  constraints: const BoxConstraints(minWidth: 16),
                   decoration: BoxDecoration(
-                    shape: BoxShape.circle,
                     color: _C.liveRed,
+                    borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: _C.white, width: 1.5),
+                  ),
+                  child: Center(
+                    child: Text(
+                      badgeLabel,
+                      style: const TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        height: 1,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -1716,11 +1739,23 @@ class _FavouritesStrip extends StatelessWidget {
       );
     }).toList();
 
+    // ─── Players ──────────────────────────────────────────────────────────────
     final playerCircles = favPlayers.map((p) {
+      final playerId = p['id'] ?? '';
+      final playerName = p['name'] ?? 'Player';
+      final teamName = p['team'] ?? '';
+      final imageUrl = p['image'] ?? '';
+
       return _FavCirclePlayer(
-        imageUrl: p['image'] ?? '',
-        label: p['name'] ?? 'Player',
-        onTap: onManage,
+        imageUrl: imageUrl,
+        label: playerName,
+        onTap: () => _navigateToPlayerDetail(
+          context,
+          playerId: playerId,
+          playerName: playerName,
+          teamName: teamName,
+          imageUrl: imageUrl,
+        ),
       );
     }).toList();
 
@@ -1785,6 +1820,8 @@ class _FavouritesStrip extends StatelessWidget {
     );
   }
 
+  // ─── Navigation helpers ────────────────────────────────────────────────────
+
   void _navigateToTeamDetail(BuildContext context, TeamInfo? team, String? leagueCode, {String? teamId}) {
     if (team != null) {
       final code = leagueCode ?? _detectLeagueCodeForTeam(team);
@@ -1841,6 +1878,57 @@ class _FavouritesStrip extends StatelessWidget {
 
   void _navigateToStandings(BuildContext context, String leagueCode) {
     Navigator.pushNamed(context, '/standings', arguments: leagueCode);
+  }
+
+  /// Navigate to PlayerScreen when a favorite player circle is tapped.
+  void _navigateToPlayerDetail(
+      BuildContext context, {
+        required String playerId,
+        required String playerName,
+        String? teamName,
+        String? imageUrl,
+      }) {
+    // Compute shortName (e.g., first initial + last name)
+    final nameParts = playerName.trim().split(' ');
+    final shortName = nameParts.length >= 2
+        ? '${nameParts.first[0]}. ${nameParts.last}'
+        : playerName;
+
+    final pitchPlayer = PitchPlayer(
+      id: playerId,
+      name: playerName,
+      shortName: shortName,
+      number: '',
+      position: '',
+      isStarter: false,
+      isHome: false,
+      imageUrl: imageUrl,
+    );
+
+    // Build TeamInfo as before
+    TeamInfo? teamInfo;
+    if (teamName != null && teamName.isNotEmpty) {
+      teamInfo = TeamInfo(
+        id: '',
+        name: teamName,
+        displayName: teamName,
+        abbreviation: teamName.length > 3 ? teamName.substring(0, 3).toUpperCase() : teamName,
+        logo: '',
+        color: '#16A34A',
+        alternateColor: '#FFFFFF',
+        record: '0-0-0',
+      );
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PlayerScreen(
+          player: pitchPlayer,
+          teamInfo: teamInfo,
+        ),
+      ),
+    );
   }
 
   static Color _parseColor(String hex) {

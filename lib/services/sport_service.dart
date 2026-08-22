@@ -457,36 +457,123 @@ class SportService {
       print('[SportService] ⚠️ ESPN fetch failed: $e');
     }
 
-    // ─── STEP 2: Try TheSportsDB for enrichment/fallback ────────────────────
-    Map<String, dynamic>? sportsDbData;
-    Player? sportsDbPlayer;
-
-    // If we have the player name, search SportsDB
-    if (playerName != null && playerName.isNotEmpty) {
-      try {
-        // Search SportsDB by name
-        sportsDbData = await _api.searchSportsDbPlayer(playerName);
-
-        if (sportsDbData != null) {
-          print('[SportService] ✅ TheSportsDB data loaded for: $playerName');
-          sportsDbPlayer = _parseSportsDbPlayer(sportsDbData);
-          print('[SportService]    SportsDB Headshot: ${sportsDbPlayer?.headshot}');
-          print('[SportService]    SportsDB Stats: ${sportsDbPlayer?.statistics}');
-          print('[SportService]    SportsDB Nationality: ${sportsDbPlayer?.nationality}');
-          print('[SportService]    SportsDB Foot: ${sportsDbPlayer?.foot}');
-          print('[SportService]    SportsDB Market Value: ${sportsDbPlayer?.marketValue}');
-        }
-      } catch (e) {
-        print('[SportService] ⚠️ TheSportsDB fetch failed: $e');
+    // ✅ FIX: `playerId` is not always a real ESPN id. The predefined seed
+    // dataset (predefined_data.dart) uses synthetic ids like 'fp_vitinha'
+    // for the ~90 famous players we don't have a verified ESPN id for —
+    // by design, ESPN's lookup can NEVER succeed for those, so `playerName`
+    // stays null and STEP 2 below used to be skipped entirely, meaning
+    // SportsDB was never even searched by name for these players. If this
+    // id matches one of our seed players, use ITS known name so SportsDB
+    // enrichment (headshot, bio) can still run even though ESPN has
+    // nothing for this id.
+    Map<String, dynamic>? famousSeed;
+    if (playerName == null || playerName.isEmpty) {
+      famousSeed = findFamousPlayerById(playerId);
+      if (famousSeed != null) {
+        playerName = famousSeed['name'] as String?;
+        print('[SportService] ℹ️ No ESPN match for $playerId — using seed '
+            'name "$playerName" so SportsDB can still be searched');
       }
-    } else {
-      print('[SportService] ⚠️ Cannot search SportsDB without player name');
     }
 
-    // ─── STEP 3: Merge data (ESPN primary, SportsDB for missing fields) ────
-    if (espnPlayer != null && espnPlayer.id.isNotEmpty) {
-      var merged = espnPlayer;
+    // ─── STEP 2 + STEP 3.5: TheSportsDB enrichment and API-Football season
+    // stats, fetched in parallel ─────────────────────────────────────────────
+    // Both are independent lookups keyed off the player's name (and
+    // team/league for the stats call) already resolved in STEP 1 above —
+    // neither needs the other's result, so firing them one after another (as
+    // this used to) just adds a second full network round-trip on top of the
+    // first for no reason. This hybrid fetch used to be 3 sequential
+    // round-trips (ESPN, then SportsDB, then API-Football); it's 2 now.
+    //
+    // ✅ FIX: the base `merged` object used to require `espnPlayer.id
+    // .isNotEmpty`, which is never true for our synthetic 'fp_*' seed ids —
+    // meaning every one of the ~90 predefined-only players (everything past
+    // the original top 10, which happen to have real ESPN ids) skipped the
+    // whole merge block below, including STEP 3.6's predefined-stats
+    // fallback, and fell through to the "no data found" sentinel in STEP 5
+    // instead. Now a known seed player (`famousSeed`, resolved above) also
+    // builds a `merged` object, seeded from predefined_data.dart's bio
+    // fields instead of ESPN.
+    final hasEspnPlayer = espnPlayer != null && espnPlayer.id.isNotEmpty;
+    Player? merged = hasEspnPlayer
+        ? espnPlayer!
+        : (famousSeed != null
+        ? Player(
+      id: playerId,
+      fullName: famousSeed['name'] as String? ?? '',
+      displayName: famousSeed['name'] as String? ?? '',
+      headshot: (famousSeed['imageUrl'] as String?) ?? '',
+      jersey: (famousSeed['jersey'] as String?) ?? '',
+      position: (famousSeed['position'] as String?) ?? '',
+      teamId: (famousSeed['teamId'] as String?) ?? '',
+      teamName: (famousSeed['teamName'] as String?) ?? '',
+      height: 0,
+      weight: 0,
+      age: 0,
+      college: '',
+      statistics: const {},
+      nationality: famousSeed['nationality'] as String?,
+    )
+        : null);
 
+    // Declared at this outer scope (not inside the `if (merged != null)`
+    // block below) because STEP 4 further down still reads it as a
+    // last-resort fallback for the case where neither ESPN nor the
+    // predefined seed matched at all.
+    Player? sportsDbPlayer;
+
+    final mergedBase = merged;
+    if (mergedBase != null) {
+      // Shadows the outer nullable `merged` with a non-null local of the
+      // same name. Dart can't retain a plain `if (merged != null)`
+      // null-check promotion across this block, because `merged` gets
+      // captured by local closures further down (isMeaninglessCareerStats,
+      // liveStatsImplausiblyLow, the roster-fallback `orElse` lambda) —
+      // once that happens the analyzer treats every later use as nullable
+      // again. A separate non-null local sidesteps that entirely.
+      var merged = mergedBase;
+      Map<String, dynamic>? sportsDbData;
+      Map<String, dynamic>? afStats;
+
+      final wantsSportsDb = playerName != null && playerName.isNotEmpty;
+      final wantsAfStats = merged.displayName.isNotEmpty;
+
+      if (wantsSportsDb || wantsAfStats) {
+        final results = await Future.wait<Map<String, dynamic>?>([
+          wantsSportsDb
+              ? _api.searchSportsDbPlayer(playerName!).catchError((e) {
+            print('[SportService] ⚠️ TheSportsDB fetch failed: $e');
+            return null;
+          })
+              : Future.value(null),
+          wantsAfStats
+              ? _api.getPlayerSeasonStatsApiFootball(
+            playerName: merged.displayName,
+            leagueCode: league,
+            teamName: merged.teamName,
+          ).catchError((e) {
+            print('[SportService] ⚠️ API-Football season stats fetch failed: $e');
+            return null;
+          })
+              : Future.value(null),
+        ]);
+        sportsDbData = results[0];
+        afStats = results[1];
+      } else {
+        print('[SportService] ⚠️ Cannot search SportsDB without player name');
+      }
+
+      if (sportsDbData != null) {
+        print('[SportService] ✅ TheSportsDB data loaded for: $playerName');
+        sportsDbPlayer = _parseSportsDbPlayer(sportsDbData);
+        print('[SportService]    SportsDB Headshot: ${sportsDbPlayer?.headshot}');
+        print('[SportService]    SportsDB Stats: ${sportsDbPlayer?.statistics}');
+        print('[SportService]    SportsDB Nationality: ${sportsDbPlayer?.nationality}');
+        print('[SportService]    SportsDB Foot: ${sportsDbPlayer?.foot}');
+        print('[SportService]    SportsDB Market Value: ${sportsDbPlayer?.marketValue}');
+      }
+
+      // ─── STEP 3: Merge data (ESPN primary, SportsDB for missing fields) ────
       // Merge SportsDB data where ESPN is missing or incomplete
       if (sportsDbPlayer != null) {
         // Headshot - prefer SportsDB cutout (transparent PNG)
@@ -556,40 +643,31 @@ class SportService {
       // a single demo player (see sportsdb_service.dart). API-Football's
       // `/players` endpoint is the real source for goals/shots/passes/
       // tackles etc., scoped to the league this player is actually playing
-      // in, so it's fetched here regardless of whether ESPN/SportsDB left
-      // seasonStats empty — this is expected, not a fallback path.
-      if (merged.displayName.isNotEmpty) {
-        try {
-          final afStats = await _api.getPlayerSeasonStatsApiFootball(
-            playerName: merged.displayName,
-            leagueCode: league,
-            teamName: merged.teamName,
-          );
-          if (afStats != null && afStats.isNotEmpty) {
-            final mergedSeasonStats = <String, dynamic>{
-              ...afStats,
-              ...?merged.seasonStats, // ESPN/SportsDB values win if present
-            };
-            merged = merged.copyWith(seasonStats: mergedSeasonStats);
+      // in — this is expected to run regardless of whether ESPN/SportsDB
+      // left seasonStats empty, not a fallback path. The actual fetch
+      // already happened above (in parallel with SportsDB); this just
+      // applies the result.
+      if (afStats != null && afStats.isNotEmpty) {
+        final mergedSeasonStats = <String, dynamic>{
+          ...afStats,
+          ...?merged.seasonStats, // ESPN/SportsDB values win if present
+        };
+        merged = merged.copyWith(seasonStats: mergedSeasonStats);
 
-            // Backfill the top-line Goals/Assists/Apps grid too, since
-            // ESPN's `statistics` map is empty for soccer in practice.
-            if (merged.statistics.isEmpty) {
-              merged = merged.copyWith(statistics: {
-                'goals': afStats['goals'],
-                'assists': afStats['assists'],
-                'appearances': afStats['appearances'],
-              });
-            }
-            print('[SportService] ✅ Added API-Football season stats '
-                '(${afStats['statsLeague']} ${afStats['statsSeason']})');
-          } else {
-            print('[SportService] ⚠️ No API-Football season stats found for '
-                '${merged.displayName} in $league');
-          }
-        } catch (e) {
-          print('[SportService] ⚠️ API-Football season stats fetch failed: $e');
+        // Backfill the top-line Goals/Assists/Apps grid too, since
+        // ESPN's `statistics` map is empty for soccer in practice.
+        if (merged.statistics.isEmpty) {
+          merged = merged.copyWith(statistics: {
+            'goals': afStats['goals'],
+            'assists': afStats['assists'],
+            'appearances': afStats['appearances'],
+          });
         }
+        print('[SportService] ✅ Added API-Football season stats '
+            '(${afStats['statsLeague']} ${afStats['statsSeason']})');
+      } else if (wantsAfStats) {
+        print('[SportService] ⚠️ No API-Football season stats found for '
+            '${merged.displayName} in $league');
       }
 
       // ─── STEP 3.6: Predefined stats fallback for well-known players ──────
@@ -618,11 +696,42 @@ class SportService {
           (merged.seasonStats == null || merged.seasonStats!.isEmpty) &&
           isMeaninglessCareerStats(merged.careerStats);
 
-      if (statsAreEmpty) {
+      // ✅ FIX: "empty" was the only trigger for this fallback, which is
+      // why a wrongly-matched player's real-but-tiny stat line (0G/1A/32
+      // apps attached to Cristiano Ronaldo) never got replaced — the map
+      // wasn't empty, just wrong. `_bestApiFootballPlayerMatch` is now
+      // stricter about what counts as a confident match (see api_service),
+      // which fixes the root cause. This is a second, independent check:
+      // if we already have verified predefined data for this player and
+      // the live-fetched numbers are far below it, that's a strong signal
+      // the live match was for a different person (career totals only go
+      // up), so prefer the known-good data instead of the smaller number.
+      bool liveStatsImplausiblyLow() {
+        final predefined = predefinedPlayerStats[playerId];
+        if (predefined == null) return false;
+        final knownGoals = num.tryParse('${predefined['careerGoals'] ?? 0}') ?? 0;
+        final knownApps = num.tryParse('${predefined['careerAppearances'] ?? 0}') ?? 0;
+        if (knownGoals <= 0 && knownApps <= 0) return false;
+
+        final liveGoals = num.tryParse('${merged.statistics['goals'] ?? 0}') ?? 0;
+        final liveApps = num.tryParse('${merged.statistics['appearances'] ?? 0}') ?? 0;
+
+        // A believable single-season/competition slice can legitimately be
+        // smaller than a whole career total — so only flag it when the
+        // live numbers are so far below the known career totals that they
+        // can't plausibly be this player at all (e.g. 32 apps for someone
+        // with 1000+ known appearances and near-zero goals for a career
+        // goalscorer of Ronaldo's caliber).
+        final goalsImplausible = knownGoals >= 50 && liveGoals == 0;
+        final appsImplausible = knownApps >= 200 && liveApps > 0 && liveApps < 50;
+        return goalsImplausible && appsImplausible;
+      }
+
+      if (statsAreEmpty || liveStatsImplausiblyLow()) {
         final predefined = predefinedPlayerStats[playerId];
         if (predefined != null) {
-          print('[SportService] ⚠️ All live stats sources empty for '
-              '$playerId — applying predefined stats fallback');
+          print('[SportService] ⚠️ Live stats for $playerId are empty or '
+              'implausible — applying predefined stats fallback');
 
           final careerStatsFallback = (predefined['careerStats'] as List)
               .map((e) => Map<String, dynamic>.from(e as Map))
@@ -692,9 +801,18 @@ class SportService {
     }
 
     // ─── STEP 5: Return empty player ────────────────────────────────────────
+    // ✅ FIX: `id` used to be set to `playerId` here even though nothing
+    // was actually found — a non-empty id on an otherwise-blank Player.
+    // Callers (e.g. players_screen.dart's `_loadPlayerDetails`) check
+    // `playerDetails.id.isNotEmpty` to decide whether the hybrid fetch
+    // succeeded; that always evaluated to true here, so total failure was
+    // reported as success, and the caller's own good local fallback
+    // (`_createPlayerFromPitchPlayer`, which correctly checks
+    // predefinedPlayerStats) never ran. `id` is genuinely empty now so
+    // callers can tell this apart from a real result.
     print('[SportService] ❌ No data found for player: $playerId');
     return Player(
-      id: playerId,
+      id: '',
       fullName: '',
       displayName: '',
       headshot: '',
@@ -953,7 +1071,7 @@ class SportService {
     }
   }
 
-  // ─── TEAM PAGE DATA WITH 6-HOUR CACHING ────────────────────────────────────
+  // ─── TEAM PAGE DATA WITH 3-DAY CACHING ─────────────────────────────────────
   Future<TeamPageData> getTeamPageData(
       String teamId, {
         String? leagueCode,
@@ -979,7 +1097,7 @@ class SportService {
       final data = await _api.getTeamPageData(teamId, leagueCode: resolvedLeague);
 
       await _cache.cacheTeamPageData(cacheKey, data);
-      print('[SportService] ✅ Team page data cached for $teamId (6 hours)');
+      print('[SportService] ✅ Team page data cached for $teamId (3 days)');
 
       return data;
     } catch (e) {
@@ -992,6 +1110,183 @@ class SportService {
         }
       } catch (_) {}
       return TeamPageData.empty(resolvedLeague);
+    }
+  }
+
+  // ─── TEAM PAGE DATA: STAGED LOADING ─────────────────────────────────────────
+  // Matches load first and are handed back immediately via [onMatchesReady] so
+  // the Matches tab can render right away; squad + analytics are then fetched
+  // in the background and delivered via [onSquadAnalyticsReady] once ready.
+  Future<TeamPageData> getTeamPageDataStaged(
+      String teamId, {
+        String? leagueCode,
+        bool forceRefresh = false,
+        Function(TeamPageData matchesOnly)? onMatchesReady,
+        Function(TeamPageData fullData)? onSquadAnalyticsReady,
+      }) async {
+    final resolvedLeague = leagueCode ?? _currentLeagueCode;
+    final cacheKey = '${_teamPageCacheKeyPrefix}${teamId}_${resolvedLeague}';
+
+    if (!forceRefresh) {
+      TeamPageData? cached;
+      try {
+        cached = await _cache.getCachedTeamPageData(cacheKey);
+      } catch (e) {
+        print('[SportService] Team page cache read error: $e');
+      }
+
+      if (cached != null) {
+        print('[SportService] ✅ Team page cache HIT for $teamId — showing instantly, revalidating in background');
+        // Show the cached page immediately — both stages resolve together
+        // since the cache already has everything.
+        if (onMatchesReady != null) onMatchesReady(cached);
+        if (onSquadAnalyticsReady != null) onSquadAnalyticsReady(cached);
+
+        // Then silently refetch live data behind the scenes. The screen
+        // is only updated (and the cache only rewritten) if something
+        // actually changed — an unchanged revalidation is invisible.
+        _revalidateTeamPageInBackground(
+          teamId: teamId,
+          leagueCode: resolvedLeague,
+          cacheKey: cacheKey,
+          previous: cached,
+          onMatchesReady: onMatchesReady,
+          onSquadAnalyticsReady: onSquadAnalyticsReady,
+        );
+
+        return cached;
+      }
+    }
+
+    try {
+      print('[SportService] Stage 1: fetching matches for $teamId');
+      final matches = await _api.getTeamMatchesData(teamId, leagueCode: resolvedLeague);
+      final matchesOnly = TeamPageData.fromMatches(matches);
+
+      if (onMatchesReady != null) onMatchesReady(matchesOnly);
+
+      // Stage 2 (squad + analytics) runs in the background — the caller is
+      // not blocked on it, and it does not delay returning matchesOnly.
+      _fetchSquadAnalyticsInBackground(
+        teamId: teamId,
+        cacheKey: cacheKey,
+        matches: matches,
+        matchesOnly: matchesOnly,
+        onSquadAnalyticsReady: onSquadAnalyticsReady,
+      );
+
+      return matchesOnly;
+    } catch (e) {
+      print('[SportService] getTeamPageDataStaged error: $e');
+      try {
+        final cached = await _cache.getCachedTeamPageData(cacheKey);
+        if (cached != null) {
+          print('[SportService] ⚠️ Returning stale cache for $teamId');
+          if (onMatchesReady != null) onMatchesReady(cached);
+          if (onSquadAnalyticsReady != null) onSquadAnalyticsReady(cached);
+          return cached;
+        }
+      } catch (_) {}
+      final empty = TeamPageData.empty(resolvedLeague);
+      if (onMatchesReady != null) onMatchesReady(empty);
+      return empty;
+    }
+  }
+
+  /// Fire-and-forget stage 2: fetches squad + analytics, merges them onto
+  /// the matches-only page, caches the complete result, and notifies the
+  /// caller via [onSquadAnalyticsReady]. Errors here never surface to the
+  /// caller of [getTeamPageDataStaged] — matches are already on screen, so
+  /// the squad/analytics tabs simply keep showing their loading state.
+  Future<void> _fetchSquadAnalyticsInBackground({
+    required String teamId,
+    required String cacheKey,
+    required TeamMatchesData matches,
+    required TeamPageData matchesOnly,
+    Function(TeamPageData fullData)? onSquadAnalyticsReady,
+  }) async {
+    try {
+      print('[SportService] Stage 2: fetching squad + analytics for $teamId');
+      final squadAnalytics = await _api.getTeamSquadAndAnalytics(
+        teamId,
+        queryLeagueCode: matches.queryLeagueCode,
+        recentMatches: matches.recentMatches,
+      );
+
+      final fullData = matchesOnly.copyWith(
+        squad: squadAnalytics.squad,
+        analytics: squadAnalytics.analytics,
+      );
+
+      await _cache.cacheTeamPageData(cacheKey, fullData);
+      print('[SportService] ✅ Team page data cached for $teamId (3 days)');
+
+      if (onSquadAnalyticsReady != null) onSquadAnalyticsReady(fullData);
+    } catch (e) {
+      print('[SportService] Squad/analytics background fetch error: $e');
+    }
+  }
+
+  /// Stale-while-revalidate: called after a cache hit has already been shown
+  /// to the user. Silently refetches live data (same two stages as a cold
+  /// load) and diffs each stage against [previous]. The screen callback and
+  /// on-device cache are only touched when something genuinely changed —
+  /// an unchanged revalidation is invisible to the user and doesn't rewrite
+  /// the cache, so the 3-day TTL keeps counting from the last real change.
+  Future<void> _revalidateTeamPageInBackground({
+    required String teamId,
+    required String leagueCode,
+    required String cacheKey,
+    required TeamPageData previous,
+    Function(TeamPageData matchesOnly)? onMatchesReady,
+    Function(TeamPageData fullData)? onSquadAnalyticsReady,
+  }) async {
+    TeamMatchesData matches;
+    TeamPageData mergedMatches;
+    try {
+      print('[SportService] 🔄 Revalidating matches for $teamId');
+      matches = await _api.getTeamMatchesData(teamId, leagueCode: leagueCode);
+      final freshMatches = TeamPageData.fromMatches(matches);
+      // Keep showing the squad/analytics already on screen until stage 2
+      // below resolves, so a matches-only change doesn't blank the tabs.
+      mergedMatches = freshMatches.copyWith(
+        squad: previous.squad,
+        analytics: previous.analytics,
+      );
+
+      if (!_cache.teamPageDataEquals(mergedMatches, previous)) {
+        print('[SportService] 🔄 Matches changed for $teamId — updating screen');
+        if (onMatchesReady != null) onMatchesReady(mergedMatches);
+      } else {
+        print('[SportService] Matches unchanged for $teamId');
+      }
+    } catch (e) {
+      print('[SportService] Revalidation (matches) error for $teamId: $e');
+      return; // Live refresh failed outright — leave the cached page as-is.
+    }
+
+    try {
+      print('[SportService] 🔄 Revalidating squad/analytics for $teamId');
+      final squadAnalytics = await _api.getTeamSquadAndAnalytics(
+        teamId,
+        queryLeagueCode: matches.queryLeagueCode,
+        recentMatches: matches.recentMatches,
+      );
+
+      final fullData = mergedMatches.copyWith(
+        squad: squadAnalytics.squad,
+        analytics: squadAnalytics.analytics,
+      );
+
+      if (!_cache.teamPageDataEquals(fullData, previous)) {
+        print('[SportService] 🔄 Team page changed for $teamId — re-caching');
+        await _cache.cacheTeamPageData(cacheKey, fullData);
+        if (onSquadAnalyticsReady != null) onSquadAnalyticsReady(fullData);
+      } else {
+        print('[SportService] Team page unchanged for $teamId — cache left as-is');
+      }
+    } catch (e) {
+      print('[SportService] Revalidation (squad/analytics) error for $teamId: $e');
     }
   }
 
@@ -1011,4 +1306,4 @@ class SportService {
       return [];
     }
   }
-}
+}  
