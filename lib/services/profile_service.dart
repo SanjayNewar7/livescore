@@ -10,6 +10,7 @@
 
 import 'dart:io';
 
+import 'package:flutter/painting.dart' show FileImage;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -19,7 +20,9 @@ import 'package:livescore/models/user_profile_model.dart';
 class ProfileService {
   static const String _boxName = 'user_profile_box';
   static const String _profileKey = 'profile';
+  /// Legacy fixed name, still cleaned up when found.
   static const String _imageFileName = 'profile_photo.jpg';
+  static const String _imageFilePrefix = 'profile_photo_';
 
   static final ProfileService _instance = ProfileService._internal();
   factory ProfileService() => _instance;
@@ -59,19 +62,43 @@ class ProfileService {
     return updated;
   }
 
+  /// Frees the decoded frame of a photo we are retiring, so it does not sit in
+  /// the image cache for the rest of the session.
+  Future<void> _evictCachedImage(String path) async {
+    await FileImage(File(path)).evict();
+  }
+
+  /// Copies [source] into the documents directory under a fresh, unique name
+  /// and deletes the photo it replaces.
+  ///
+  /// The file name has to change on every save. A mounted [Image] only
+  /// re-resolves when its provider compares unequal, and [FileImage] equality
+  /// is just the path — so reusing one fixed name leaves the previous photo on
+  /// screen until the next app launch, however the cache is evicted.
+  Future<String> _storeImage(File source) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final savedPath =
+        '${dir.path}/$_imageFilePrefix${DateTime.now().millisecondsSinceEpoch}.jpg';
+    await source.copy(savedPath);
+
+    // Retire the photo this one replaces, plus anything left behind by the
+    // older fixed-name scheme.
+    for (final stale in {profile.imagePath, '${dir.path}/$_imageFileName'}) {
+      if (stale == null || stale == savedPath) continue;
+      final staleFile = File(stale);
+      if (await staleFile.exists()) {
+        await staleFile.delete();
+      }
+      await _evictCachedImage(stale);
+    }
+
+    return savedPath;
+  }
+
   /// ✅ ADDED: Save a profile image from a File
   Future<UserProfile?> saveProfileImage(File imageFile) async {
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final savedPath = '${dir.path}/$_imageFileName';
-
-      // Overwrite any existing photo.
-      final savedFile = File(savedPath);
-      if (await savedFile.exists()) {
-        await savedFile.delete();
-      }
-      await imageFile.copy(savedPath);
-
+      final savedPath = await _storeImage(imageFile);
       final updated = profile.copyWith(imagePath: savedPath);
       await saveProfile(updated);
       return updated;
@@ -93,15 +120,7 @@ class ProfileService {
     );
     if (picked == null) return null;
 
-    final dir = await getApplicationDocumentsDirectory();
-    final savedPath = '${dir.path}/$_imageFileName';
-
-    // Overwrite any existing photo.
-    final savedFile = File(savedPath);
-    if (await savedFile.exists()) {
-      await savedFile.delete();
-    }
-    await File(picked.path).copy(savedPath);
+    final savedPath = await _storeImage(File(picked.path));
 
     final updated = profile.copyWith(imagePath: savedPath);
     await saveProfile(updated);
@@ -115,6 +134,7 @@ class ProfileService {
       if (await file.exists()) {
         await file.delete();
       }
+      await _evictCachedImage(current.imagePath!);
     }
     final updated = current.copyWith(clearImage: true);
     await saveProfile(updated);

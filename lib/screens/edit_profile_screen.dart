@@ -175,16 +175,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _pickImage(ImageSource source) async {
     Navigator.pop(context);
 
+    // Gallery picks go through the Android system photo picker / iOS limited
+    // picker, which return a single user-chosen image without any media
+    // permission. Only the camera path needs a runtime permission.
     if (source == ImageSource.camera) {
       final status = await Permission.camera.request();
       if (!status.isGranted) {
         _showPermissionDenied('Camera');
-        return;
-      }
-    } else {
-      final status = await Permission.photos.request();
-      if (!status.isGranted) {
-        _showPermissionDenied('Gallery');
         return;
       }
     }
