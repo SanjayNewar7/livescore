@@ -5,7 +5,8 @@ the 27 images in Cloudinary's dynamic asset folder `LiveGoal Avatar` using the
 Admin API. It returns only asset IDs and public delivery URLs. The Cloudinary
 API secret must stay on the server.
 
-1. Deploy this repository to a Vercel project. In the Vercel project settings,
+1. Deploy this repository to a Vercel project with the Root Directory set to
+   the repository root and the production branch set to `master`. In the Vercel project settings,
    add `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET` as environment variables
    for the function. Do not put either value in Flutter or in source control.
 2. Visit `https://YOUR-PROJECT.vercel.app/api/avatars` and confirm it returns an
