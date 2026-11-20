@@ -9,17 +9,23 @@
 //   path_provider: ^2.1.0
 
 import 'dart:io';
+import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show FileImage;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:http/http.dart' as http;
 
 import 'package:livescore/models/user_profile_model.dart';
+import 'package:livescore/services/avatar_catalog_service.dart';
+import 'package:livescore/utils/suggested_profile_names.dart';
 
-class ProfileService {
+class ProfileService extends ChangeNotifier {
   static const String _boxName = 'user_profile_box';
   static const String _profileKey = 'profile';
+
   /// Legacy fixed name, still cleaned up when found.
   static const String _imageFileName = 'profile_photo.jpg';
   static const String _imageFilePrefix = 'profile_photo_';
@@ -30,6 +36,12 @@ class ProfileService {
 
   Future<void> init() async {
     await _ensureBox();
+    if (!profile.hasName || profile.name.trim() == 'Football Fan') {
+      await saveProfile(profile.copyWith(
+        name: suggestedProfileNames[
+            Random().nextInt(suggestedProfileNames.length)],
+      ));
+    }
   }
 
   /// Every read/write goes through this instead of a cached `late Box`
@@ -54,6 +66,7 @@ class ProfileService {
   Future<void> saveProfile(UserProfile profile) async {
     final box = await _ensureBox();
     await box.put(_profileKey, profile.toMap());
+    notifyListeners();
   }
 
   Future<UserProfile> updateBasicInfo({String? name, String? bio}) async {
@@ -99,7 +112,7 @@ class ProfileService {
   Future<UserProfile?> saveProfileImage(File imageFile) async {
     try {
       final savedPath = await _storeImage(imageFile);
-      final updated = profile.copyWith(imagePath: savedPath);
+      final updated = profile.copyWith(imagePath: savedPath, clearAvatar: true);
       await saveProfile(updated);
       return updated;
     } catch (e) {
@@ -110,7 +123,8 @@ class ProfileService {
 
   /// Lets the user pick a photo from gallery or camera, copies it into
   /// permanent local storage, and saves the path against the profile.
-  Future<UserProfile?> pickAndSaveProfileImage({required bool fromCamera}) async {
+  Future<UserProfile?> pickAndSaveProfileImage(
+      {required bool fromCamera}) async {
     final picker = ImagePicker();
     final XFile? picked = await picker.pickImage(
       source: fromCamera ? ImageSource.camera : ImageSource.gallery,
@@ -122,7 +136,7 @@ class ProfileService {
 
     final savedPath = await _storeImage(File(picked.path));
 
-    final updated = profile.copyWith(imagePath: savedPath);
+    final updated = profile.copyWith(imagePath: savedPath, clearAvatar: true);
     await saveProfile(updated);
     return updated;
   }
@@ -136,9 +150,50 @@ class ProfileService {
       }
       await _evictCachedImage(current.imagePath!);
     }
-    final updated = current.copyWith(clearImage: true);
+    final updated = current.copyWith(clearImage: true, clearAvatar: true);
     await saveProfile(updated);
     return updated;
+  }
+
+  Future<UserProfile?> saveAnimeAvatar(AnimeAvatar avatar,
+      {bool onlyIfEmpty = false}) async {
+    final uri = Uri.tryParse(avatar.url);
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host != 'res.cloudinary.com' ||
+        !uri.path.startsWith('/dkk7zqgnz/image/upload/')) return null;
+    File? temporary;
+    try {
+      final response = await http.get(uri).timeout(const Duration(seconds: 20));
+      if (response.statusCode != 200 ||
+          response.bodyBytes.isEmpty ||
+          response.bodyBytes.length > 5 * 1024 * 1024) return null;
+      final dir = await getApplicationDocumentsDirectory();
+      temporary = File('${dir.path}/avatar_download.tmp');
+      await temporary.writeAsBytes(response.bodyBytes, flush: true);
+      if (onlyIfEmpty && profile.hasImage) return null;
+      final savedPath = await _storeImage(temporary);
+      final updated =
+          profile.copyWith(imagePath: savedPath, avatarId: avatar.id);
+      await saveProfile(updated);
+      return updated;
+    } catch (_) {
+      return null;
+    } finally {
+      if (temporary != null && await temporary.exists())
+        await temporary.delete();
+    }
+  }
+
+  Future<void> ensureDefaultAvatar() async {
+    if (profile.hasImage) return;
+    final avatars = await AvatarCatalogService().getAvatars();
+    if (avatars.isEmpty || profile.hasImage) return;
+    final selected = avatars.firstWhere(
+      (avatar) => avatar.id == profile.avatarId,
+      orElse: () => avatars[Random().nextInt(avatars.length)],
+    );
+    await saveAnimeAvatar(selected, onlyIfEmpty: true);
   }
 
   Future<UserProfile> setFavoriteClub({

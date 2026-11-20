@@ -7,6 +7,10 @@ import 'package:livescore/models/team_model.dart';
 import 'package:livescore/models/team_page_data.dart';
 import 'package:livescore/services/sport_service.dart';
 import 'package:livescore/services/sportsdb_service.dart';
+import 'package:livescore/services/notification_service.dart';
+import 'package:livescore/services/preferences_service.dart';
+import 'package:livescore/providers/app_provider.dart';
+import 'package:provider/provider.dart';
 import 'package:livescore/utils/theme.dart';
 import 'package:livescore/utils/constants.dart';
 import 'dart:math' as math;
@@ -37,6 +41,7 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
   late TabController _tabController;
   final SportService _sportService = SportService();
   final SportsDbService _sportsDb = SportsDbService();
+  final NotificationService _notifications = NotificationService();
 
   bool _isFollowing = false;
   // True only until the Matches stage (fast path) has loaded — the rest of
@@ -54,12 +59,12 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
 
   bool get _isNationalTeam =>
       AppConstants.isNationalTeamLeague(widget.leagueCode ?? '');
-  bool get _isWorldCup =>
-      AppConstants.isWorldCup(widget.leagueCode ?? '');
+  bool get _isWorldCup => AppConstants.isWorldCup(widget.leagueCode ?? '');
 
   @override
   void initState() {
     super.initState();
+    _isFollowing = _notifications.isTeamFollowed(widget.team.id);
     _tabController = TabController(length: 3, vsync: this);
     _loadData();
   }
@@ -85,6 +90,10 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
             _data = matchesOnly;
             _isLoading = false;
           });
+          if (_isFollowing) {
+            _notifications.scheduleTeamFixtures(
+                widget.team.id, matchesOnly.upcoming);
+          }
         },
         onSquadAnalyticsReady: (fullData) {
           if (!mounted) return;
@@ -105,6 +114,134 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
       });
     }
   }
+
+  Future<void> _toggleTeamNotifications() async {
+    if (_isFollowing) {
+      await _notifications.unfollowTeam(widget.team.id);
+      if (mounted) setState(() => _isFollowing = false);
+      return;
+    }
+    final consent = await _showNotificationConsent();
+    if (consent != true || !mounted) return;
+    if (!await _notifications.requestDevicePermission()) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Enable notifications in phone settings to follow this team.'),
+        ));
+      return;
+    }
+    final prefs = PreferencesService().preferences;
+    if (!prefs.notificationsEnabled) {
+      await PreferencesService()
+          .savePreferences(prefs.copyWith(notificationsEnabled: true));
+    }
+    await _notifications.followTeam(
+      teamId: widget.team.id,
+      teamName: widget.team.displayName,
+      leagueCode: _data?.leagueCode ?? widget.leagueCode ?? 'eng.1',
+      fixtures: _data?.upcoming ?? const [],
+    );
+    if (mounted) {
+      setState(() => _isFollowing = true);
+      context.read<AppProvider>().generateNotifications();
+    }
+  }
+
+  Future<bool?> _showNotificationConsent() {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final foreground = dark ? Colors.white : const Color(0xFF10213B);
+    final muted = dark ? Colors.white70 : const Color(0xFF64748B);
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: _kPrimaryGreen.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(Icons.notifications_active_rounded,
+                    color: _kPrimaryGreen, size: 28),
+              ),
+              const SizedBox(height: 20),
+              Text('Get ${widget.team.displayName} updates',
+                  style: TextStyle(
+                      fontFamily: 'SportFont',
+                      fontSize: 21,
+                      fontWeight: FontWeight.w800,
+                      color: foreground)),
+              const SizedBox(height: 8),
+              Text('Choose to receive these alerts on your phone:',
+                  style: TextStyle(
+                      fontFamily: 'SportFont', fontSize: 14, color: muted)),
+              const SizedBox(height: 20),
+              _consentRow(Icons.article_outlined, 'Team news', foreground),
+              const SizedBox(height: 14),
+              _consentRow(Icons.schedule_rounded, '15 minutes before kickoff',
+                  foreground),
+              const SizedBox(height: 14),
+              _consentRow(Icons.sports_soccer_rounded,
+                  'Kickoff and final result', foreground),
+              const SizedBox(height: 22),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _kPrimaryGreen,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text('Turn on notifications',
+                      style: TextStyle(fontFamily: 'SportFont')),
+                ),
+              ),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Maybe later',
+                      style: TextStyle(fontFamily: 'SportFont',
+                          color: _kPrimaryGreen)),
+                ),
+              ),
+              Center(
+                child: Text('You can turn these off anytime in Settings.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        fontFamily: 'SportFont', fontSize: 12, color: muted)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _consentRow(IconData icon, String label, Color foreground) => Row(
+        children: [
+          Icon(icon, size: 20, color: _kPrimaryGreen),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Text(label,
+                  style: TextStyle(
+                      fontFamily: 'SportFont',
+                      fontSize: 14,
+                      color: foreground,
+                      fontWeight: FontWeight.w600))),
+        ],
+      );
 
   /// Load SportsDB headshots for all squad players
   Future<void> _loadSportsDbHeadshots() async {
@@ -149,7 +286,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
   /// colors get pulled back toward something the UI can sit next to.
   Color _tonedColor(Color color) {
     final hsl = HSLColor.fromColor(color);
-    final isVivid = hsl.saturation > 0.80 && hsl.lightness > 0.30 && hsl.lightness < 0.72;
+    final isVivid =
+        hsl.saturation > 0.80 && hsl.lightness > 0.30 && hsl.lightness < 0.72;
     if (!isVivid) return color;
     return hsl
         .withSaturation(0.62)
@@ -239,7 +377,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
     final logoUrl = _getValidLogoUrl();
 
     final surfaceColor = isDarkMode ? const Color(0xFF161920) : Colors.white;
-    final bgColor = isDarkMode ? const Color(0xFF0F1115) : const Color(0xFFF8FAFC);
+    final bgColor =
+        isDarkMode ? const Color(0xFF0F1115) : const Color(0xFFF8FAFC);
     final gradientColor = _safeGradientColor(primaryColor, isDarkMode);
 
     final standingInfo = _data?.standingInfo;
@@ -256,8 +395,10 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
             pinned: true,
             elevation: 0,
             scrolledUnderElevation: 0,
-            backgroundColor: isDarkMode ? const Color(0xFF0F1115) : const Color(0xFFF1F5F9),
-            iconTheme: IconThemeData(color: isDarkMode ? Colors.white : Colors.black87),
+            backgroundColor:
+                isDarkMode ? const Color(0xFF0F1115) : const Color(0xFFF1F5F9),
+            iconTheme: IconThemeData(
+                color: isDarkMode ? Colors.white : Colors.black87),
             leading: IconButton(
               icon: const Icon(Icons.arrow_back_ios_new, size: 18),
               onPressed: () => Navigator.pop(context),
@@ -267,17 +408,26 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                 Padding(
                   padding: const EdgeInsets.only(right: 16),
                   child: SizedBox(
-                    width: 18, height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: primaryColor),
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: primaryColor),
                   ),
                 )
               else
                 IconButton(
+                  tooltip: _isFollowing
+                      ? 'Turn off team notifications'
+                      : 'Turn on team notifications',
                   icon: Icon(
-                    _isFollowing ? Icons.star : Icons.star_border,
-                    color: _isFollowing ? Colors.amber : (isDarkMode ? Colors.white : Colors.black87),
+                    _isFollowing
+                        ? Icons.notifications_active_rounded
+                        : Icons.notifications_none_rounded,
+                    color: _isFollowing
+                        ? _kPrimaryGreen
+                        : (isDarkMode ? Colors.white : Colors.black87),
                   ),
-                  onPressed: () => setState(() => _isFollowing = !_isFollowing),
+                  onPressed: _toggleTeamNotifications,
                 ),
               const SizedBox(width: 8),
             ],
@@ -293,22 +443,26 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                             colors: [
-                              gradientColor.withOpacity(isDarkMode ? 0.35 : 0.20),
-                              gradientColor.withOpacity(isDarkMode ? 0.08 : 0.04),
+                              gradientColor
+                                  .withOpacity(isDarkMode ? 0.35 : 0.20),
+                              gradientColor
+                                  .withOpacity(isDarkMode ? 0.08 : 0.04),
                             ],
                           ),
                         ),
                       ),
                     ),
                     Positioned(
-                      right: -16, bottom: -8,
+                      right: -16,
+                      bottom: -8,
                       child: Text(
                         widget.team.abbreviation.toUpperCase(),
                         style: TextStyle(
                           fontSize: 96,
                           fontWeight: FontWeight.bold,
                           letterSpacing: -4,
-                          color: (isDarkMode ? Colors.white : gradientColor).withOpacity(0.05),
+                          color: (isDarkMode ? Colors.white : gradientColor)
+                              .withOpacity(0.05),
                         ),
                       ),
                     ),
@@ -325,57 +479,74 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                                   tag: 'team_logo_${widget.team.id}',
                                   child: CachedNetworkImage(
                                     imageUrl: logoUrl,
-                                    height: 80, width: 80,
+                                    height: 80,
+                                    width: 80,
                                     fit: BoxFit.contain,
-                                    errorWidget: (c, u, e) => Icon(Icons.shield, size: 80, color: primaryColor),
+                                    errorWidget: (c, u, e) => Icon(Icons.shield,
+                                        size: 80, color: primaryColor),
                                   ),
                                 ),
                                 const SizedBox(width: 20),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         widget.team.displayName,
                                         style: TextStyle(
-                                          fontSize: 22, fontWeight: FontWeight.w900,
+                                          fontSize: 22,
+                                          fontWeight: FontWeight.w900,
                                           letterSpacing: -0.5,
-                                          color: isDarkMode ? Colors.white : Colors.black87,
+                                          color: isDarkMode
+                                              ? Colors.white
+                                              : Colors.black87,
                                         ),
                                       ),
                                       const SizedBox(height: 8),
                                       Wrap(
-                                        spacing: 8, runSpacing: 6,
+                                        spacing: 8,
+                                        runSpacing: 6,
                                         children: [
                                           // WC 2026 badge
-                                          if (_isWorldCup)
-                                            _buildWCBadge(),
+                                          if (_isWorldCup) _buildWCBadge(),
                                           if (hasRank)
                                             _buildBadge(
-                                              _isNationalTeam && standingInfo!.groupName != null
+                                              _isNationalTeam &&
+                                                      standingInfo!.groupName !=
+                                                          null
                                                   ? '${standingInfo.groupName} · #${standingInfo.rank}'
                                                   : '#${standingInfo!.rank} ${standingInfo.groupName ?? ''}',
                                               primaryColor,
                                             ),
                                           if (hasPoints)
-                                            _buildBadgeOutline('${standingInfo!.points} PTS', isDarkMode),
+                                            _buildBadgeOutline(
+                                                '${standingInfo!.points} PTS',
+                                                isDarkMode),
                                           if (!hasRank && !_isLoading)
-                                            _buildBadge(widget.team.record, primaryColor),
+                                            _buildBadge(widget.team.record,
+                                                primaryColor),
                                         ],
                                       ),
                                       if (_data?.headCoach != null) ...[
                                         const SizedBox(height: 6),
                                         Row(
                                           children: [
-                                            Icon(Icons.sports, size: 12,
-                                                color: isDarkMode ? Colors.white54 : Colors.black45),
+                                            Icon(Icons.sports,
+                                                size: 12,
+                                                color: isDarkMode
+                                                    ? Colors.white54
+                                                    : Colors.black45),
                                             const SizedBox(width: 4),
                                             Expanded(
                                               child: Text(
                                                 _data!.headCoach!,
                                                 style: TextStyle(
-                                                  fontSize: 11, fontWeight: FontWeight.w600,
-                                                  color: isDarkMode ? Colors.white60 : Colors.black54,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: isDarkMode
+                                                      ? Colors.white60
+                                                      : Colors.black54,
                                                 ),
                                                 overflow: TextOverflow.ellipsis,
                                               ),
@@ -413,7 +584,10 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                   indicatorWeight: 3,
                   indicatorSize: TabBarIndicatorSize.label,
                   dividerColor: Colors.transparent,
-                  labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 0.4),
+                  labelStyle: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                      letterSpacing: 0.4),
                   tabs: const [
                     Tab(text: 'MATCHES'),
                     Tab(text: 'SQUAD'),
@@ -427,15 +601,16 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
         body: _isLoading
             ? _buildLoadingState(primaryColor)
             : _error != null
-            ? _buildErrorState()
-            : TabBarView(
-          controller: _tabController,
-          children: [
-            _buildMatchesTab(isDarkMode, surfaceColor, primaryColor),
-            _buildSquadTab(isDarkMode, surfaceColor, primaryColor),
-            _buildAnalyticsTab(isDarkMode, surfaceColor, primaryColor),
-          ],
-        ),
+                ? _buildErrorState()
+                : TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _buildMatchesTab(isDarkMode, surfaceColor, primaryColor),
+                      _buildSquadTab(isDarkMode, surfaceColor, primaryColor),
+                      _buildAnalyticsTab(
+                          isDarkMode, surfaceColor, primaryColor),
+                    ],
+                  ),
       ),
     );
   }
@@ -458,8 +633,10 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
           Text(
             'FIFA WORLD CUP 2026',
             style: TextStyle(
-              fontSize: 9, color: Colors.white,
-              fontWeight: FontWeight.w900, letterSpacing: 0.3,
+              fontSize: 9,
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.3,
             ),
           ),
         ],
@@ -471,10 +648,15 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
     final safeColor = _safeBadgeColor(color);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: safeColor, borderRadius: BorderRadius.circular(4)),
+      decoration: BoxDecoration(
+          color: safeColor, borderRadius: BorderRadius.circular(4)),
       child: Text(
         label.toUpperCase(),
-        style: const TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.w900, letterSpacing: 0.3),
+        style: const TextStyle(
+            fontSize: 10,
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.3),
       ),
     );
   }
@@ -483,13 +665,15 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        border: Border.all(color: isDarkMode ? Colors.white30 : Colors.black26, width: 1),
+        border: Border.all(
+            color: isDarkMode ? Colors.white30 : Colors.black26, width: 1),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
         label,
         style: TextStyle(
-          fontSize: 10, fontWeight: FontWeight.w800,
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
           color: isDarkMode ? Colors.white70 : Colors.black54,
           letterSpacing: 0.3,
         ),
@@ -506,7 +690,10 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
           CircularProgressIndicator(color: primaryColor, strokeWidth: 2),
           const SizedBox(height: 16),
           Text('Loading team data…',
-              style: TextStyle(fontSize: 13, color: AppTheme.lightGray, fontWeight: FontWeight.w600)),
+              style: TextStyle(
+                  fontSize: 13,
+                  color: AppTheme.lightGray,
+                  fontWeight: FontWeight.w600)),
         ],
       ),
     );
@@ -520,12 +707,14 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
           const Icon(Icons.cloud_off, size: 48, color: AppTheme.lightGray),
           const SizedBox(height: 12),
           const Text('Could not load team data',
-              style: TextStyle(fontWeight: FontWeight.w700, color: AppTheme.lightGray)),
+              style: TextStyle(
+                  fontWeight: FontWeight.w700, color: AppTheme.lightGray)),
           const SizedBox(height: 16),
           TextButton(
             onPressed: _loadData,
             style: TextButton.styleFrom(foregroundColor: _kPrimaryGreen),
-            child: const Text('Retry', style: TextStyle(fontWeight: FontWeight.w700)),
+            child: const Text('Retry',
+                style: TextStyle(fontWeight: FontWeight.w700)),
           ),
         ],
       ),
@@ -535,15 +724,17 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
   // ══════════════════════════════════════════════════════════════════════════════
   // MATCHES TAB
   // ══════════════════════════════════════════════════════════════════════════════
-  Widget _buildMatchesTab(bool isDarkMode, Color surfaceColor, Color primaryColor) {
+  Widget _buildMatchesTab(
+      bool isDarkMode, Color surfaceColor, Color primaryColor) {
     final recent = _data?.recentMatches ?? [];
     final upcoming = _data?.upcoming ?? [];
 
     // Check if any recent match is from a non-WC competition (fallback data)
     final hasWCMatches = recent.any((m) =>
-    m.competition.toLowerCase().contains('world cup') ||
+        m.competition.toLowerCase().contains('world cup') ||
         m.competition.toLowerCase().contains('fifa'));
-    final hasFallbackMatches = _isWorldCup && recent.isNotEmpty && !hasWCMatches;
+    final hasFallbackMatches =
+        _isWorldCup && recent.isNotEmpty && !hasWCMatches;
 
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
@@ -572,7 +763,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
         if (recent.isEmpty)
           _emptyCard('No recent results found', surfaceColor)
         else
-          ...recent.map((m) => _buildMatchCard(m, isDarkMode, surfaceColor, primaryColor)),
+          ...recent.map((m) =>
+              _buildMatchCard(m, isDarkMode, surfaceColor, primaryColor)),
 
         const SizedBox(height: 24),
 
@@ -582,7 +774,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
         if (upcoming.isEmpty)
           _emptyCard('No upcoming fixtures', surfaceColor)
         else
-          ...upcoming.map((f) => _buildFixtureCard(f, isDarkMode, surfaceColor, primaryColor)),
+          ...upcoming.map((f) =>
+              _buildFixtureCard(f, isDarkMode, surfaceColor, primaryColor)),
       ],
     );
   }
@@ -614,7 +807,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                 Text(
                   'FIFA World Cup 2026',
                   style: TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
                     color: isDarkMode ? Colors.white : const Color(0xFF002868),
                   ),
                 ),
@@ -622,7 +816,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                 Text(
                   'USA · Canada · Mexico • Jun–Jul 2026',
                   style: TextStyle(
-                    fontSize: 11, fontWeight: FontWeight.w500,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
                     color: isDarkMode ? Colors.white60 : Colors.black54,
                   ),
                 ),
@@ -651,7 +846,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
             child: Text(
               'Showing international results (WCQ, Nations League) as World Cup group matches are not yet available.',
               style: TextStyle(
-                fontSize: 11, fontWeight: FontWeight.w500,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
                 color: isDarkMode ? Colors.white70 : Colors.black54,
               ),
             ),
@@ -695,13 +891,13 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                 final color = m.result == 'win'
                     ? const Color(0xFF10B981)
                     : m.result == 'loss'
-                    ? const Color(0xFFEF4444)
-                    : const Color(0xFFF59E0B);
+                        ? const Color(0xFFEF4444)
+                        : const Color(0xFFF59E0B);
                 final label = m.result == 'win'
                     ? 'W'
                     : m.result == 'loss'
-                    ? 'L'
-                    : 'D';
+                        ? 'L'
+                        : 'D';
                 return Container(
                   margin: const EdgeInsets.only(right: 8),
                   width: 36,
@@ -750,11 +946,15 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
       child: Column(
         children: [
           Text(value,
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: color)),
+              style: TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.w900, color: color)),
           const SizedBox(height: 2),
           Text(label,
-              style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800,
-                  color: AppTheme.lightGray, letterSpacing: 0.5)),
+              style: const TextStyle(
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                  color: AppTheme.lightGray,
+                  letterSpacing: 0.5)),
         ],
       ),
     );
@@ -762,7 +962,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
 
   Widget _formStatDivider(bool isDarkMode) {
     return Container(
-      height: 28, width: 1,
+      height: 28,
+      width: 1,
       color: isDarkMode ? Colors.white12 : Colors.black12,
     );
   }
@@ -776,9 +977,13 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
     final resultColor = isWin
         ? const Color(0xFF10B981)
         : isLoss
-        ? const Color(0xFFEF4444)
-        : const Color(0xFFF59E0B);
-    final resultLabel = isWin ? 'W' : isLoss ? 'L' : 'D';
+            ? const Color(0xFFEF4444)
+            : const Color(0xFFF59E0B);
+    final resultLabel = isWin
+        ? 'W'
+        : isLoss
+            ? 'L'
+            : 'D';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -795,7 +1000,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
           children: [
             // Result pill
             Container(
-              width: 30, height: 30,
+              width: 30,
+              height: 30,
               decoration: BoxDecoration(
                 color: resultColor.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(6),
@@ -803,7 +1009,9 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
               child: Center(
                 child: Text(resultLabel,
                     style: TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w900, color: resultColor)),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                        color: resultColor)),
               ),
             ),
             const SizedBox(width: 10),
@@ -813,19 +1021,22 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
               alignment: Alignment.bottomRight,
               children: [
                 Container(
-                  width: 48, height: 48,
+                  width: 48,
+                  height: 48,
                   decoration: BoxDecoration(
                     color: primaryColor.withOpacity(0.06),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Padding(
                     padding: const EdgeInsets.all(6),
-                    child: _teamLogo(match.opponentLogo, 36, primaryColor, teamId: match.opponentId),
+                    child: _teamLogo(match.opponentLogo, 36, primaryColor,
+                        teamId: match.opponentId),
                   ),
                 ),
                 // H/A indicator
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
                   decoration: BoxDecoration(
                     color: match.isHome
                         ? primaryColor.withOpacity(0.80)
@@ -835,7 +1046,9 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                   child: Text(
                     match.isHome ? 'H' : 'A',
                     style: const TextStyle(
-                        fontSize: 7, fontWeight: FontWeight.w900, color: Colors.white),
+                        fontSize: 7,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white),
                   ),
                 ),
               ],
@@ -850,10 +1063,12 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                   Text(
                     match.opponentName,
                     style: TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
                       color: isDarkMode ? Colors.white : Colors.black87,
                     ),
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 3),
                   Row(
@@ -866,8 +1081,10 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                       Expanded(
                         child: Text(
                           '${match.competition}  ·  ${_formatMatchDate(match.date)}',
-                          style: const TextStyle(fontSize: 11, color: AppTheme.lightGray),
-                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 11, color: AppTheme.lightGray),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
@@ -876,13 +1093,17 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                     const SizedBox(height: 4),
                     Row(
                       children: [
-                        if (match.yellowCards > 0) _cardPill(match.yellowCards, Colors.amber),
-                        if (match.yellowCards > 0 && match.redCards > 0) const SizedBox(width: 6),
-                        if (match.redCards > 0) _cardPill(match.redCards, const Color(0xFFEF4444)),
+                        if (match.yellowCards > 0)
+                          _cardPill(match.yellowCards, Colors.amber),
+                        if (match.yellowCards > 0 && match.redCards > 0)
+                          const SizedBox(width: 6),
+                        if (match.redCards > 0)
+                          _cardPill(match.redCards, const Color(0xFFEF4444)),
                         if (match.possession != null) ...[
                           const SizedBox(width: 6),
                           Text('${match.possession!.toStringAsFixed(0)}% poss',
-                              style: const TextStyle(fontSize: 9, color: AppTheme.lightGray)),
+                              style: const TextStyle(
+                                  fontSize: 9, color: AppTheme.lightGray)),
                         ],
                       ],
                     ),
@@ -896,7 +1117,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     color: resultColor.withOpacity(0.10),
                     borderRadius: BorderRadius.circular(8),
@@ -904,8 +1126,10 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                   child: Text(
                     match.score,
                     style: TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.w900,
-                      color: resultColor, letterSpacing: -0.5,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      color: resultColor,
+                      letterSpacing: -0.5,
                     ),
                   ),
                 ),
@@ -913,7 +1137,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                 Text(
                   match.isHome ? 'HOME' : 'AWAY',
                   style: TextStyle(
-                    fontSize: 9, fontWeight: FontWeight.w800,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
                     color: isDarkMode ? Colors.white38 : Colors.black38,
                   ),
                 ),
@@ -935,8 +1160,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
     final highlightColor = isToday
         ? const Color(0xFF10B981)
         : isTomorrow
-        ? _safeBadgeColor(primaryColor)
-        : AppTheme.lightGray;
+            ? _safeBadgeColor(primaryColor)
+            : AppTheme.lightGray;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -952,14 +1177,16 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
             alignment: Alignment.bottomRight,
             children: [
               Container(
-                width: 52, height: 52,
+                width: 52,
+                height: 52,
                 decoration: BoxDecoration(
                   color: primaryColor.withOpacity(0.06),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Padding(
                   padding: const EdgeInsets.all(7),
-                  child: _teamLogo(fixture.opponentLogo, 38, primaryColor, teamId: fixture.opponentId),
+                  child: _teamLogo(fixture.opponentLogo, 38, primaryColor,
+                      teamId: fixture.opponentId),
                 ),
               ),
               Container(
@@ -973,7 +1200,9 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                 child: Text(
                   fixture.isHome ? 'H' : 'A',
                   style: const TextStyle(
-                      fontSize: 7, fontWeight: FontWeight.w900, color: Colors.white),
+                      fontSize: 7,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white),
                 ),
               ),
             ],
@@ -988,29 +1217,35 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                 Text(
                   fixture.opponentName,
                   style: TextStyle(
-                    fontSize: 14, fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
                     color: isDarkMode ? Colors.white : Colors.black87,
                   ),
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 4),
                 // League badge row
                 Row(
                   children: [
-                    Text(fixture.leagueFlag, style: const TextStyle(fontSize: 12)),
+                    Text(fixture.leagueFlag,
+                        style: const TextStyle(fontSize: 12)),
                     const SizedBox(width: 5),
                     Expanded(
                       child: Text(
                         fixture.competition,
-                        style: const TextStyle(fontSize: 11, color: AppTheme.lightGray),
-                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 11, color: AppTheme.lightGray),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 4),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
                     color: highlightColor.withOpacity(0.10),
                     borderRadius: BorderRadius.circular(4),
@@ -1018,7 +1253,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                   child: Text(
                     fixture.isHome ? 'Home Game' : 'Away Game',
                     style: TextStyle(
-                      fontSize: 9, fontWeight: FontWeight.w800,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
                       color: highlightColor,
                     ),
                   ),
@@ -1032,7 +1268,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
                   color: highlightColor.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(8),
@@ -1040,7 +1277,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                 child: Text(
                   dateLabel,
                   style: TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
                     color: highlightColor,
                   ),
                 ),
@@ -1048,7 +1286,9 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
               if (timeLabel.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Text(timeLabel,
-                    style: const TextStyle(fontSize: 12, color: AppTheme.lightGray,
+                    style: const TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.lightGray,
                         fontWeight: FontWeight.w700)),
               ],
             ],
@@ -1061,7 +1301,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
   // ══════════════════════════════════════════════════════════════════════════════
   // SQUAD TAB
   // ══════════════════════════════════════════════════════════════════════════════
-  Widget _buildSquadTab(bool isDarkMode, Color surfaceColor, Color primaryColor) {
+  Widget _buildSquadTab(
+      bool isDarkMode, Color surfaceColor, Color primaryColor) {
     final squad = _data?.squad ?? [];
     final categories = ['FORWARDS', 'MIDFIELDERS', 'DEFENDERS', 'GOALKEEPERS'];
 
@@ -1084,7 +1325,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
 
         // Coach
         if (_data?.headCoach != null) ...[
-          _blockHeader(_isNationalTeam ? 'NATIONAL TEAM MANAGER' : 'COACHING STAFF'),
+          _blockHeader(
+              _isNationalTeam ? 'NATIONAL TEAM MANAGER' : 'COACHING STAFF'),
           const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.all(14),
@@ -1096,18 +1338,22 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
               children: [
                 CircleAvatar(
                   radius: 22,
-                  backgroundColor: _safeBadgeColor(primaryColor).withOpacity(0.10),
-                  child: Icon(Icons.sports, color: _safeBadgeColor(primaryColor), size: 22),
+                  backgroundColor:
+                      _safeBadgeColor(primaryColor).withOpacity(0.10),
+                  child: Icon(Icons.sports,
+                      color: _safeBadgeColor(primaryColor), size: 22),
                 ),
                 const SizedBox(width: 14),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(_data!.headCoach!,
-                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                        style: const TextStyle(
+                            fontSize: 15, fontWeight: FontWeight.w700)),
                     const SizedBox(height: 2),
                     const Text('Head Coach',
-                        style: TextStyle(fontSize: 12, color: AppTheme.lightGray)),
+                        style:
+                            TextStyle(fontSize: 12, color: AppTheme.lightGray)),
                   ],
                 ),
               ],
@@ -1122,7 +1368,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
           _emptyCard('Squad data not available', surfaceColor)
         else
           ...categories.map((cat) {
-            final players = squad.where((p) => p.positionCategory == cat).toList();
+            final players =
+                squad.where((p) => p.positionCategory == cat).toList();
             if (players.isEmpty) return const SizedBox.shrink();
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1140,10 +1387,13 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                     itemCount: players.length,
                     separatorBuilder: (_, __) => Divider(
                       height: 1,
-                      color: isDarkMode ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05),
+                      color: isDarkMode
+                          ? Colors.white.withOpacity(0.05)
+                          : Colors.black.withOpacity(0.05),
                     ),
-                    itemBuilder: (context, index) =>
-                        _buildPlayerRow(players[index], isDarkMode, primaryColor, leagueCode: _data?.leagueCode ?? 'eng.1'),
+                    itemBuilder: (context, index) => _buildPlayerRow(
+                        players[index], isDarkMode, primaryColor,
+                        leagueCode: _data?.leagueCode ?? 'eng.1'),
                   ),
                 ),
                 const SizedBox(height: 20),
@@ -1155,14 +1405,14 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
   }
 
   Widget _buildBestPlayerCard(
-      TeamSquadPlayer player,
-      double? rating,
-      String performanceNote,
-      bool isDarkMode,
-      Color surfaceColor,
-      Color primaryColor, {
-        String leagueCode = 'eng.1',
-      }) {
+    TeamSquadPlayer player,
+    double? rating,
+    String performanceNote,
+    bool isDarkMode,
+    Color surfaceColor,
+    Color primaryColor, {
+    String leagueCode = 'eng.1',
+  }) {
     // Get best available headshot
     final headshotUrl = _getPlayerHeadshotUrl(player);
 
@@ -1197,18 +1447,22 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                 Text(
                   'BEST PLAYER',
                   style: TextStyle(
-                    fontSize: 10, fontWeight: FontWeight.w900,
-                    color: _safeBadgeColor(primaryColor), letterSpacing: 0.8,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    color: _safeBadgeColor(primaryColor),
+                    letterSpacing: 0.8,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   player.name,
                   style: TextStyle(
-                    fontSize: 17, fontWeight: FontWeight.w800,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
                     color: isDarkMode ? Colors.white : Colors.black87,
                   ),
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 4),
                 Row(
@@ -1218,7 +1472,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                     if (player.nationality.isNotEmpty)
                       Text(
                         player.nationality,
-                        style: const TextStyle(fontSize: 11, color: AppTheme.lightGray),
+                        style: const TextStyle(
+                            fontSize: 11, color: AppTheme.lightGray),
                       ),
                   ],
                 ),
@@ -1243,25 +1498,31 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                 Text(
                   rating.toStringAsFixed(1),
                   style: TextStyle(
-                    fontSize: 28, fontWeight: FontWeight.w900,
-                    color: _safeBadgeColor(primaryColor), letterSpacing: -1,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                    color: _safeBadgeColor(primaryColor),
+                    letterSpacing: -1,
                   ),
                 ),
                 const Text('RATING',
                     style: TextStyle(
-                        fontSize: 9, fontWeight: FontWeight.w800,
-                        color: AppTheme.lightGray, letterSpacing: 0.5)),
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.lightGray,
+                        letterSpacing: 0.5)),
               ],
             ),
           ] else ...[
             // No rating — show star icon
             Container(
-              width: 44, height: 44,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 color: _safeBadgeColor(primaryColor).withOpacity(0.10),
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.star, color: _safeBadgeColor(primaryColor), size: 22),
+              child: Icon(Icons.star,
+                  color: _safeBadgeColor(primaryColor), size: 22),
             ),
           ],
         ],
@@ -1269,7 +1530,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
     );
   }
 
-  Widget _buildPlayerRow(TeamSquadPlayer p, bool isDarkMode, Color primaryColor, {String leagueCode = 'eng.1'}) {
+  Widget _buildPlayerRow(TeamSquadPlayer p, bool isDarkMode, Color primaryColor,
+      {String leagueCode = 'eng.1'}) {
     // Get best available headshot
     final headshotUrl = _getPlayerHeadshotUrl(p);
 
@@ -1283,7 +1545,9 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
             child: Text(
               p.jersey.isNotEmpty ? p.jersey : '—',
               style: const TextStyle(
-                  fontWeight: FontWeight.w800, fontSize: 13, color: AppTheme.lightGray),
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                  color: AppTheme.lightGray),
               textAlign: TextAlign.center,
             ),
           ),
@@ -1305,10 +1569,12 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                 Text(
                   p.name,
                   style: TextStyle(
-                    fontSize: 14, fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
                     color: isDarkMode ? Colors.white : Colors.black87,
                   ),
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -1316,7 +1582,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                     if (p.nationality.isNotEmpty) p.nationality,
                     if (p.age != null) '${p.age} yrs',
                   ].join('  ·  '),
-                  style: const TextStyle(fontSize: 11, color: AppTheme.lightGray),
+                  style:
+                      const TextStyle(fontSize: 11, color: AppTheme.lightGray),
                 ),
               ],
             ),
@@ -1330,7 +1597,10 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
             ),
             child: Text(
               p.position.isNotEmpty ? p.position : '—',
-              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: _safeBadgeColor(primaryColor)),
+              style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  color: _safeBadgeColor(primaryColor)),
             ),
           ),
         ],
@@ -1341,9 +1611,11 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
   // ══════════════════════════════════════════════════════════════════════════════
   // ANALYTICS TAB
   // ══════════════════════════════════════════════════════════════════════════════
-  Widget _buildAnalyticsTab(bool isDarkMode, Color surfaceColor, Color primaryColor) {
+  Widget _buildAnalyticsTab(
+      bool isDarkMode, Color surfaceColor, Color primaryColor) {
     final a = _data?.analytics ?? TeamAnalytics.empty;
-    final hasAnalytics = (_data?.squad.isNotEmpty ?? false) || !_squadAnalyticsLoading;
+    final hasAnalytics =
+        (_data?.squad.isNotEmpty ?? false) || !_squadAnalyticsLoading;
 
     if (!hasAnalytics) {
       return ListView(
@@ -1368,7 +1640,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
           ),
           child: Center(
             child: SizedBox(
-              width: 260, height: 260,
+              width: 260,
+              height: 260,
               child: CustomPaint(
                 painter: _RadarPainter(
                   isDarkMode: isDarkMode,
@@ -1395,8 +1668,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
           // UI-level fallbacks when ESPN didn't return SOT/conversion data.
           // avgShotsPerGame is always populated (with an estimate if needed),
           // so we can derive reasonable fallback figures from it.
-          final totalGames = (a.last5Wins + a.last5Draws + a.last5Losses)
-              .clamp(1, 5);
+          final totalGames =
+              (a.last5Wins + a.last5Draws + a.last5Losses).clamp(1, 5);
 
           // Total shots across last-5: avgShotsPerGame × games played
           final totalShotsEstimate = a.avgShotsPerGame != null
@@ -1415,9 +1688,7 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                   ? (a.last5GoalsFor / sotTotal).clamp(0.0, 1.0)
                   : null);
 
-          final sotLabel = sotTotal != null
-              ? sotTotal.toStringAsFixed(0)
-              : '—';
+          final sotLabel = sotTotal != null ? sotTotal.toStringAsFixed(0) : '—';
           final convLabel = convRate != null
               ? '${(convRate * 100).toStringAsFixed(1)}%'
               : '—';
@@ -1426,30 +1697,43 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
             children: [
               Row(
                 children: [
-                  Expanded(child: _metricTile(surfaceColor, '${a.last5GoalsFor}',
-                      'GOALS SCORED', const Color(0xFF10B981), isDarkMode)),
+                  Expanded(
+                      child: _metricTile(surfaceColor, '${a.last5GoalsFor}',
+                          'GOALS SCORED', const Color(0xFF10B981), isDarkMode)),
                   const SizedBox(width: 10),
-                  Expanded(child: _metricTile(surfaceColor,
-                      a.avgShotsPerGame != null
-                          ? a.avgShotsPerGame!.toStringAsFixed(1)
-                          : '—',
-                      'AVG SHOTS/GAME', _safeBadgeColor(primaryColor), isDarkMode)),
+                  Expanded(
+                      child: _metricTile(
+                          surfaceColor,
+                          a.avgShotsPerGame != null
+                              ? a.avgShotsPerGame!.toStringAsFixed(1)
+                              : '—',
+                          'AVG SHOTS/GAME',
+                          _safeBadgeColor(primaryColor),
+                          isDarkMode)),
                 ],
               ),
               const SizedBox(height: 10),
               Row(
                 children: [
-                  Expanded(child: _metricTileWithSub(
-                      surfaceColor, sotLabel,
-                      'SHOTS ON TARGET', 'total last 5',
-                      Colors.blue, isDarkMode,
-                      a.avgShotsOnTarget != null ? null : '~est')),
+                  Expanded(
+                      child: _metricTileWithSub(
+                          surfaceColor,
+                          sotLabel,
+                          'SHOTS ON TARGET',
+                          'total last 5',
+                          Colors.blue,
+                          isDarkMode,
+                          a.avgShotsOnTarget != null ? null : '~est')),
                   const SizedBox(width: 10),
-                  Expanded(child: _metricTileWithSub(
-                      surfaceColor, convLabel,
-                      'CONVERSION RATE', 'goals / shots on target',
-                      const Color(0xFF8B5CF6), isDarkMode,
-                      a.shotConversionRate != null ? null : '~est')),
+                  Expanded(
+                      child: _metricTileWithSub(
+                          surfaceColor,
+                          convLabel,
+                          'CONVERSION RATE',
+                          'goals / shots on target',
+                          const Color(0xFF8B5CF6),
+                          isDarkMode,
+                          a.shotConversionRate != null ? null : '~est')),
                 ],
               ),
             ],
@@ -1463,25 +1747,34 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
         const SizedBox(height: 10),
         Row(
           children: [
-            Expanded(child: _metricTile(surfaceColor, '${a.last5GoalsAgainst}',
-                'GOALS CONCEDED', Colors.redAccent, isDarkMode)),
+            Expanded(
+                child: _metricTile(surfaceColor, '${a.last5GoalsAgainst}',
+                    'GOALS CONCEDED', Colors.redAccent, isDarkMode)),
             const SizedBox(width: 10),
-            Expanded(child: _metricTile(surfaceColor,
-                '${a.last5Wins * 3 + a.last5Draws}',
-                'POINTS EARNED', _safeBadgeColor(primaryColor), isDarkMode)),
+            Expanded(
+                child: _metricTile(
+                    surfaceColor,
+                    '${a.last5Wins * 3 + a.last5Draws}',
+                    'POINTS EARNED',
+                    _safeBadgeColor(primaryColor),
+                    isDarkMode)),
           ],
         ),
         const SizedBox(height: 10),
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: surfaceColor, borderRadius: BorderRadius.circular(12),
+            color: surfaceColor,
+            borderRadius: BorderRadius.circular(12),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _disciplineItem('${a.last5YellowCards}', 'YELLOW CARDS', Colors.amber),
-              Container(height: 30, width: 1,
+              _disciplineItem(
+                  '${a.last5YellowCards}', 'YELLOW CARDS', Colors.amber),
+              Container(
+                  height: 30,
+                  width: 1,
                   color: isDarkMode ? Colors.white10 : Colors.black12),
               _disciplineItem('${a.last5RedCards}', 'RED CARDS', Colors.red),
             ],
@@ -1496,36 +1789,39 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: surfaceColor, borderRadius: BorderRadius.circular(12),
+            color: surfaceColor,
+            borderRadius: BorderRadius.circular(12),
           ),
           child: Column(
             children: [
               if (a.avgPossession != null)
-                _progressRow('Ball Possession',
-                    (a.avgPossession! / 100).clamp(0.0, 1.0), _safeBadgeColor(primaryColor),
+                _progressRow(
+                    'Ball Possession',
+                    (a.avgPossession! / 100).clamp(0.0, 1.0),
+                    _safeBadgeColor(primaryColor),
                     suffix: '${a.avgPossession!.toStringAsFixed(0)}%',
                     isDarkMode: isDarkMode),
-              _progressRow('Attack Rating', a.attackScore / 100,
-                  const Color(0xFF10B981),
+              _progressRow(
+                  'Attack Rating', a.attackScore / 100, const Color(0xFF10B981),
                   suffix: '${a.attackScore.toStringAsFixed(0)}',
                   isDarkMode: isDarkMode),
-              _progressRow('Defense Rating', a.defenseScore / 100,
-                  Colors.blue,
+              _progressRow('Defense Rating', a.defenseScore / 100, Colors.blue,
                   suffix: '${a.defenseScore.toStringAsFixed(0)}',
                   isDarkMode: isDarkMode),
               _progressRow('Midfield Rating', a.midfieldScore / 100,
                   const Color(0xFF8B5CF6),
                   suffix: '${a.midfieldScore.toStringAsFixed(0)}',
                   isDarkMode: isDarkMode),
-              _progressRow('Discipline', a.disciplineScore / 100,
-                  Colors.orange,
+              _progressRow('Discipline', a.disciplineScore / 100, Colors.orange,
                   suffix: '${a.disciplineScore.toStringAsFixed(0)}',
                   isDarkMode: isDarkMode),
               if (a.shotConversionRate != null)
-                _progressRow('Shot Conversion',
+                _progressRow(
+                    'Shot Conversion',
                     a.shotConversionRate!.clamp(0.0, 1.0),
                     const Color(0xFFEC4899),
-                    suffix: '${(a.shotConversionRate! * 100).toStringAsFixed(0)}%',
+                    suffix:
+                        '${(a.shotConversionRate! * 100).toStringAsFixed(0)}%',
                     isDarkMode: isDarkMode,
                     isLast: true),
             ],
@@ -1549,22 +1845,31 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
       effectiveUrl = 'https://a.espncdn.com/i/teamlogos/soccer/500/$teamId.png';
     }
     if (effectiveUrl.isEmpty) {
-      return Icon(Icons.sports_soccer, size: size, color: fallbackColor.withOpacity(0.5));
+      return Icon(Icons.sports_soccer,
+          size: size, color: fallbackColor.withOpacity(0.5));
     }
     return CachedNetworkImage(
       imageUrl: effectiveUrl,
-      height: size, width: size, fit: BoxFit.contain,
+      height: size,
+      width: size,
+      fit: BoxFit.contain,
       errorWidget: (_, __, ___) {
         // If the primary URL failed and we haven't tried CDN yet, try it
-        if (!effectiveUrl.contains('espncdn.com') && teamId != null && teamId.isNotEmpty) {
+        if (!effectiveUrl.contains('espncdn.com') &&
+            teamId != null &&
+            teamId.isNotEmpty) {
           return CachedNetworkImage(
-            imageUrl: 'https://a.espncdn.com/i/teamlogos/soccer/500/$teamId.png',
-            height: size, width: size, fit: BoxFit.contain,
-            errorWidget: (_, __, ___) =>
-                Icon(Icons.sports_soccer, size: size, color: fallbackColor.withOpacity(0.5)),
+            imageUrl:
+                'https://a.espncdn.com/i/teamlogos/soccer/500/$teamId.png',
+            height: size,
+            width: size,
+            fit: BoxFit.contain,
+            errorWidget: (_, __, ___) => Icon(Icons.sports_soccer,
+                size: size, color: fallbackColor.withOpacity(0.5)),
           );
         }
-        return Icon(Icons.sports_soccer, size: size, color: fallbackColor.withOpacity(0.5));
+        return Icon(Icons.sports_soccer,
+            size: size, color: fallbackColor.withOpacity(0.5));
       },
     );
   }
@@ -1573,19 +1878,22 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(4),
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(4),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 8, height: 11,
+            width: 8,
+            height: 11,
             decoration: BoxDecoration(
                 color: color, borderRadius: BorderRadius.circular(1.5)),
           ),
           const SizedBox(width: 4),
           Text('$count',
-              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: color)),
+              style: TextStyle(
+                  fontSize: 10, fontWeight: FontWeight.w800, color: color)),
         ],
       ),
     );
@@ -1595,9 +1903,11 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(color: surfaceColor, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+          color: surfaceColor, borderRadius: BorderRadius.circular(12)),
       child: Center(
-        child: Text(message, style: const TextStyle(fontSize: 13, color: AppTheme.lightGray)),
+        child: Text(message,
+            style: const TextStyle(fontSize: 13, color: AppTheme.lightGray)),
       ),
     );
   }
@@ -1609,17 +1919,24 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.symmetric(vertical: 32),
-      decoration: BoxDecoration(color: surfaceColor, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+          color: surfaceColor, borderRadius: BorderRadius.circular(12)),
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(
-              width: 20, height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2, color: primaryColor),
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: primaryColor),
             ),
             const SizedBox(height: 12),
-            Text(message, style: const TextStyle(fontSize: 13, color: AppTheme.lightGray, fontWeight: FontWeight.w600)),
+            Text(message,
+                style: const TextStyle(
+                    fontSize: 13,
+                    color: AppTheme.lightGray,
+                    fontWeight: FontWeight.w600)),
           ],
         ),
       ),
@@ -1630,20 +1947,24 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
       Color color, bool isDarkMode) {
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: surfaceColor, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+          color: surfaceColor, borderRadius: BorderRadius.circular(12)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(value,
               style: TextStyle(
-                  fontSize: 22, fontWeight: FontWeight.w900,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
                   letterSpacing: -0.5,
                   color: isDarkMode ? Colors.white : Colors.black87)),
           const SizedBox(height: 4),
           Text(subtitle,
               style: const TextStyle(
-                  fontSize: 9, fontWeight: FontWeight.w800,
-                  color: AppTheme.lightGray, letterSpacing: 0.2)),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                  color: AppTheme.lightGray,
+                  letterSpacing: 0.2)),
           const SizedBox(height: 8),
           Container(
             height: 3,
@@ -1654,8 +1975,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
             child: FractionallySizedBox(
               alignment: Alignment.centerLeft,
               widthFactor: (double.tryParse(
-                  value.replaceAll('%', '').replaceAll('—', '0')) ??
-                  0) /
+                          value.replaceAll('%', '').replaceAll('—', '0')) ??
+                      0) /
                   (subtitle.contains('GOAL') ? 10 : 100),
               child: Container(
                 decoration: BoxDecoration(
@@ -1673,9 +1994,10 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
   /// Like [_metricTile] but shows a secondary caption under the subtitle
   /// and optionally an estimate tag when data is derived rather than live.
   Widget _metricTileWithSub(Color surfaceColor, String value, String subtitle,
-      String caption, Color color, bool isDarkMode, [String? estimateTag]) {
-    final parsedVal = double.tryParse(
-        value.replaceAll('%', '').replaceAll('—', '0')) ?? 0.0;
+      String caption, Color color, bool isDarkMode,
+      [String? estimateTag]) {
+    final parsedVal =
+        double.tryParse(value.replaceAll('%', '').replaceAll('—', '0')) ?? 0.0;
     final isPercent = value.contains('%');
     final progressFactor = isPercent
         ? (parsedVal / 100).clamp(0.0, 1.0)
@@ -1683,7 +2005,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
 
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: surfaceColor, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+          color: surfaceColor, borderRadius: BorderRadius.circular(12)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1692,7 +2015,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
             children: [
               Text(value,
                   style: TextStyle(
-                      fontSize: 22, fontWeight: FontWeight.w900,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
                       letterSpacing: -0.5,
                       color: value == '—'
                           ? AppTheme.lightGray
@@ -1704,7 +2028,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
                   child: Text(
                     estimateTag,
                     style: TextStyle(
-                      fontSize: 8, fontWeight: FontWeight.w700,
+                      fontSize: 8,
+                      fontWeight: FontWeight.w700,
                       color: color.withOpacity(0.55),
                       letterSpacing: 0.2,
                     ),
@@ -1716,12 +2041,16 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
           const SizedBox(height: 3),
           Text(subtitle,
               style: const TextStyle(
-                  fontSize: 9, fontWeight: FontWeight.w800,
-                  color: AppTheme.lightGray, letterSpacing: 0.2)),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                  color: AppTheme.lightGray,
+                  letterSpacing: 0.2)),
           Text(caption,
               style: TextStyle(
-                  fontSize: 8, fontWeight: FontWeight.w500,
-                  color: AppTheme.lightGray.withOpacity(0.65), letterSpacing: 0.1)),
+                  fontSize: 8,
+                  fontWeight: FontWeight.w500,
+                  color: AppTheme.lightGray.withOpacity(0.65),
+                  letterSpacing: 0.1)),
           const SizedBox(height: 8),
           Container(
             height: 3,
@@ -1749,18 +2078,24 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
     return Row(
       children: [
         Container(
-          width: 12, height: 16,
-          decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(2)),
+          width: 12,
+          height: 16,
+          decoration: BoxDecoration(
+              color: cardColor, borderRadius: BorderRadius.circular(2)),
         ),
         const SizedBox(width: 10),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+            Text(value,
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
             Text(label,
                 style: const TextStyle(
-                    fontSize: 9, fontWeight: FontWeight.w700,
-                    color: AppTheme.lightGray, letterSpacing: 0.3)),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.lightGray,
+                    letterSpacing: 0.3)),
           ],
         ),
       ],
@@ -1779,11 +2114,13 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
             children: [
               Text(label,
                   style: TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
                       color: isDarkMode ? Colors.white70 : Colors.black87)),
               Text(
                 suffix ?? '${(val * 100).toInt()}',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: color),
+                style: TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w900, color: color),
               ),
             ],
           ),
@@ -1803,20 +2140,24 @@ class _TeamDetailScreenState extends State<TeamDetailScreen>
   }
 
   Widget _blockHeader(String title) => Text(
-    title,
-    style: const TextStyle(
-      fontSize: 11, fontWeight: FontWeight.w900,
-      color: AppTheme.lightGray, letterSpacing: 0.8,
-    ),
-  );
+        title,
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w900,
+          color: AppTheme.lightGray,
+          letterSpacing: 0.8,
+        ),
+      );
 
   Widget _sectionLabel(String text) => Text(
-    text,
-    style: const TextStyle(
-      fontSize: 11, fontWeight: FontWeight.w800,
-      color: AppTheme.lightGray, letterSpacing: 0.5,
-    ),
-  );
+        text,
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          color: AppTheme.lightGray,
+          letterSpacing: 0.5,
+        ),
+      );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1844,14 +2185,22 @@ class _PlayerHeadshot extends StatefulWidget {
 class _PlayerHeadshotState extends State<_PlayerHeadshot> {
   int _urlIndex = 0;
 
+  @override
+  void didUpdateWidget(covariant _PlayerHeadshot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.playerId != widget.playerId ||
+        oldWidget.headshotUrl != widget.headshotUrl) {
+      _urlIndex = 0;
+    }
+  }
+
   // ── Headers that unlock ESPN's CDN (Referer is the critical one) ────────────
   // Without Referer: https://www.espn.com/ ESPN CDN returns 403.
   // These headers mimic a real browser request and get ~95%+ hit rate.
   static const Map<String, String> _cdnHeaders = {
     'Referer': 'https://www.espn.com/',
-    'Origin':  'https://www.espn.com',
-    'User-Agent':
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
+    'Origin': 'https://www.espn.com',
+    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
         'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
     'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
   };
@@ -1897,9 +2246,16 @@ class _PlayerHeadshotState extends State<_PlayerHeadshot> {
         'https://a.espncdn.com/i/headshots/soccer/players/full/$pid.png';
 
     // De-duplicate preserving order — api URL goes first
-    final seen   = <String>{};
+    final seen = <String>{};
     final result = <String>[];
-    for (final url in [apiUrl, combiner426, combiner350, combinerRaw, combinate, legacy]) {
+    for (final url in [
+      apiUrl,
+      combiner426,
+      combiner350,
+      combinerRaw,
+      combinate,
+      legacy
+    ]) {
       if (url.isNotEmpty && seen.add(url)) result.add(url);
     }
     return result;
@@ -1922,7 +2278,8 @@ class _PlayerHeadshotState extends State<_PlayerHeadshot> {
         ? const Color(0xFF374151)
         : widget.primaryColor;
     return Container(
-      width: widget.size, height: widget.size,
+      width: widget.size,
+      height: widget.size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: safeColor.withOpacity(0.12),
@@ -1940,16 +2297,17 @@ class _PlayerHeadshotState extends State<_PlayerHeadshot> {
     return ClipOval(
       child: Image.network(
         url,
-        width:   widget.size,
-        height:  widget.size,
-        fit:     BoxFit.cover,
+        width: widget.size,
+        height: widget.size,
+        fit: BoxFit.cover,
         headers: _cdnHeaders,
         // Placeholder — shows the themed circle while loading
         frameBuilder: (ctx, child, frame, _) {
           if (frame == null) {
             // Still loading
             return Container(
-              width: widget.size, height: widget.size,
+              width: widget.size,
+              height: widget.size,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: widget.primaryColor.withOpacity(0.07),
@@ -1959,11 +2317,12 @@ class _PlayerHeadshotState extends State<_PlayerHeadshot> {
           return child;
         },
         errorBuilder: (_, __, ___) {
+          final hasAnotherUrl = _urlIndex < _urls.length - 1;
           _tryNext();
-          // While trying the next URL show a neutral placeholder, not an error icon
-          if (_urlIndex < _urls.length) {
+          if (hasAnotherUrl) {
             return Container(
-              width: widget.size, height: widget.size,
+              width: widget.size,
+              height: widget.size,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: widget.primaryColor.withOpacity(0.07),
@@ -2022,7 +2381,8 @@ class _RadarPainter extends CustomPainter {
       final a = i * angle - (math.pi / 2);
       canvas.drawLine(
         center,
-        Offset(center.dx + radius * math.cos(a), center.dy + radius * math.sin(a)),
+        Offset(
+            center.dx + radius * math.cos(a), center.dy + radius * math.sin(a)),
         gridPaint,
       );
     }
@@ -2049,14 +2409,17 @@ class _RadarPainter extends CustomPainter {
     canvas.drawPath(dataPath, fillPaint);
     canvas.drawPath(dataPath, strokePaint);
 
-    final dotPaint = Paint()..color = color..style = PaintingStyle.fill;
+    final dotPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
     for (int i = 0; i < sides; i++) {
       final a = i * angle - (math.pi / 2);
       final val = (stats[keys[i]] ?? 0).clamp(0.0, 100.0) / 100.0;
       canvas.drawCircle(
         Offset(center.dx + radius * val * math.cos(a),
             center.dy + radius * val * math.sin(a)),
-        4, dotPaint,
+        4,
+        dotPaint,
       );
     }
 
@@ -2069,7 +2432,9 @@ class _RadarPainter extends CustomPainter {
         text: TextSpan(
           text: keys[i].toUpperCase(),
           style: TextStyle(
-            color: isDarkMode ? Colors.white.withOpacity(0.55) : Colors.black.withOpacity(0.55),
+            color: isDarkMode
+                ? Colors.white.withOpacity(0.55)
+                : Colors.black.withOpacity(0.55),
             fontSize: 8.5,
             fontWeight: FontWeight.bold,
           ),
@@ -2090,10 +2455,10 @@ class _RadarPainter extends CustomPainter {
       )..layout();
 
       final w = math.max(labelPainter.width, valuePainter.width);
-      labelPainter.paint(canvas,
-          Offset(lx - w / 2 + (w - labelPainter.width) / 2, ly - 14));
-      valuePainter.paint(canvas,
-          Offset(lx - w / 2 + (w - valuePainter.width) / 2, ly - 1));
+      labelPainter.paint(
+          canvas, Offset(lx - w / 2 + (w - labelPainter.width) / 2, ly - 14));
+      valuePainter.paint(
+          canvas, Offset(lx - w / 2 + (w - valuePainter.width) / 2, ly - 1));
     }
   }
 
@@ -2109,11 +2474,15 @@ class _PersistentTabBarDelegate extends SliverPersistentHeaderDelegate {
   final Widget child;
   const _PersistentTabBarDelegate({required this.child});
 
-  @override double get minExtent => 44;
-  @override double get maxExtent => 44;
+  @override
+  double get minExtent => 44;
+  @override
+  double get maxExtent => 44;
 
   @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) => child;
+  Widget build(
+          BuildContext context, double shrinkOffset, bool overlapsContent) =>
+      child;
 
   @override
   bool shouldRebuild(_PersistentTabBarDelegate old) => false;

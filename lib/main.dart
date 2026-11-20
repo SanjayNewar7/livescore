@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'package:flutter/services.dart';
+import 'package:workmanager/workmanager.dart';
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:livescore/screens/onboarding_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -17,8 +22,26 @@ import 'package:livescore/screens/standings_screen.dart';
 import 'package:livescore/screens/news_screen.dart';
 import 'package:livescore/screens/settings_screen.dart';
 
+@pragma('vm:entry-point')
+void notificationWorker() {
+  Workmanager().executeTask((task, inputData) async {
+    try {
+      WidgetsFlutterBinding.ensureInitialized();
+      await Hive.initFlutter();
+      await PreferencesService().init();
+      await NotificationService().init();
+      await NotificationService().pollTeamActivity();
+      return true;
+    } catch (e) {
+      print('[Notifications] Background refresh failed: $e');
+      return false;
+    }
+  });
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
   try {
     await Hive.initFlutter();
@@ -51,10 +74,24 @@ void main() async {
   } catch (e) {
     print('[Main] NotificationService init error: $e');
   }
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    try {
+      await Workmanager().initialize(notificationWorker);
+      await Workmanager().registerPeriodicTask(
+        'team-activity-check',
+        'team-activity-check',
+        frequency: const Duration(minutes: 15),
+        constraints: Constraints(networkType: NetworkType.connected),
+      );
+    } catch (e) {
+      print('[Main] Notification worker setup error: $e');
+    }
+  }
 
   print('[Main] Service initialization complete');
 
   runApp(const MyApp());
+  unawaited(ProfileService().ensureDefaultAvatar());
 }
 
 class MyApp extends StatelessWidget {
@@ -71,7 +108,8 @@ class MyApp extends StatelessWidget {
           return MaterialApp(
             title: 'Livescore',
             debugShowCheckedModeBanner: false,
-            theme: provider.isDarkMode ? AppTheme.darkTheme : AppTheme.lightTheme,
+            theme:
+                provider.isDarkMode ? AppTheme.darkTheme : AppTheme.lightTheme,
             builder: (context, child) {
               return _NetworkErrorWrapper(child: child);
             },
@@ -101,9 +139,9 @@ class MyApp extends StatelessWidget {
           settings: settings,
         );
       case '/standings':
-      // Optional league code passed as the route argument (e.g. from
-      // tapping a favourited league on the home screen). Falls back to
-      // the default FIFA World Cup view when no argument is supplied.
+        // Optional league code passed as the route argument (e.g. from
+        // tapping a favourited league on the home screen). Falls back to
+        // the default FIFA World Cup view when no argument is supplied.
         final leagueCode = settings.arguments as String?;
         return MaterialPageRoute(
           builder: (_) => StandingsScreen(initialLeagueCode: leagueCode),
@@ -241,9 +279,8 @@ class _NetworkStatusBanner extends StatefulWidget {
 }
 
 class _NetworkStatusBannerState extends State<_NetworkStatusBanner> {
-  ConnectivityResult _connectivityStatus = ConnectivityResult.wifi;
   bool _isOffline = false;
-  late Stream<ConnectivityResult> _connectivityStream;
+  late Stream<List<ConnectivityResult>> _connectivityStream;
 
   @override
   void initState() {
@@ -251,15 +288,16 @@ class _NetworkStatusBannerState extends State<_NetworkStatusBanner> {
     _checkConnectivity();
     _connectivityStream = Connectivity().onConnectivityChanged;
     _connectivityStream.listen((result) {
+      if (!mounted) return;
       setState(() {
-        _connectivityStatus = result;
-        _isOffline = result == ConnectivityResult.none;
+        _isOffline = result.contains(ConnectivityResult.none);
       });
 
       if (_isOffline && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('No internet connection. Some features may be limited.'),
+            content:
+                Text('No internet connection. Some features may be limited.'),
             backgroundColor: Colors.red,
             duration: Duration(seconds: 3),
           ),
@@ -270,9 +308,9 @@ class _NetworkStatusBannerState extends State<_NetworkStatusBanner> {
 
   Future<void> _checkConnectivity() async {
     final result = await Connectivity().checkConnectivity();
+    if (!mounted) return;
     setState(() {
-      _connectivityStatus = result;
-      _isOffline = result == ConnectivityResult.none;
+      _isOffline = result.contains(ConnectivityResult.none);
     });
   }
 

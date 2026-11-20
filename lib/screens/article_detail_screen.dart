@@ -5,6 +5,9 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:livescore/models/news_model.dart';
 import 'package:livescore/utils/theme.dart';
 import 'package:livescore/utils/helpers.dart';
+import 'package:livescore/services/notification_service.dart';
+import 'package:livescore/providers/app_provider.dart';
+import 'package:provider/provider.dart';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 // LiveGoal palette: green is the primary brand color, blue is the secondary /
@@ -55,6 +58,10 @@ class _ArticleDetailScreenState extends State<ArticleDetailScreen> {
   void initState() {
     super.initState();
     _scroll.addListener(_onScroll);
+    final provider = context.read<AppProvider>();
+    NotificationService().markNewsArticleRead(widget.article.id).then((_) {
+      provider.refreshUnreadNotificationCount();
+    });
   }
 
   @override

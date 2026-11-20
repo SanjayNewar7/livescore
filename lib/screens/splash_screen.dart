@@ -22,7 +22,7 @@ class _SplashScreenState extends State<SplashScreen>
   bool _hasError = false;
   String? _errorMessage;
 
-  StreamSubscription<ConnectivityResult>? _connectivitySubscription;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
   // ─── Rotating Slogans ────────────────────────────────────────────────
   static const List<String> _slogans = [
@@ -104,7 +104,7 @@ class _SplashScreenState extends State<SplashScreen>
         Connectivity().onConnectivityChanged.listen((result) {
           if (!mounted) return;
 
-          if (result == ConnectivityResult.none) {
+          if (result.contains(ConnectivityResult.none)) {
             setState(() {
               _hasError = true;
               _errorMessage = 'No internet connection.\nPlease check your network.';
@@ -124,7 +124,7 @@ class _SplashScreenState extends State<SplashScreen>
     try {
       final connectivity = await Connectivity().checkConnectivity();
 
-      if (connectivity == ConnectivityResult.none) {
+      if (connectivity.contains(ConnectivityResult.none)) {
         setState(() {
           _hasError = true;
           _errorMessage = 'No internet connection.\nPlease check your network.';

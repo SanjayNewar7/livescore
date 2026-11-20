@@ -19,6 +19,12 @@
 // testable and keeps API-calling logic in one place (SportService).
 
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/data/latest.dart' as tzdata;
+import 'package:timezone/timezone.dart' as tz;
+import 'package:livescore/models/team_page_data.dart';
+import 'package:livescore/services/preferences_service.dart';
+import 'package:livescore/services/api_service.dart';
 
 import 'package:livescore/models/notification_model.dart';
 import 'package:livescore/models/news_model.dart';
@@ -26,6 +32,9 @@ import 'package:livescore/models/game_model.dart';
 
 class NotificationService {
   static const String _boxName = 'notifications_box';
+  static const String _teamsBoxName = 'team_notification_subscriptions';
+  final FlutterLocalNotificationsPlugin _device = FlutterLocalNotificationsPlugin();
+  bool _deviceReady = false;
 
   static final NotificationService _instance = NotificationService._internal();
   factory NotificationService() => _instance;
@@ -33,6 +42,236 @@ class NotificationService {
 
   Future<void> init() async {
     await _ensureBox();
+    await _ensureTeamsBox();
+    tzdata.initializeTimeZones();
+    await _device.initialize(settings: const InitializationSettings(
+      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+      iOS: DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      ),
+    ));
+    _deviceReady = true;
+  }
+
+  Future<Box> _ensureTeamsBox() async {
+    if (Hive.isBoxOpen(_teamsBoxName)) return Hive.box(_teamsBoxName);
+    return Hive.openBox(_teamsBoxName);
+  }
+
+  bool isTeamFollowed(String teamId) =>
+      Hive.isBoxOpen(_teamsBoxName) && Hive.box(_teamsBoxName).containsKey(teamId);
+
+  List<String> get followedTeamIds => Hive.isBoxOpen(_teamsBoxName)
+      ? Hive.box(_teamsBoxName).keys.map((key) => key.toString()).toList()
+      : const [];
+
+  List<String> get followedTeamNames => Hive.isBoxOpen(_teamsBoxName)
+      ? Hive.box(_teamsBoxName).values
+          .whereType<Map>()
+          .map((value) => value['name']?.toString() ?? '')
+          .where((name) => name.isNotEmpty).toList()
+      : const [];
+
+  Future<bool> requestDevicePermission() async {
+    if (!_deviceReady) await init();
+    final android = _device.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (android != null) {
+      final granted = await android.requestNotificationsPermission();
+      if (granted != true) return false;
+      await android.requestExactAlarmsPermission();
+      return true;
+    }
+    final ios = _device.resolvePlatformSpecificImplementation<
+        IOSFlutterLocalNotificationsPlugin>();
+    return await ios?.requestPermissions(alert: true, badge: true, sound: true) ?? true;
+  }
+
+  Future<void> followTeam({
+    required String teamId,
+    required String teamName,
+    required String leagueCode,
+    required List<TeamUpcomingFixture> fixtures,
+  }) async {
+    final box = await _ensureTeamsBox();
+    await box.put(teamId, {
+      'name': teamName,
+      'league': leagueCode,
+      'followedAt': DateTime.now().toIso8601String(),
+      'fixtureIds': <int>[],
+      'resultIds': <int>[],
+    });
+    await scheduleTeamFixtures(teamId, fixtures);
+  }
+
+  Future<void> unfollowTeam(String teamId) async {
+    final box = await _ensureTeamsBox();
+    final data = box.get(teamId);
+    if (data is Map && _deviceReady) {
+      for (final id in [
+        ...(data['fixtureIds'] as List? ?? []),
+        ...(data['resultIds'] as List? ?? []),
+        ...(data['scheduledIds'] as List? ?? []),
+      ]) {
+        if (id is int) await _device.cancel(id: id);
+      }
+    }
+    await box.delete(teamId);
+  }
+
+  Future<void> scheduleTeamFixtures(
+      String teamId, List<TeamUpcomingFixture> fixtures) async {
+    if (!_deviceReady) await init();
+    final box = await _ensureTeamsBox();
+    final raw = box.get(teamId);
+    if (raw is! Map) return;
+    for (final id in (raw['fixtureIds'] as List? ?? [])) {
+      if (id is int) await _device.cancel(id: id);
+    }
+    final data = Map<String, dynamic>.from(raw);
+    final ids = <int>[];
+    final teamName = data['name']?.toString() ?? 'Your team';
+    if (PreferencesService().preferences.notificationsEnabled &&
+        PreferencesService().preferences.liveScoreAlerts) {
+      for (final fixture in fixtures) {
+        final kickoff = DateTime.tryParse(fixture.date)?.toUtc();
+        if (kickoff == null || !kickoff.isAfter(DateTime.now().toUtc())) continue;
+        final key = '$teamId:${fixture.date}:${fixture.opponentId}';
+        final baseId = _stableId(key) * 2;
+        final before = kickoff.subtract(const Duration(minutes: 15));
+        if (before.isAfter(DateTime.now().toUtc())) {
+          await _schedule(baseId, '$teamName play in 15 minutes',
+              '${fixture.isHome ? 'Home' : 'Away'} vs ${fixture.opponentName} • ${fixture.competition}', before);
+          ids.add(baseId);
+        }
+        await _schedule(baseId + 1, 'Kickoff: $teamName vs ${fixture.opponentName}',
+            '${fixture.competition} is underway', kickoff);
+        ids.add(baseId + 1);
+      }
+    }
+    data['fixtureIds'] = ids;
+    data['fixtures'] = fixtures.map((f) => {
+      'opponentId': f.opponentId,
+      'opponentName': f.opponentName,
+      'opponentLogo': f.opponentLogo,
+      'opponentAbbr': f.opponentAbbr,
+      'competition': f.competition,
+      'leagueFlag': f.leagueFlag,
+      'date': f.date,
+      'isHome': f.isHome,
+    }).toList();
+    await box.put(teamId, data);
+  }
+
+  Future<void> syncDeviceSettings() async {
+    final box = await _ensureTeamsBox();
+    for (final key in box.keys.toList()) {
+      final raw = box.get(key);
+      if (raw is! Map) continue;
+      if (!PreferencesService().preferences.notificationsEnabled ||
+          !PreferencesService().preferences.liveScoreAlerts) {
+        for (final id in (raw['resultIds'] as List? ?? [])) {
+          if (id is int) await _device.cancel(id: id);
+        }
+        final updated = Map<String, dynamic>.from(raw);
+        updated['resultIds'] = <int>[];
+        await box.put(key, updated);
+      }
+      final fixtures = <TeamUpcomingFixture>[];
+      for (final value in (raw['fixtures'] as List? ?? [])) {
+        if (value is! Map) continue;
+        fixtures.add(TeamUpcomingFixture(
+          opponentId: value['opponentId']?.toString() ?? '',
+          opponentName: value['opponentName']?.toString() ?? '',
+          opponentLogo: value['opponentLogo']?.toString() ?? '',
+          opponentAbbr: value['opponentAbbr']?.toString() ?? '',
+          competition: value['competition']?.toString() ?? '',
+          leagueFlag: value['leagueFlag']?.toString() ?? '',
+          date: value['date']?.toString() ?? '',
+          isHome: value['isHome'] == true,
+        ));
+      }
+      await scheduleTeamFixtures(key.toString(), fixtures);
+    }
+  }
+
+  Future<void> pollTeamActivity() async {
+    final prefs = PreferencesService().preferences;
+    if (!prefs.notificationsEnabled) return;
+    final box = await _ensureTeamsBox();
+    if (box.isEmpty) return;
+    final subscriptions = <String, Map<String, dynamic>>{};
+    for (final key in box.keys) {
+      final raw = box.get(key);
+      if (raw is Map) subscriptions[key.toString()] = Map<String, dynamic>.from(raw);
+    }
+    if (subscriptions.isEmpty) return;
+    final api = ApiService();
+    if (prefs.newsAlerts) {
+      final articles = await api.getNewsBatch(limit: 25);
+      await generateNewsNotifications(
+        articles: articles,
+        favoriteTeamNames: subscriptions.values
+            .map((s) => s['name']?.toString() ?? '')
+            .where((n) => n.isNotEmpty).toList(),
+      );
+    }
+    if (prefs.liveScoreAlerts) {
+      final leagues = subscriptions.values
+          .map((s) => s['league']?.toString() ?? '')
+          .where((s) => s.isNotEmpty).toSet();
+      final now = DateTime.now();
+      final games = <Game>[];
+      for (final league in leagues) {
+        games.addAll(await api.getGamesByDate(league, now));
+        games.addAll(await api.getGamesByDate(
+            league, now.subtract(const Duration(days: 1))));
+      }
+      await generateMatchResultNotifications(
+        games: games,
+        favoriteTeamIds: subscriptions.keys.toList(),
+      );
+    }
+  }
+
+  int _stableId(String input) {
+    var hash = 0;
+    for (final unit in input.codeUnits) {
+      hash = (hash * 31 + unit) & 0x3fffffff;
+    }
+    return hash;
+  }
+
+  Future<void> _schedule(int id, String title, String body, DateTime when) async {
+    final android = _device.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    final exact = await android?.canScheduleExactNotifications() ?? false;
+    await _device.zonedSchedule(
+      id: id, title: title, body: body,
+      scheduledDate: tz.TZDateTime.from(when, tz.UTC),
+      notificationDetails: const NotificationDetails(android: AndroidNotificationDetails(
+        'team_matches', 'Team match alerts',
+        channelDescription: 'Upcoming matches and kickoff alerts',
+        importance: Importance.high, priority: Priority.high,
+      ), iOS: DarwinNotificationDetails()),
+      androidScheduleMode: exact
+          ? AndroidScheduleMode.exactAllowWhileIdle
+          : AndroidScheduleMode.inexactAllowWhileIdle,
+    );
+  }
+
+  Future<void> _showDevice(String id, String title, String body,
+      {required bool news}) async {
+    if (!_deviceReady) await init();
+    await _device.show(id: _stableId(id), title: title, body: body,
+        notificationDetails: NotificationDetails(android: AndroidNotificationDetails(
+          news ? 'team_news' : 'team_results',
+          news ? 'Team news' : 'Team results',
+          channelDescription: news ? 'News about followed teams' : 'Final scores for followed teams',
+          importance: Importance.high, priority: Priority.high,
+        ), iOS: const DarwinNotificationDetails()));
   }
 
   /// Same reasoning as ProfileService._ensureBox(): go through
@@ -90,6 +329,20 @@ class NotificationService {
     if (raw is Map) {
       final updated = NotificationItem.fromMap(raw).copyWith(isRead: true);
       await box.put(id, updated.toMap());
+    }
+  }
+
+  Future<void> markNewsArticleRead(String articleId) async {
+    if (articleId.isEmpty) return;
+    final box = await _ensureBox();
+    await box.put('read_news_$articleId', true);
+    for (final key in box.keys.toList()) {
+      final raw = box.get(key);
+      if (raw is! Map) continue;
+      final item = NotificationItem.fromMap(raw);
+      if (item.isNews && item.article?.id == articleId && !item.isRead) {
+        await box.put(key, item.copyWith(isRead: true).toMap());
+      }
     }
   }
 
@@ -208,12 +461,30 @@ class NotificationService {
         subtitle: subtitle,
         imageUrl: article.imageUrl.isNotEmpty ? article.imageUrl : null,
         createdAt: createdAt,
+        isRead: (await _ensureBox()).get('read_news_${article.id}') == true,
         matchedEntityName: matchedName,
         matchedEntityType: matchedType,
         article: article,
       );
 
-      if (await _addIfNew(item)) added++;
+      if (await _addIfNew(item)) {
+        added++;
+        final followed = await _ensureTeamsBox();
+        final isSubscribed = followed.values.any((value) {
+          if (value is! Map ||
+              value['name']?.toString().toLowerCase() != matchedName?.toLowerCase()) {
+            return false;
+          }
+          final followedAt = DateTime.tryParse(value['followedAt']?.toString() ?? '');
+          return followedAt == null || !createdAt.isBefore(followedAt);
+        });
+        final articleAge = DateTime.now().difference(createdAt);
+        if (!item.isRead && isSubscribed && PreferencesService().preferences.notificationsEnabled &&
+            PreferencesService().preferences.newsAlerts &&
+            !articleAge.isNegative && articleAge < const Duration(hours: 2)) {
+          await _showDevice(item.id, item.title, item.subtitle, news: true);
+        }
+      }
     }
     return added;
   }
@@ -252,13 +523,14 @@ class NotificationService {
       } catch (_) {
         kickoff = null;
       }
-      final finishedAt = kickoff?.add(estimatedMatchLength) ?? now;
+      final estimatedEnd = kickoff?.add(estimatedMatchLength) ?? now;
 
       // Skip matches whose estimated final whistle is outside the window
       // (either too long ago, or — as a safety guard against bad data —
       // apparently still in the future).
-      if (finishedAt.isAfter(now)) continue;
-      if (now.difference(finishedAt) > window) continue;
+      if (kickoff != null && kickoff.isAfter(now)) continue;
+      if (now.difference(estimatedEnd) > window) continue;
+      final finishedAt = now;
 
       final favoriteTeamName = favoriteIsHome ? game.homeTeam.name : game.awayTeam.name;
       final opponentName = favoriteIsHome ? game.awayTeam.name : game.homeTeam.name;
@@ -289,7 +561,32 @@ class NotificationService {
         game: game,
       );
 
-      if (await _addIfNew(item)) added++;
+      if (await _addIfNew(item)) {
+        added++;
+        if ((favoriteIsHome && isTeamFollowed(game.homeTeam.id) ||
+                favoriteIsAway && isTeamFollowed(game.awayTeam.id)) &&
+            PreferencesService().preferences.notificationsEnabled &&
+            PreferencesService().preferences.liveScoreAlerts &&
+            kickoff != null && now.difference(kickoff) < const Duration(hours: 4)) {
+          // ESPN reports final status without a reliable actual whistle time.
+          // Schedule from the first final observation rather than assuming a
+          // fixed match length.
+          final alertId = _stableId('${item.id}_final');
+          await _schedule(alertId, title, subtitle,
+              DateTime.now().toUtc().add(const Duration(minutes: 15)));
+          final teams = await _ensureTeamsBox();
+          final teamId = favoriteIsHome ? game.homeTeam.id : game.awayTeam.id;
+          final raw = teams.get(teamId);
+          if (raw is Map) {
+            final data = Map<String, dynamic>.from(raw);
+            data['resultIds'] = <int>[
+              ...(data['resultIds'] as List? ?? []).whereType<int>(),
+              alertId,
+            ];
+            await teams.put(teamId, data);
+          }
+        }
+      }
     }
     return added;
   }

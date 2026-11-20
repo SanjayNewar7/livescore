@@ -85,15 +85,15 @@ class ApiService {
 
   String _currentLeagueCode = 'eng.1';
 
-  Future<http.Response> _espnGetWithGate(
-      String url, _Semaphore gate, {int retries = 2}) async {
-    for (int attempt = 0; ; attempt++) {
+  Future<http.Response> _espnGetWithGate(String url, _Semaphore gate,
+      {int retries = 2}) async {
+    for (int attempt = 0;; attempt++) {
       await gate.acquire();
       try {
         final res = await _client
             .get(Uri.parse(url), headers: _headers)
             .timeout(const Duration(seconds: 14),
-            onTimeout: () => http.Response('{}', 408));
+                onTimeout: () => http.Response('{}', 408));
         if (res.statusCode == 403 && attempt < retries) {
           await Future.delayed(Duration(milliseconds: 600 * (attempt + 1)));
           continue;
@@ -115,9 +115,9 @@ class ApiService {
       _espnGetWithGate(url, _teamPageGate, retries: retries);
 
   Map<String, String> get _headers => {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json, image/*',
-  };
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, image/*',
+      };
 
   String _normalizeStatus(String raw) {
     final s = raw.toLowerCase().trim();
@@ -188,7 +188,8 @@ class ApiService {
       if (typeBlock != null) {
         final state = typeBlock['state']?.toString().toLowerCase() ?? '';
         final name = typeBlock['name']?.toString().toLowerCase() ?? '';
-        final description = typeBlock['description']?.toString().toLowerCase() ?? '';
+        final description =
+            typeBlock['description']?.toString().toLowerCase() ?? '';
         final completed = typeBlock['completed'];
 
         // Check for LIVE states - expanded to catch all variations
@@ -245,7 +246,8 @@ class ApiService {
 
       // Check direct status fields
       final state = statusBlock['state']?.toString().toLowerCase() ?? '';
-      final description = statusBlock['description']?.toString().toLowerCase() ?? '';
+      final description =
+          statusBlock['description']?.toString().toLowerCase() ?? '';
       final displayClock = statusBlock['displayClock']?.toString() ?? '';
       final periodRaw = statusBlock['period'];
       final completed = statusBlock['completed'];
@@ -299,7 +301,8 @@ class ApiService {
           // Check if it's halftime (clock often "0:00" at HT)
           if (displayClock == '0:00' && periodVal >= 2) {
             // Could be HT or FT - check if there's more info
-            if (description.contains('halftime') || description.contains('half time')) {
+            if (description.contains('halftime') ||
+                description.contains('half time')) {
               return 'STATUS_LIVE';
             }
             // If period is 2 and clock is 0:00, it's likely halftime
@@ -340,7 +343,8 @@ class ApiService {
         }
         // If we have a displayClock, it's live
         final status = event['status'] as Map<String, dynamic>?;
-        if (status != null && status['displayClock']?.toString().isNotEmpty == true) {
+        if (status != null &&
+            status['displayClock']?.toString().isNotEmpty == true) {
           return 'STATUS_LIVE';
         }
       }
@@ -400,13 +404,14 @@ class ApiService {
     String? date,
   }) async {
     final base = '${AppConstants.baseUrl}/$leagueCode/scoreboard';
-    final url  = date != null ? '$base?dates=$date' : base;
+    final url = date != null ? '$base?dates=$date' : base;
     try {
       final response = await _client
           .get(Uri.parse(url), headers: _headers)
           .timeout(const Duration(seconds: 6));
       if (response.statusCode == 200) {
-        return _parseGamesFromScoreboard(json.decode(response.body), leagueCode);
+        return _parseGamesFromScoreboard(
+            json.decode(response.body), leagueCode);
       }
     } catch (e) {
       print('Scoreboard error $leagueCode: $e');
@@ -414,7 +419,8 @@ class ApiService {
     return [];
   }
 
-  String _extractMatchNote(Map<String, dynamic> competition, String leagueName, Map<String, dynamic> event) {
+  String _extractMatchNote(Map<String, dynamic> competition, String leagueName,
+      Map<String, dynamic> event) {
     String matchNote = '';
 
     try {
@@ -489,24 +495,32 @@ class ApiService {
 
       try {
         final eventDate = DateTime.parse(event['date']?.toString() ?? '');
-        final isChampionsLeague = leagueName.toLowerCase().contains('champions league');
+        final isChampionsLeague =
+            leagueName.toLowerCase().contains('champions league');
         final isEuropa = leagueName.toLowerCase().contains('europa league');
 
-        if (isChampionsLeague && eventDate.month == 5 && eventDate.day >= 28 && eventDate.day <= 31) {
+        if (isChampionsLeague &&
+            eventDate.month == 5 &&
+            eventDate.day >= 28 &&
+            eventDate.day <= 31) {
           matchNote = 'Final';
-        }
-        else if (isEuropa && eventDate.month == 5 && eventDate.day >= 20 && eventDate.day <= 27) {
+        } else if (isEuropa &&
+            eventDate.month == 5 &&
+            eventDate.day >= 20 &&
+            eventDate.day <= 27) {
           matchNote = 'Final';
-        }
-        else if (eventDate.month == 5 && eventDate.day >= 15 && eventDate.day <= 30) {
+        } else if (eventDate.month == 5 &&
+            eventDate.day >= 15 &&
+            eventDate.day <= 30) {
           final leagueLower = leagueName.toLowerCase();
-          if (leagueLower.contains('cup') || leagueLower.contains('fa cup') ||
-              leagueLower.contains('copa del rey') || leagueLower.contains('dfb-pokal')) {
+          if (leagueLower.contains('cup') ||
+              leagueLower.contains('fa cup') ||
+              leagueLower.contains('copa del rey') ||
+              leagueLower.contains('dfb-pokal')) {
             matchNote = 'Final';
           }
         }
       } catch (_) {}
-
     } catch (e) {
       print('Error extracting match note: $e');
     }
@@ -514,12 +528,13 @@ class ApiService {
     return matchNote;
   }
 
-  List<Game> _parseGamesFromScoreboard(Map<String, dynamic> data, String leagueCode) {
+  List<Game> _parseGamesFromScoreboard(
+      Map<String, dynamic> data, String leagueCode) {
     final List<Game> games = [];
     final events = data['events'] as List? ?? [];
 
     final league = AppConstants.allLeagues.firstWhere(
-          (l) => l['code'] == leagueCode,
+      (l) => l['code'] == leagueCode,
       orElse: () => {'name': leagueCode, 'flag': '⚽'},
     );
     final leagueName = league['name'] ?? leagueCode;
@@ -565,7 +580,8 @@ class ApiService {
           });
           if (clock.isNotEmpty && clock != '0:00' && hasScore) {
             // This is actually a live match
-            print('[API] Status correction: SCHEDULED -> LIVE for event ${event['id']} (clock: $clock)');
+            print(
+                '[API] Status correction: SCHEDULED -> LIVE for event ${event['id']} (clock: $clock)');
           }
         }
 
@@ -578,12 +594,17 @@ class ApiService {
         final awayLineScores = _parseLineScores(awayData['linescores']);
         final homeLineScores = _parseLineScores(homeData['linescores']);
 
-        final List<GoalScorer> goalScorers = _parseGoalScorers(competition, awayTeam, homeTeam);
+        final List<GoalScorer> goalScorers =
+            _parseGoalScorers(competition, awayTeam, homeTeam);
 
-        final awayFull = awayData['team']?['displayName']?.toString() ?? awayTeam.name;
-        final homeFull = homeData['team']?['displayName']?.toString() ?? homeTeam.name;
-        final awayShort = awayData['team']?['abbreviation']?.toString() ?? awayTeam.abbreviation;
-        final homeShort = homeData['team']?['abbreviation']?.toString() ?? homeTeam.abbreviation;
+        final awayFull =
+            awayData['team']?['displayName']?.toString() ?? awayTeam.name;
+        final homeFull =
+            homeData['team']?['displayName']?.toString() ?? homeTeam.name;
+        final awayShort = awayData['team']?['abbreviation']?.toString() ??
+            awayTeam.abbreviation;
+        final homeShort = homeData['team']?['abbreviation']?.toString() ??
+            homeTeam.abbreviation;
 
         games.add(Game(
           id: event['id']?.toString() ?? '',
@@ -617,8 +638,9 @@ class ApiService {
   TeamInfo _buildTeamInfo(Map<String, dynamic> competitorData) {
     final team = competitorData['team'] as Map<String, dynamic>? ?? {};
     final record = competitorData['records'] != null &&
-        (competitorData['records'] as List).isNotEmpty
-        ? (competitorData['records'] as List).first['summary']?.toString() ?? '0-0-0'
+            (competitorData['records'] as List).isNotEmpty
+        ? (competitorData['records'] as List).first['summary']?.toString() ??
+            '0-0-0'
         : competitorData['record']?.toString() ?? '0-0-0';
 
     return TeamInfo(
@@ -671,10 +693,10 @@ class ApiService {
   }
 
   List<GoalScorer> _parseGoalScorers(
-      Map<String, dynamic> competition,
-      TeamInfo awayTeam,
-      TeamInfo homeTeam,
-      ) {
+    Map<String, dynamic> competition,
+    TeamInfo awayTeam,
+    TeamInfo homeTeam,
+  ) {
     final details = competition['details'] as List? ?? [];
     final List<GoalScorer> scorers = [];
 
@@ -687,11 +709,13 @@ class ApiService {
 
       final athletes = detail['athletesInvolved'] as List? ?? [];
       final playerName = athletes.isNotEmpty
-          ? (athletes.first['displayName'] ?? athletes.first['fullName'] ?? 'Unknown').toString()
+          ? (athletes.first['displayName'] ??
+                  athletes.first['fullName'] ??
+                  'Unknown')
+              .toString()
           : 'Unknown';
-      final playerId = athletes.isNotEmpty
-          ? (athletes.first['id']?.toString() ?? '')
-          : '';
+      final playerId =
+          athletes.isNotEmpty ? (athletes.first['id']?.toString() ?? '') : '';
 
       final clockStr = detail['clock']?['displayValue']?.toString() ?? '';
       int minute = 0;
@@ -710,7 +734,8 @@ class ApiService {
 
       String? assist;
       if (athletes.length > 1) {
-        assist = (athletes[1]['displayName'] ?? athletes[1]['fullName'] ?? '').toString();
+        assist = (athletes[1]['displayName'] ?? athletes[1]['fullName'] ?? '')
+            .toString();
         if (assist.isEmpty) assist = null;
       }
 
@@ -731,26 +756,28 @@ class ApiService {
   }
 
   Future<List<Game>> _fetchLeaguesInParallel(
-      List<Map<String, String>> leagues,
-      String dateStr,
-      ) async {
+    List<Map<String, String>> leagues,
+    String dateStr,
+  ) async {
     print('[API] Fetching $dateStr for ${leagues.length} leagues');
 
     const batchSize = 12;
     final allGames = <Game>[];
 
     for (int i = 0; i < leagues.length; i += batchSize) {
-      final batch = leagues.sublist(i, (i + batchSize).clamp(0, leagues.length));
+      final batch =
+          leagues.sublist(i, (i + batchSize).clamp(0, leagues.length));
       final futures = batch.map((league) async {
         final leagueCode = league['code']!;
-        final url = '${AppConstants.baseUrl}/$leagueCode/scoreboard?dates=$dateStr';
+        final url =
+            '${AppConstants.baseUrl}/$leagueCode/scoreboard?dates=$dateStr';
         try {
           final res = await _espnGet(url);
 
           if (res.statusCode == 200) {
             try {
-              final games = _parseGamesFromScoreboard(
-                  json.decode(res.body), leagueCode);
+              final games =
+                  _parseGamesFromScoreboard(json.decode(res.body), leagueCode);
               if (games.isNotEmpty) {
                 print('[API] ✅ $leagueCode ($dateStr): ${games.length} games');
               }
@@ -760,7 +787,8 @@ class ApiService {
               return <Game>[];
             }
           }
-          print('[API] ❌ $leagueCode ($dateStr) HTTP ${res.statusCode}: ${res.body.length > 200 ? res.body.substring(0, 200) : res.body}');
+          print(
+              '[API] ❌ $leagueCode ($dateStr) HTTP ${res.statusCode}: ${res.body.length > 200 ? res.body.substring(0, 200) : res.body}');
           return <Game>[];
         } catch (e) {
           print('[API] ❌ $leagueCode ($dateStr) request failed: $e');
@@ -780,10 +808,12 @@ class ApiService {
       '${dt.year}${dt.month.toString().padLeft(2, '0')}${dt.day.toString().padLeft(2, '0')}';
 
   List<String> _utcDatesForLocalDay(DateTime localDay) {
-    final startLocal = DateTime(localDay.year, localDay.month, localDay.day, 0, 0);
-    final endLocal   = DateTime(localDay.year, localDay.month, localDay.day, 23, 59);
-    final startUtc   = startLocal.toUtc();
-    final endUtc     = endLocal.toUtc();
+    final startLocal =
+        DateTime(localDay.year, localDay.month, localDay.day, 0, 0);
+    final endLocal =
+        DateTime(localDay.year, localDay.month, localDay.day, 23, 59);
+    final startUtc = startLocal.toUtc();
+    final endUtc = endLocal.toUtc();
 
     final dates = <String>{};
     dates.add(_fmt(startUtc));
@@ -792,16 +822,16 @@ class ApiService {
   }
 
   Future<List<Game>> _fetchAllLeaguesForLocalDay(
-      DateTime localDay,
-      List<Map<String, String>> leagues,
-      ) async {
+    DateTime localDay,
+    List<Map<String, String>> leagues,
+  ) async {
     final utcDates = _utcDatesForLocalDay(localDay);
     print('[API] UTC dates for local ${_fmt(localDay)}: $utcDates');
 
     final futures = utcDates.map((d) => _fetchLeaguesInParallel(leagues, d));
     final results = await Future.wait(futures);
 
-    final seen   = <String>{};
+    final seen = <String>{};
     final merged = <Game>[];
     for (final batch in results) {
       for (final g in batch) {
@@ -824,8 +854,12 @@ class ApiService {
     _buildPriorityCache();
 
     games.sort((a, b) {
-      final aLive = a.status == 'STATUS_LIVE' ? 0 : (a.status == 'STATUS_SCHEDULED' ? 1 : 2);
-      final bLive = b.status == 'STATUS_LIVE' ? 0 : (b.status == 'STATUS_SCHEDULED' ? 1 : 2);
+      final aLive = a.status == 'STATUS_LIVE'
+          ? 0
+          : (a.status == 'STATUS_SCHEDULED' ? 1 : 2);
+      final bLive = b.status == 'STATUS_LIVE'
+          ? 0
+          : (b.status == 'STATUS_SCHEDULED' ? 1 : 2);
       if (aLive != bLive) return aLive.compareTo(bLive);
 
       final aPriority = _leaguePriorityCache[a.leagueName] ?? 9999;
@@ -846,8 +880,10 @@ class ApiService {
 
     final allGames = <Game>[];
 
-    print('[API] Wave 1 — PRIORITY leagues (${AppConstants.priorityLeagues.length})');
-    final priorityGames = await _fetchAllLeaguesForLocalDay(now, AppConstants.priorityLeagues);
+    print(
+        '[API] Wave 1 — PRIORITY leagues (${AppConstants.priorityLeagues.length})');
+    final priorityGames =
+        await _fetchAllLeaguesForLocalDay(now, AppConstants.priorityLeagues);
     allGames.addAll(priorityGames);
     _sortGames(allGames);
 
@@ -855,26 +891,31 @@ class ApiService {
       onPartialUpdate(List.from(allGames));
     }
 
-    _loadBackgroundLeaguesProgressive(AppConstants.majorClubCompetitions, now, allGames, onPartialUpdate);
-    _loadBackgroundLeaguesProgressive(AppConstants.backgroundLeagues, now, allGames, onPartialUpdate);
-    _loadBackgroundLeaguesProgressive(AppConstants.internationalLeagues, now, allGames, onPartialUpdate);
+    _loadBackgroundLeaguesProgressive(
+        AppConstants.majorClubCompetitions, now, allGames, onPartialUpdate);
+    _loadBackgroundLeaguesProgressive(
+        AppConstants.backgroundLeagues, now, allGames, onPartialUpdate);
+    _loadBackgroundLeaguesProgressive(
+        AppConstants.internationalLeagues, now, allGames, onPartialUpdate);
 
     print('Progressive Wave-1 total: ${allGames.length} games');
     return allGames;
   }
 
   void _loadBackgroundLeaguesProgressive(
-      List<Map<String, String>> leagues,
-      DateTime localDay,
-      List<Game> currentGames,
-      Function(List<Game> partialGames)? onPartialUpdate,
-      ) async {
+    List<Map<String, String>> leagues,
+    DateTime localDay,
+    List<Game> currentGames,
+    Function(List<Game> partialGames)? onPartialUpdate,
+  ) async {
     print('[API] Loading BACKGROUND leagues (${leagues.length} leagues)');
 
-    final backgroundGames = await _fetchAllLeaguesForLocalDay(localDay, leagues);
+    final backgroundGames =
+        await _fetchAllLeaguesForLocalDay(localDay, leagues);
 
     final existingIds = currentGames.map((g) => g.id).toSet();
-    final newGames = backgroundGames.where((g) => !existingIds.contains(g.id)).toList();
+    final newGames =
+        backgroundGames.where((g) => !existingIds.contains(g.id)).toList();
 
     if (newGames.isNotEmpty) {
       currentGames.addAll(newGames);
@@ -890,9 +931,9 @@ class ApiService {
   }
 
   Future<List<Game>> getAllGamesByDateStringProgressive(
-      String dateStr, {
-        Function(List<Game> partialGames)? onPartialUpdate,
-      }) async {
+    String dateStr, {
+    Function(List<Game> partialGames)? onPartialUpdate,
+  }) async {
     print('\n=== CUSTOM DATE $dateStr ===');
     final year = int.tryParse(dateStr.substring(0, 4)) ?? 0;
     final month = int.tryParse(dateStr.substring(4, 6)) ?? 0;
@@ -906,7 +947,8 @@ class ApiService {
     final allGames = <Game>[];
 
     print('[API] Loading priority leagues for custom date');
-    final priorityGames = await _fetchAllLeaguesForLocalDay(targetDate, AppConstants.priorityLeagues);
+    final priorityGames = await _fetchAllLeaguesForLocalDay(
+        targetDate, AppConstants.priorityLeagues);
     allGames.addAll(priorityGames);
     _sortGames(allGames);
 
@@ -915,7 +957,8 @@ class ApiService {
     }
 
     print('[API] Loading major competitions for custom date');
-    final competitionGames = await _fetchAllLeaguesForLocalDay(targetDate, AppConstants.majorClubCompetitions);
+    final competitionGames = await _fetchAllLeaguesForLocalDay(
+        targetDate, AppConstants.majorClubCompetitions);
     allGames.addAll(competitionGames);
     _sortGames(allGames);
 
@@ -928,7 +971,8 @@ class ApiService {
       ...AppConstants.internationalLeagues,
     ];
 
-    _loadBackgroundLeaguesProgressive(remainingLeagues, targetDate, allGames, onPartialUpdate);
+    _loadBackgroundLeaguesProgressive(
+        remainingLeagues, targetDate, allGames, onPartialUpdate);
 
     print('Custom date progressive total: ${allGames.length} games');
     return allGames;
@@ -939,7 +983,8 @@ class ApiService {
     print('\n=== TODAY ${_fmt(now)} ===');
 
     print('[API] Wave 1 — PRIORITY (${AppConstants.priorityLeagues.length})');
-    final priorityGames = await _fetchAllLeaguesForLocalDay(now, AppConstants.priorityLeagues);
+    final priorityGames =
+        await _fetchAllLeaguesForLocalDay(now, AppConstants.priorityLeagues);
 
     List<Game> allGames = [...priorityGames];
     _sortGames(allGames);
@@ -952,16 +997,17 @@ class ApiService {
     return allGames;
   }
 
-  void _loadBackgroundLeagues(
-      List<Map<String, String>> leagues,
-      DateTime localDay,
-      List<Game> currentGames) async {
-    print('[API] Loading BACKGROUND leagues in background (${leagues.length} leagues)');
+  void _loadBackgroundLeagues(List<Map<String, String>> leagues,
+      DateTime localDay, List<Game> currentGames) async {
+    print(
+        '[API] Loading BACKGROUND leagues in background (${leagues.length} leagues)');
 
-    final backgroundGames = await _fetchAllLeaguesForLocalDay(localDay, leagues);
+    final backgroundGames =
+        await _fetchAllLeaguesForLocalDay(localDay, leagues);
 
     final existingIds = currentGames.map((g) => g.id).toSet();
-    final newGames = backgroundGames.where((g) => !existingIds.contains(g.id)).toList();
+    final newGames =
+        backgroundGames.where((g) => !existingIds.contains(g.id)).toList();
 
     if (newGames.isNotEmpty) {
       currentGames.addAll(newGames);
@@ -976,14 +1022,20 @@ class ApiService {
     final yesterday = DateTime.now().subtract(const Duration(days: 1));
     print('\n=== YESTERDAY ${_fmt(yesterday)} ===');
 
-    final priorityGames    = await _fetchAllLeaguesForLocalDay(yesterday, AppConstants.priorityLeagues);
-    final competitionGames = await _fetchAllLeaguesForLocalDay(yesterday, AppConstants.majorClubCompetitions);
-    final backgroundGames  = await _fetchAllLeaguesForLocalDay(yesterday, [
+    final priorityGames = await _fetchAllLeaguesForLocalDay(
+        yesterday, AppConstants.priorityLeagues);
+    final competitionGames = await _fetchAllLeaguesForLocalDay(
+        yesterday, AppConstants.majorClubCompetitions);
+    final backgroundGames = await _fetchAllLeaguesForLocalDay(yesterday, [
       ...AppConstants.backgroundLeagues,
       ...AppConstants.internationalLeagues,
     ]);
 
-    final allGames = [...priorityGames, ...competitionGames, ...backgroundGames];
+    final allGames = [
+      ...priorityGames,
+      ...competitionGames,
+      ...backgroundGames
+    ];
     _sortGames(allGames);
     print('Yesterday total: ${allGames.length} games');
     return allGames;
@@ -993,14 +1045,20 @@ class ApiService {
     final tomorrow = DateTime.now().add(const Duration(days: 1));
     print('\n=== TOMORROW ${_fmt(tomorrow)} ===');
 
-    final priorityGames    = await _fetchAllLeaguesForLocalDay(tomorrow, AppConstants.priorityLeagues);
-    final competitionGames = await _fetchAllLeaguesForLocalDay(tomorrow, AppConstants.majorClubCompetitions);
-    final backgroundGames  = await _fetchAllLeaguesForLocalDay(tomorrow, [
+    final priorityGames = await _fetchAllLeaguesForLocalDay(
+        tomorrow, AppConstants.priorityLeagues);
+    final competitionGames = await _fetchAllLeaguesForLocalDay(
+        tomorrow, AppConstants.majorClubCompetitions);
+    final backgroundGames = await _fetchAllLeaguesForLocalDay(tomorrow, [
       ...AppConstants.backgroundLeagues,
       ...AppConstants.internationalLeagues,
     ]);
 
-    final allGames = [...priorityGames, ...competitionGames, ...backgroundGames];
+    final allGames = [
+      ...priorityGames,
+      ...competitionGames,
+      ...backgroundGames
+    ];
     _sortGames(allGames);
     print('Tomorrow total: ${allGames.length} games');
     return allGames;
@@ -1008,7 +1066,8 @@ class ApiService {
 
   Future<List<Game>> getGamesForDate(DateTime date) async {
     print('\n=== FETCHING GAMES FOR ${_fmt(date)} ===');
-    final games = await _fetchAllLeaguesForLocalDay(date, AppConstants.allLeagues);
+    final games =
+        await _fetchAllLeaguesForLocalDay(date, AppConstants.allLeagues);
     _sortGames(games);
     print('Total games for ${_fmt(date)}: ${games.length}');
     return games;
@@ -1023,7 +1082,8 @@ class ApiService {
     final allGames = <Game>[];
 
     print('[API] Wave 1 — PRIORITY leagues');
-    final priorityGames = await _fetchAllLeaguesForLocalDay(yesterday, AppConstants.priorityLeagues);
+    final priorityGames = await _fetchAllLeaguesForLocalDay(
+        yesterday, AppConstants.priorityLeagues);
     allGames.addAll(priorityGames);
     _sortGames(allGames);
 
@@ -1031,9 +1091,12 @@ class ApiService {
       onPartialUpdate(List.from(allGames));
     }
 
-    _loadBackgroundLeaguesProgressive(AppConstants.majorClubCompetitions, yesterday, allGames, onPartialUpdate);
-    _loadBackgroundLeaguesProgressive(AppConstants.backgroundLeagues, yesterday, allGames, onPartialUpdate);
-    _loadBackgroundLeaguesProgressive(AppConstants.internationalLeagues, yesterday, allGames, onPartialUpdate);
+    _loadBackgroundLeaguesProgressive(AppConstants.majorClubCompetitions,
+        yesterday, allGames, onPartialUpdate);
+    _loadBackgroundLeaguesProgressive(
+        AppConstants.backgroundLeagues, yesterday, allGames, onPartialUpdate);
+    _loadBackgroundLeaguesProgressive(AppConstants.internationalLeagues,
+        yesterday, allGames, onPartialUpdate);
 
     print('Progressive yesterday Wave-1 total: ${allGames.length} games');
     return allGames;
@@ -1048,7 +1111,8 @@ class ApiService {
     final allGames = <Game>[];
 
     print('[API] Wave 1 — PRIORITY leagues');
-    final priorityGames = await _fetchAllLeaguesForLocalDay(tomorrow, AppConstants.priorityLeagues);
+    final priorityGames = await _fetchAllLeaguesForLocalDay(
+        tomorrow, AppConstants.priorityLeagues);
     allGames.addAll(priorityGames);
     _sortGames(allGames);
 
@@ -1056,15 +1120,19 @@ class ApiService {
       onPartialUpdate(List.from(allGames));
     }
 
-    _loadBackgroundLeaguesProgressive(AppConstants.majorClubCompetitions, tomorrow, allGames, onPartialUpdate);
-    _loadBackgroundLeaguesProgressive(AppConstants.backgroundLeagues, tomorrow, allGames, onPartialUpdate);
-    _loadBackgroundLeaguesProgressive(AppConstants.internationalLeagues, tomorrow, allGames, onPartialUpdate);
+    _loadBackgroundLeaguesProgressive(AppConstants.majorClubCompetitions,
+        tomorrow, allGames, onPartialUpdate);
+    _loadBackgroundLeaguesProgressive(
+        AppConstants.backgroundLeagues, tomorrow, allGames, onPartialUpdate);
+    _loadBackgroundLeaguesProgressive(
+        AppConstants.internationalLeagues, tomorrow, allGames, onPartialUpdate);
 
     print('Progressive tomorrow Wave-1 total: ${allGames.length} games');
     return allGames;
   }
 
-  Future<List<Game>> getGamesForDateRange(DateTime startDate, DateTime endDate) async {
+  Future<List<Game>> getGamesForDateRange(
+      DateTime startDate, DateTime endDate) async {
     print('[API] Fetching matches from ${_fmt(startDate)} to ${_fmt(endDate)}');
 
     final allGames = <Game>[];
@@ -1072,7 +1140,8 @@ class ApiService {
     final end = DateTime(endDate.year, endDate.month, endDate.day);
 
     while (current.isBefore(end) || current.isAtSameMomentAs(end)) {
-      final games = await _fetchAllLeaguesForLocalDay(current, AppConstants.allLeagues);
+      final games =
+          await _fetchAllLeaguesForLocalDay(current, AppConstants.allLeagues);
       allGames.addAll(games);
       current = current.add(const Duration(days: 1));
     }
@@ -1089,16 +1158,17 @@ class ApiService {
 
     final allMatches = await getGamesForDateRange(may1, june7);
 
-    return allMatches.where((game) =>
-        game.leagueName.toLowerCase().contains('champions league')
-    ).toList();
+    return allMatches
+        .where((game) =>
+            game.leagueName.toLowerCase().contains('champions league'))
+        .toList();
   }
 
   Future<List<Game>> getAllGamesByDateString(String dateStr) async {
     print('\n=== CUSTOM DATE $dateStr ===');
-    final year  = int.tryParse(dateStr.substring(0, 4)) ?? 0;
+    final year = int.tryParse(dateStr.substring(0, 4)) ?? 0;
     final month = int.tryParse(dateStr.substring(4, 6)) ?? 0;
-    final day   = int.tryParse(dateStr.substring(6, 8)) ?? 0;
+    final day = int.tryParse(dateStr.substring(6, 8)) ?? 0;
 
     List<Game> games;
     if (year > 0 && month > 0 && day > 0) {
@@ -1117,8 +1187,10 @@ class ApiService {
     final now = DateTime.now();
     final formattedDate = _fmt(now);
     print('\n=== INITIAL TODAY $formattedDate (fast) ===');
-    print('[API] Fetching ${AppConstants.priorityLeagues.length} priority leagues');
-    final games = await _fetchAllLeaguesForLocalDay(now, AppConstants.priorityLeagues);
+    print(
+        '[API] Fetching ${AppConstants.priorityLeagues.length} priority leagues');
+    final games =
+        await _fetchAllLeaguesForLocalDay(now, AppConstants.priorityLeagues);
     _sortGames(games);
     print('Initial: ${games.length} games');
     return games;
@@ -1128,7 +1200,11 @@ class ApiService {
     final now = DateTime.now();
     final formattedDate = _fmt(now);
     print('\n=== REMAINING LEAGUES $formattedDate ===');
-    final remainingLeagues = [...AppConstants.majorClubCompetitions, ...AppConstants.backgroundLeagues, ...AppConstants.internationalLeagues];
+    final remainingLeagues = [
+      ...AppConstants.majorClubCompetitions,
+      ...AppConstants.backgroundLeagues,
+      ...AppConstants.internationalLeagues
+    ];
     print('[API] Fetching ${remainingLeagues.length} remaining leagues');
     final games = await _fetchAllLeaguesForLocalDay(now, remainingLeagues);
     print('Remaining: ${games.length} games');
@@ -1139,7 +1215,8 @@ class ApiService {
     final now = DateTime.now();
     final formattedDate = _fmt(now);
     print('\n=== LIVE MATCHES $formattedDate ===');
-    final games = await _fetchAllLeaguesForLocalDay(now, AppConstants.allLeagues);
+    final games =
+        await _fetchAllLeaguesForLocalDay(now, AppConstants.allLeagues);
     final live = games.where((g) => g.status == 'STATUS_LIVE').toList();
     live.sort((a, b) => a.date.compareTo(b.date));
     print('Live games: ${live.length}');
@@ -1151,23 +1228,33 @@ class ApiService {
     final url = '${AppConstants.baseUrl}/$leagueCode/scoreboard?dates=$dateStr';
     try {
       final res = await _espnGet(url);
-      if (res.statusCode == 200) return _parseGamesFromScoreboard(json.decode(res.body), leagueCode);
-    } catch (e) { print('getGamesByDate $leagueCode: $e'); }
+      if (res.statusCode == 200)
+        return _parseGamesFromScoreboard(json.decode(res.body), leagueCode);
+    } catch (e) {
+      print('getGamesByDate $leagueCode: $e');
+    }
     return [];
   }
 
-  Future<List<Game>> getGamesByDateString(String leagueCode, String dateStr) async {
+  Future<List<Game>> getGamesByDateString(
+      String leagueCode, String dateStr) async {
     final url = '${AppConstants.baseUrl}/$leagueCode/scoreboard?dates=$dateStr';
     try {
       final res = await _espnGet(url);
-      if (res.statusCode == 200) return _parseGamesFromScoreboard(json.decode(res.body), leagueCode);
-    } catch (e) { print('getGamesByDateString $leagueCode: $e'); }
+      if (res.statusCode == 200)
+        return _parseGamesFromScoreboard(json.decode(res.body), leagueCode);
+    } catch (e) {
+      print('getGamesByDateString $leagueCode: $e');
+    }
     return [];
   }
 
-  Future<List<Standing>> getStandings(String leagueCode, {String? season}) async {
-    final seasonQuery = (season != null && season.isNotEmpty) ? '?season=$season' : '';
-    final url = '${AppConstants.standingsUrl}/$leagueCode/standings$seasonQuery';
+  Future<List<Standing>> getStandings(String leagueCode,
+      {String? season}) async {
+    final seasonQuery =
+        (season != null && season.isNotEmpty) ? '?season=$season' : '';
+    final url =
+        '${AppConstants.standingsUrl}/$leagueCode/standings$seasonQuery';
     try {
       final res = await _espnGet(url);
       if (res.statusCode == 200) {
@@ -1179,7 +1266,8 @@ class ApiService {
     throw Exception('Failed to load standings for $leagueCode');
   }
 
-  List<Standing> _parseSoccerStandingsFixed(Map<String, dynamic> data, String leagueCode) {
+  List<Standing> _parseSoccerStandingsFixed(
+      Map<String, dynamic> data, String leagueCode) {
     final List<Standing> standings = [];
 
     print('[Standings] Parsing standings for league: $leagueCode');
@@ -1223,8 +1311,8 @@ class ApiService {
         String? form;
 
         for (final stat in statsList) {
-          final name  = stat['name']?.toString() ?? '';
-          final abbr  = stat['abbreviation']?.toString() ?? '';
+          final name = stat['name']?.toString() ?? '';
+          final abbr = stat['abbreviation']?.toString() ?? '';
           final displayValue = stat['displayValue']?.toString() ?? '0';
           statsMap[name] = displayValue;
           if (abbr.isNotEmpty) statsMap[abbr] = displayValue;
@@ -1290,20 +1378,25 @@ class ApiService {
           if (goalsAgainst == null && (abbrKey == 'ga' || abbrKey == 'pa')) {
             goalsAgainst = int.tryParse(displayValue);
           }
-          if (gamesPlayed == null && (abbrKey == 'gp' || abbrKey == 'mp' || abbrKey == 'p')) {
+          if (gamesPlayed == null &&
+              (abbrKey == 'gp' || abbrKey == 'mp' || abbrKey == 'p')) {
             gamesPlayed = int.tryParse(displayValue);
           }
           if (wins == null && abbrKey == 'w') wins = int.tryParse(displayValue);
-          if (draws == null && (abbrKey == 'd' || abbrKey == 'dr')) draws = int.tryParse(displayValue);
-          if (losses == null && abbrKey == 'l') losses = int.tryParse(displayValue);
-          if (points == null && (abbrKey == 'pts' || abbrKey == 'pt')) points = int.tryParse(displayValue);
+          if (draws == null && (abbrKey == 'd' || abbrKey == 'dr'))
+            draws = int.tryParse(displayValue);
+          if (losses == null && abbrKey == 'l')
+            losses = int.tryParse(displayValue);
+          if (points == null && (abbrKey == 'pts' || abbrKey == 'pt'))
+            points = int.tryParse(displayValue);
         }
 
         final gd = (goalsFor ?? 0) - (goalsAgainst ?? 0);
 
         final groupName = entry['group']?['name']?.toString() ??
             entry['conference']?.toString() ??
-            entry['division']?.toString() ?? '';
+            entry['division']?.toString() ??
+            '';
 
         if (groupName.isNotEmpty && groupName != currentGroup) {
           currentGroup = groupName;
@@ -1319,7 +1412,8 @@ class ApiService {
             abbreviation: teamData['abbreviation']?.toString() ?? '',
             logo: _resolveTeamLogo(teamData),
             color: '#${teamData['color']?.toString() ?? '1A62C8'}',
-            alternateColor: '#${teamData['alternateColor']?.toString() ?? 'FFFFFF'}',
+            alternateColor:
+                '#${teamData['alternateColor']?.toString() ?? 'FFFFFF'}',
             record: '${wins ?? 0}-${losses ?? 0}-${draws ?? 0}',
           ),
           wins: (wins ?? 0).toString(),
@@ -1392,24 +1486,30 @@ class ApiService {
 
 // lib/services/api_service.dart
 
-  Future<LeagueLeaders> getLeagueLeaders(String leagueCode, {String? season, int limit = 5}) async {
+  Future<LeagueLeaders> getLeagueLeaders(String leagueCode,
+      {String? season, int limit = 5}) async {
     final leagueId = AppConstants.apiFootballLeagueIds[leagueCode];
     if (leagueId == null) {
-      print('[Leaders] No API-Football league mapping for $leagueCode — skipping');
+      print(
+          '[Leaders] No API-Football league mapping for $leagueCode — skipping');
       return LeagueLeaders.empty;
     }
 
     final apiKey = AppConstants.apiFootballKey;
     if (apiKey.isEmpty || apiKey == 'YOUR_API_FOOTBALL_KEY_HERE') {
-      print('[Leaders] No API-Football key configured — skipping leaders fetch');
+      print(
+          '[Leaders] No API-Football key configured — skipping leaders fetch');
       return LeagueLeaders.empty;
     }
 
     // ✅ Use the season function that caps at 2024 for free plan
-    final seasonYear = AppConstants.apiFootballSeasonFor(leagueCode, season: season);
-    print('[Leaders] Using season: $seasonYear (max supported: ${AppConstants.apiFootballMaxSeason})');
+    final seasonYear =
+        AppConstants.apiFootballSeasonFor(leagueCode, season: season);
+    print(
+        '[Leaders] Using season: $seasonYear (max supported: ${AppConstants.apiFootballMaxSeason})');
 
-    print('[Leaders] Fetching leaders for $leagueCode (apiFootball league=$leagueId, season=$seasonYear)');
+    print(
+        '[Leaders] Fetching leaders for $leagueCode (apiFootball league=$leagueId, season=$seasonYear)');
 
     final results = await Future.wait([
       _fetchApiFootballLeaders('topscorers', leagueId, seasonYear, limit),
@@ -1418,18 +1518,21 @@ class ApiService {
       _fetchApiFootballLeaders('topredcards', leagueId, seasonYear, limit),
     ]);
 
-    final topScorers     = results[0];
-    final topAssists     = results[1];
+    final topScorers = results[0];
+    final topAssists = results[1];
     final mostYellowCards = results[2];
-    final mostRedCards    = results[3];
+    final mostRedCards = results[3];
 
-    if (topScorers.isEmpty && topAssists.isEmpty &&
-        mostYellowCards.isEmpty && mostRedCards.isEmpty) {
+    if (topScorers.isEmpty &&
+        topAssists.isEmpty &&
+        mostYellowCards.isEmpty &&
+        mostRedCards.isEmpty) {
       print('[Leaders] No leaders data returned for $leagueCode $seasonYear');
       return LeagueLeaders.empty;
     }
 
-    print('[Leaders] ✅ scorers:${topScorers.length} assists:${topAssists.length} '
+    print(
+        '[Leaders] ✅ scorers:${topScorers.length} assists:${topAssists.length} '
         'yellow:${mostYellowCards.length} red:${mostRedCards.length}');
 
     return LeagueLeaders(
@@ -1456,7 +1559,8 @@ class ApiService {
       ).timeout(const Duration(seconds: 8));
 
       if (res.statusCode != 200) {
-        print('[Leaders] $statKey HTTP ${res.statusCode} for league=$leagueId season=$season');
+        print(
+            '[Leaders] $statKey HTTP ${res.statusCode} for league=$leagueId season=$season');
         return [];
       }
 
@@ -1464,21 +1568,25 @@ class ApiService {
 
       final errors = data['errors'];
       if (errors is Map && errors.isNotEmpty) {
-        print('[Leaders] $statKey API error for league=$leagueId season=$season: $errors');
+        print(
+            '[Leaders] $statKey API error for league=$leagueId season=$season: $errors');
         return [];
       } else if (errors is List && errors.isNotEmpty) {
-        print('[Leaders] $statKey API error for league=$leagueId season=$season: $errors');
+        print(
+            '[Leaders] $statKey API error for league=$leagueId season=$season: $errors');
         return [];
       }
 
       final rawList = data['response'] as List? ?? [];
       if (rawList.isEmpty) {
-        print('[Leaders] $statKey empty response for league=$leagueId season=$season '
+        print(
+            '[Leaders] $statKey empty response for league=$leagueId season=$season '
             '(results=${data['results']})');
       }
       return rawList
           .take(limit)
-          .map((entry) => _parseApiFootballLeader(entry as Map<String, dynamic>, statKey))
+          .map((entry) =>
+              _parseApiFootballLeader(entry as Map<String, dynamic>, statKey))
           .whereType<LeaderEntry>()
           .toList();
     } catch (e) {
@@ -1487,7 +1595,8 @@ class ApiService {
     }
   }
 
-  LeaderEntry? _parseApiFootballLeader(Map<String, dynamic> entry, String statKey) {
+  LeaderEntry? _parseApiFootballLeader(
+      Map<String, dynamic> entry, String statKey) {
     try {
       final player = entry['player'] as Map<String, dynamic>? ?? {};
       final statsList = entry['statistics'] as List? ?? [];
@@ -1540,39 +1649,66 @@ class ApiService {
   }
 
   GameDetail _getEmptyGameDetail(String gameId) => GameDetail(
-    game: Game(
-      id: gameId, status: '', shortDetail: '',
-      awayTeam: TeamInfo(id: '', name: '', displayName: '', abbreviation: '', logo: '', color: '', alternateColor: '', record: ''),
-      homeTeam: TeamInfo(id: '', name: '', displayName: '', abbreviation: '', logo: '', color: '', alternateColor: '', record: ''),
-      awayScore: '', homeScore: '',
-      awayLineScores: [], homeLineScores: [],
-      venue: Venue(id: '', fullName: '', city: '', state: '', capacity: 0),
-      date: '', clock: '', period: '',
-    ),
-    winProbabilities: [],
-    boxScore: {},
-    plays: [],
-  );
+        game: Game(
+          id: gameId,
+          status: '',
+          shortDetail: '',
+          awayTeam: TeamInfo(
+              id: '',
+              name: '',
+              displayName: '',
+              abbreviation: '',
+              logo: '',
+              color: '',
+              alternateColor: '',
+              record: ''),
+          homeTeam: TeamInfo(
+              id: '',
+              name: '',
+              displayName: '',
+              abbreviation: '',
+              logo: '',
+              color: '',
+              alternateColor: '',
+              record: ''),
+          awayScore: '',
+          homeScore: '',
+          awayLineScores: [],
+          homeLineScores: [],
+          venue: Venue(id: '', fullName: '', city: '', state: '', capacity: 0),
+          date: '',
+          clock: '',
+          period: '',
+        ),
+        winProbabilities: [],
+        boxScore: {},
+        plays: [],
+      );
 
   Future<GameDetail> getGameDetail(String gameId) async {
     for (final league in AppConstants.allLeagues) {
-      final url = '${AppConstants.baseUrl}/${league['code']}/summary?event=$gameId';
+      final url =
+          '${AppConstants.baseUrl}/${league['code']}/summary?event=$gameId';
       try {
         final res = await _client
             .get(Uri.parse(url), headers: _headers)
             .timeout(const Duration(seconds: 6));
         if (res.statusCode == 200) {
           final data = json.decode(res.body) as Map<String, dynamic>;
-          final hasContent = data['header'] != null || data['plays'] != null ||
+          final hasContent = data['header'] != null ||
+              data['plays'] != null ||
               data['boxscore'] != null;
           if (hasContent) return _parseGameDetailEnhanced(data, gameId);
         }
-      } catch (_) { continue; }
+      } catch (_) {
+        continue;
+      }
     }
     return _getEmptyGameDetail(gameId);
   }
 
-  GameDetail _parseGameDetailEnhanced(Map<String, dynamic> data, String gameId) {
+  GameDetail _parseGameDetailEnhanced(
+      Map<String, dynamic> data, String gameId) {
     final playsRaw = data['plays']?['plays'] ?? data['plays'] ?? [];
     final playsData = playsRaw is List ? playsRaw : [];
 
@@ -1580,7 +1716,8 @@ class ApiService {
     for (final p in playsData) {
       final type = (p['type']?['text'] ?? '').toString().toLowerCase();
       final text = (p['text'] ?? '').toString();
-      if (!type.contains('goal') && !text.toLowerCase().contains('goal') &&
+      if (!type.contains('goal') &&
+          !text.toLowerCase().contains('goal') &&
           !text.toLowerCase().contains('scored')) continue;
 
       final goalInfo = _extractGoalInfo(text, p);
@@ -1591,9 +1728,14 @@ class ApiService {
           playerName: goalInfo['playerName'] ?? 'Unknown',
           minute: goalInfo['minute'] ?? 0,
           isHomeTeam: isHome,
-          addedTime: (p['clock']?['displayValue'] ?? '').toString().contains('+')
-              ? int.tryParse((p['clock']['displayValue'] as String).split('+').last.split("'").first)
-              : null,
+          addedTime:
+              (p['clock']?['displayValue'] ?? '').toString().contains('+')
+                  ? int.tryParse((p['clock']['displayValue'] as String)
+                      .split('+')
+                      .last
+                      .split("'")
+                      .first)
+                  : null,
           assistPlayerName: _extractAssistName(text),
           isPenalty: text.toLowerCase().contains('penalty'),
           isOwnGoal: text.toLowerCase().contains('own goal'),
@@ -1602,36 +1744,66 @@ class ApiService {
     }
 
     final competition = data['gameInfo']?['competition'] ?? {};
-    final homeTeamFull = (competition['competitors'] as List? ?? [])
-        .firstWhere((c) => c['homeAway'] == 'home', orElse: () => {})?['team']?['displayName'] ?? '';
-    final awayTeamFull = (competition['competitors'] as List? ?? [])
-        .firstWhere((c) => c['homeAway'] == 'away', orElse: () => {})?['team']?['displayName'] ?? '';
+    final homeTeamFull = (competition['competitors'] as List? ?? []).firstWhere(
+            (c) => c['homeAway'] == 'home',
+            orElse: () => {})?['team']?['displayName'] ??
+        '';
+    final awayTeamFull = (competition['competitors'] as List? ?? []).firstWhere(
+            (c) => c['homeAway'] == 'away',
+            orElse: () => {})?['team']?['displayName'] ??
+        '';
 
     final wpData = data['winprobability'] as List? ?? [];
-    final winProbs = wpData.map((wp) => WinProbability(
-      gameId: gameId,
-      quarter: wp['quarter'] ?? 0,
-      time: wp['time'] ?? '0:00',
-      awayWinPercentage: (wp['awayWinPercentage'] ?? 0.0).toDouble(),
-      homeWinPercentage: (wp['homeWinPercentage'] ?? 0.0).toDouble(),
-      awayScore: wp['awayScore'] ?? 0,
-      homeScore: wp['homeScore'] ?? 0,
-    )).toList();
+    final winProbs = wpData
+        .map((wp) => WinProbability(
+              gameId: gameId,
+              quarter: wp['quarter'] ?? 0,
+              time: wp['time'] ?? '0:00',
+              awayWinPercentage: (wp['awayWinPercentage'] ?? 0.0).toDouble(),
+              homeWinPercentage: (wp['homeWinPercentage'] ?? 0.0).toDouble(),
+              awayScore: wp['awayScore'] ?? 0,
+              homeScore: wp['homeScore'] ?? 0,
+            ))
+        .toList();
 
     final parsedPlays = <Play>[];
     for (final p in playsData) {
-      try { parsedPlays.add(Play.fromJson(p as Map<String, dynamic>)); } catch (_) {}
+      try {
+        parsedPlays.add(Play.fromJson(p as Map<String, dynamic>));
+      } catch (_) {}
     }
 
     return GameDetail(
       game: Game(
-        id: gameId, status: '', shortDetail: '',
-        awayTeam: TeamInfo(id: '', name: awayTeamFull, displayName: awayTeamFull, abbreviation: '', logo: '', color: '', alternateColor: '', record: ''),
-        homeTeam: TeamInfo(id: '', name: homeTeamFull, displayName: homeTeamFull, abbreviation: '', logo: '', color: '', alternateColor: '', record: ''),
-        awayScore: '', homeScore: '',
-        awayLineScores: [], homeLineScores: [],
+        id: gameId,
+        status: '',
+        shortDetail: '',
+        awayTeam: TeamInfo(
+            id: '',
+            name: awayTeamFull,
+            displayName: awayTeamFull,
+            abbreviation: '',
+            logo: '',
+            color: '',
+            alternateColor: '',
+            record: ''),
+        homeTeam: TeamInfo(
+            id: '',
+            name: homeTeamFull,
+            displayName: homeTeamFull,
+            abbreviation: '',
+            logo: '',
+            color: '',
+            alternateColor: '',
+            record: ''),
+        awayScore: '',
+        homeScore: '',
+        awayLineScores: [],
+        homeLineScores: [],
         venue: Venue(id: '', fullName: '', city: '', state: '', capacity: 0),
-        date: '', clock: '', period: '',
+        date: '',
+        clock: '',
+        period: '',
         goalScorers: goalScorers,
         awayTeamFullName: awayTeamFull,
         homeTeamFullName: homeTeamFull,
@@ -1653,7 +1825,10 @@ class ApiService {
     String? playerName;
     final playerObj = playData['player'];
     if (playerObj != null) {
-      playerName = (playerObj['displayName'] ?? playerObj['fullName'] ?? playerObj['name'])?.toString();
+      playerName = (playerObj['displayName'] ??
+              playerObj['fullName'] ??
+              playerObj['name'])
+          ?.toString();
     }
     if (playerName == null) {
       final lower = text.toLowerCase();
@@ -1665,7 +1840,10 @@ class ApiService {
       } else if (lower.contains(' goal')) {
         final words = text.split(' ');
         for (int i = 0; i < words.length; i++) {
-          if (words[i].toLowerCase() == 'goal' && i > 0) { playerName = words[i-1]; break; }
+          if (words[i].toLowerCase() == 'goal' && i > 0) {
+            playerName = words[i - 1];
+            break;
+          }
         }
       }
     }
@@ -1682,7 +1860,8 @@ class ApiService {
 
   String? _extractAssistName(String text) {
     for (final pattern in [
-      RegExp(r'assisted by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', caseSensitive: false),
+      RegExp(r'assisted by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)',
+          caseSensitive: false),
       RegExp(r'from\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', caseSensitive: false),
     ]) {
       final m = pattern.firstMatch(text);
@@ -1693,11 +1872,18 @@ class ApiService {
 
   bool _isHomeTeamGoal(String text, Map<String, dynamic> data) {
     try {
-      final competitors = data['gameInfo']?['competition']?['competitors'] as List? ?? [];
-      final homeName = competitors.firstWhere((c) => c['homeAway'] == 'home', orElse: () => {})?['team']?['displayName'] ?? '';
-      final awayName = competitors.firstWhere((c) => c['homeAway'] == 'away', orElse: () => {})?['team']?['displayName'] ?? '';
-      if (homeName.isNotEmpty && text.toLowerCase().contains(homeName.toLowerCase())) return true;
-      if (awayName.isNotEmpty && text.toLowerCase().contains(awayName.toLowerCase())) return false;
+      final competitors =
+          data['gameInfo']?['competition']?['competitors'] as List? ?? [];
+      final homeName = competitors.firstWhere((c) => c['homeAway'] == 'home',
+              orElse: () => {})?['team']?['displayName'] ??
+          '';
+      final awayName = competitors.firstWhere((c) => c['homeAway'] == 'away',
+              orElse: () => {})?['team']?['displayName'] ??
+          '';
+      if (homeName.isNotEmpty &&
+          text.toLowerCase().contains(homeName.toLowerCase())) return true;
+      if (awayName.isNotEmpty &&
+          text.toLowerCase().contains(awayName.toLowerCase())) return false;
     } catch (_) {}
     return false;
   }
@@ -1710,7 +1896,8 @@ class ApiService {
           .timeout(const Duration(seconds: 10));
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
-        final teamsData = data['sports']?[0]?['leagues']?[0]?['teams'] as List? ?? [];
+        final teamsData =
+            data['sports']?[0]?['leagues']?[0]?['teams'] as List? ?? [];
         return teamsData.map<TeamInfo>((t) {
           final team = t['team'];
           return TeamInfo(
@@ -1720,14 +1907,18 @@ class ApiService {
             abbreviation: team['abbreviation']?.toString() ?? '',
             logo: team['logo']?.toString() ?? '',
             color: '#${team['color']?.toString() ?? '000000'}',
-            alternateColor: '#${team['alternateColor']?.toString() ?? 'FFFFFF'}',
+            alternateColor:
+                '#${team['alternateColor']?.toString() ?? 'FFFFFF'}',
             record: (team['record']?['items'] as List? ?? []).isNotEmpty
-                ? (team['record']['items'].first['summary'] ?? '0-0-0').toString()
+                ? (team['record']['items'].first['summary'] ?? '0-0-0')
+                    .toString()
                 : '0-0-0',
           );
         }).toList();
       }
-    } catch (e) { print('getAllTeams: $e'); }
+    } catch (e) {
+      print('getAllTeams: $e');
+    }
     return [];
   }
 
@@ -1739,28 +1930,32 @@ class ApiService {
           .timeout(const Duration(seconds: 10));
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
-        return (data['athletes'] as List? ?? []).map<Player>((p) => Player(
-          id: p['id']?.toString() ?? '',
-          fullName: p['fullName']?.toString() ?? '',
-          displayName: p['displayName']?.toString() ?? '',
-          headshot: p['headshot']?.toString() ?? '',
-          jersey: p['jersey']?.toString() ?? '',
-          position: p['position']?['abbreviation']?.toString() ?? '',
-          teamId: teamId,
-          teamName: p['team']?['displayName']?.toString() ?? '',
-          height: p['height'] ?? 0,
-          weight: p['weight'] ?? 0,
-          age: p['age'] ?? 0,
-          college: p['college']?['name']?.toString() ?? '',
-          statistics: {},
-          injuryStatus: (p['injuries'] as List? ?? []).isNotEmpty
-              ? p['injuries'].first['status']?.toString() : null,
-        )).toList();
+        return (data['athletes'] as List? ?? [])
+            .map<Player>((p) => Player(
+                  id: p['id']?.toString() ?? '',
+                  fullName: p['fullName']?.toString() ?? '',
+                  displayName: p['displayName']?.toString() ?? '',
+                  headshot: p['headshot']?.toString() ?? '',
+                  jersey: p['jersey']?.toString() ?? '',
+                  position: p['position']?['abbreviation']?.toString() ?? '',
+                  teamId: teamId,
+                  teamName: p['team']?['displayName']?.toString() ?? '',
+                  height: p['height'] ?? 0,
+                  weight: p['weight'] ?? 0,
+                  age: p['age'] ?? 0,
+                  college: p['college']?['name']?.toString() ?? '',
+                  statistics: {},
+                  injuryStatus: (p['injuries'] as List? ?? []).isNotEmpty
+                      ? p['injuries'].first['status']?.toString()
+                      : null,
+                ))
+            .toList();
       }
-    } catch (e) { print('getTeamRoster: $e'); }
+    } catch (e) {
+      print('getTeamRoster: $e');
+    }
     return [];
   }
-
 
 // ─── PLAYER DETAILS ──────────────────────────────────────────────────────────
 
@@ -1808,7 +2003,7 @@ class ApiService {
       if (teamId.isNotEmpty) {
         final roster = await getTeamRoster(teamId, league);
         final match = roster.firstWhere(
-              (p) => p.id == playerId,
+          (p) => p.id == playerId,
           orElse: () => Player(
             id: playerId,
             fullName: '',
@@ -1853,14 +2048,16 @@ class ApiService {
       headshot = headshotData;
     }
 
-    final jersey = player['jersey']?.toString() ?? player['number']?.toString() ?? '';
+    final jersey =
+        player['jersey']?.toString() ?? player['number']?.toString() ?? '';
 
     // ─── Position ──────────────────────────────────────────────────────────────
     String position = '';
     final pos = player['position'];
     if (pos != null) {
       if (pos is Map) {
-        position = pos['abbreviation']?.toString() ?? pos['name']?.toString() ?? '';
+        position =
+            pos['abbreviation']?.toString() ?? pos['name']?.toString() ?? '';
       } else {
         position = pos.toString();
       }
@@ -1882,7 +2079,8 @@ class ApiService {
     final team = player['team'] as Map<String, dynamic>?;
     if (team != null) {
       teamId = team['id']?.toString() ?? '';
-      teamName = team['displayName']?.toString() ?? team['name']?.toString() ?? '';
+      teamName =
+          team['displayName']?.toString() ?? team['name']?.toString() ?? '';
     }
 
     // ─── Height ───────────────────────────────────────────────────────────────
@@ -1897,7 +2095,9 @@ class ApiService {
           height = int.tryParse(rawValue) ?? 0;
         }
       } else {
-        height = int.tryParse(rawHeight.toString().replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+        height = int.tryParse(
+                rawHeight.toString().replaceAll(RegExp(r'[^0-9]'), '')) ??
+            0;
       }
     }
 
@@ -1913,7 +2113,9 @@ class ApiService {
           weight = int.tryParse(rawValue) ?? 0;
         }
       } else {
-        weight = int.tryParse(rawWeight.toString().replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+        weight = int.tryParse(
+                rawWeight.toString().replaceAll(RegExp(r'[^0-9]'), '')) ??
+            0;
       }
     }
 
@@ -1922,7 +2124,10 @@ class ApiService {
     final rawAge = player['age'];
     if (rawAge != null) {
       if (rawAge is Map) {
-        age = int.tryParse(rawAge['value']?.toString() ?? rawAge['displayValue']?.toString() ?? '0') ?? 0;
+        age = int.tryParse(rawAge['value']?.toString() ??
+                rawAge['displayValue']?.toString() ??
+                '0') ??
+            0;
       } else {
         age = int.tryParse(rawAge.toString()) ?? 0;
       }
@@ -1955,7 +2160,8 @@ class ApiService {
       if (rawBirthDate is Map) {
         birthDate = rawBirthDate['displayValue']?.toString() ??
             rawBirthDate['value']?.toString() ??
-            rawBirthDate['date']?.toString() ?? '';
+            rawBirthDate['date']?.toString() ??
+            '';
       } else {
         birthDate = rawBirthDate.toString();
       }
@@ -1967,7 +2173,8 @@ class ApiService {
     if (rawExperience != null) {
       if (rawExperience is Map) {
         experience = rawExperience['displayValue']?.toString() ??
-            rawExperience['value']?.toString() ?? '';
+            rawExperience['value']?.toString() ??
+            '';
       } else {
         experience = rawExperience.toString();
       }
@@ -2005,7 +2212,8 @@ class ApiService {
     final collegeData = player['college'] as Map<String, dynamic>?;
     if (collegeData != null) {
       college = collegeData['displayName']?.toString() ??
-          collegeData['name']?.toString() ?? '';
+          collegeData['name']?.toString() ??
+          '';
     }
 
     // ─── Statistics ──────────────────────────────────────────────────────────
@@ -2082,7 +2290,8 @@ class ApiService {
     if (marketData != null) {
       final displayValue = marketData['displayValue']?.toString() ?? '';
       if (displayValue.isNotEmpty) {
-        marketValue = double.tryParse(displayValue.replaceAll(RegExp(r'[^0-9.]'), ''));
+        marketValue =
+            double.tryParse(displayValue.replaceAll(RegExp(r'[^0-9.]'), ''));
       }
     }
 
@@ -2152,13 +2361,15 @@ class ApiService {
     final apiKey = AppConstants.apiFootballKey;
     if (apiKey.isEmpty) return null;
 
-    final seasonYear = AppConstants.apiFootballSeasonFor(leagueCode, season: season);
+    final seasonYear =
+        AppConstants.apiFootballSeasonFor(leagueCode, season: season);
     final cacheKey =
         'af_player_stats_${playerName.toLowerCase().trim()}_${leagueId ?? 'any'}_$seasonYear';
 
     final cached = await _cache.getCachedPlayerSeasonStats(cacheKey);
     if (cached != null) {
-      print('[PlayerStats] Cache HIT for $playerName ($leagueCode $seasonYear)');
+      print(
+          '[PlayerStats] Cache HIT for $playerName ($leagueCode $seasonYear)');
       return cached;
     }
 
@@ -2235,15 +2446,15 @@ class ApiService {
   /// the list `_searchPlayersApiFootball` already uses successfully, plus a
   /// few extra competitions so more players resolve on the first try.
   static const List<int> _apiFootballFallbackLeagueIds = [
-    39,  // Premier League
+    39, // Premier League
     140, // La Liga
     135, // Serie A
-    78,  // Bundesliga
-    61,  // Ligue 1
-    2,   // Champions League
-    94,  // Primeira Liga
-    88,  // Eredivisie
-    71,  // Brasileirão
+    78, // Bundesliga
+    61, // Ligue 1
+    2, // Champions League
+    94, // Primeira Liga
+    88, // Eredivisie
+    71, // Brasileirão
     253, // MLS
     307, // Saudi Pro League — see note on AppConstants.apiFootballLeagueIds
   ];
@@ -2302,23 +2513,28 @@ class ApiService {
         return null;
       }
       if (res.statusCode != 200) {
-        print('[PlayerStats] HTTP ${res.statusCode} for "$searchTerm" (league=$leagueId)');
+        print(
+            '[PlayerStats] HTTP ${res.statusCode} for "$searchTerm" (league=$leagueId)');
         return null;
       }
 
       final data = json.decode(res.body) as Map<String, dynamic>;
       final errors = data['errors'];
-      if ((errors is Map && errors.isNotEmpty) || (errors is List && errors.isNotEmpty)) {
-        print('[PlayerStats] API error for "$searchTerm" (league=$leagueId): $errors');
+      if ((errors is Map && errors.isNotEmpty) ||
+          (errors is List && errors.isNotEmpty)) {
+        print(
+            '[PlayerStats] API error for "$searchTerm" (league=$leagueId): $errors');
         return null;
       }
 
       final response = data['response'] as List? ?? [];
       if (response.isEmpty) return null;
 
-      return _bestApiFootballPlayerMatch(response, fullName: fullName, teamName: teamName);
+      return _bestApiFootballPlayerMatch(response,
+          fullName: fullName, teamName: teamName);
     } catch (e) {
-      print('[PlayerStats] Error searching "$searchTerm" (league=$leagueId): $e');
+      print(
+          '[PlayerStats] Error searching "$searchTerm" (league=$leagueId): $e');
       return null;
     }
   }
@@ -2330,10 +2546,10 @@ class ApiService {
   /// Returns null if nothing clears the minimum confidence bar, so callers
   /// never attach the wrong player's numbers.
   Map<String, dynamic>? _bestApiFootballPlayerMatch(
-      List response, {
-        required String fullName,
-        String? teamName,
-      }) {
+    List response, {
+    required String fullName,
+    String? teamName,
+  }) {
     final normalizedFull = fullName.toLowerCase().trim();
     final normalizedTeam = teamName?.toLowerCase().trim() ?? '';
 
@@ -2405,7 +2621,8 @@ class ApiService {
     // A team-name hit alone, or a partial-name hit alone, is no longer
     // enough — we'd rather return nothing and let the caller fall back to
     // known-good data than silently attach a stranger's numbers.
-    final confidentMatch = bestIsExactName || (bestScore >= 2 && bestHasTeamMatch);
+    final confidentMatch =
+        bestIsExactName || (bestScore >= 2 && bestHasTeamMatch);
     if (!confidentMatch) return null;
     return bestEntry;
   }
@@ -2415,7 +2632,8 @@ class ApiService {
   /// that season) into the flat key/value map the UI reads. When a search
   /// wasn't league-scoped and returns rows for multiple competitions, the
   /// row with the most appearances is used as the "main" season line.
-  Map<String, dynamic>? _parseApiFootballPlayerStatistics(Map<String, dynamic> entry) {
+  Map<String, dynamic>? _parseApiFootballPlayerStatistics(
+      Map<String, dynamic> entry) {
     final statsList = entry['statistics'] as List? ?? [];
     if (statsList.isEmpty) return null;
 
@@ -2425,7 +2643,9 @@ class ApiService {
       for (final s in statsList) {
         if (s is! Map) continue;
         final games = s['games'] as Map<String, dynamic>?;
-        final apps = ((games?['appearences'] ?? games?['appearances'] ?? 0) as num?) ?? 0;
+        final apps =
+            ((games?['appearences'] ?? games?['appearances'] ?? 0) as num?) ??
+                0;
         if (apps.toInt() > bestApps) {
           bestApps = apps.toInt();
           chosen = s as Map<String, dynamic>;
@@ -2445,7 +2665,8 @@ class ApiService {
     final team = chosen['team'] as Map<String, dynamic>?;
     final league = chosen['league'] as Map<String, dynamic>?;
 
-    final appearances = ((games['appearences'] ?? games['appearances'] ?? 0) as num?) ?? 0;
+    final appearances =
+        ((games['appearences'] ?? games['appearances'] ?? 0) as num?) ?? 0;
     final minutes = ((games['minutes'] ?? 0) as num?) ?? 0;
     final totalGoals = ((goals['total'] ?? 0) as num?) ?? 0;
     final totalAssists = ((goals['assists'] ?? 0) as num?) ?? 0;
@@ -2456,7 +2677,8 @@ class ApiService {
 
     String? goalsPer90;
     if (minutes.toDouble() > 0) {
-      goalsPer90 = ((totalGoals.toDouble() / minutes.toDouble()) * 90).toStringAsFixed(2);
+      goalsPer90 = ((totalGoals.toDouble() / minutes.toDouble()) * 90)
+          .toStringAsFixed(2);
     }
 
     final passAccuracyRaw = passes['accuracy'];
@@ -2515,14 +2737,15 @@ class ApiService {
     return '';
   }
 
-  Future<MatchLineup?> getMatchLineup(String gameId, {String? leagueCode}) async {
+  Future<MatchLineup?> getMatchLineup(String gameId,
+      {String? leagueCode}) async {
     // First, try the specific league if provided, then all others
     List<Map<String, String>> leaguesToTry = [];
 
     // If a league code is provided, try it first
     if (leagueCode != null && leagueCode.isNotEmpty) {
       final league = AppConstants.allLeagues.firstWhere(
-            (l) => l['code'] == leagueCode,
+        (l) => l['code'] == leagueCode,
         orElse: () => {'code': leagueCode, 'name': leagueCode, 'flag': '⚽'},
       );
       leaguesToTry.add(league);
@@ -2542,7 +2765,8 @@ class ApiService {
 
     for (final league in leaguesToTry) {
       // Use /summary endpoint - this contains the ratings data
-      final url = '${AppConstants.baseUrl}/${league['code']}/summary?event=$gameId';
+      final url =
+          '${AppConstants.baseUrl}/${league['code']}/summary?event=$gameId';
       print('[Lineup] Trying: $url');
 
       try {
@@ -2589,7 +2813,8 @@ class ApiService {
           if (teamData is! Map) continue;
 
           final isHome = teamData['homeAway']?.toString() == 'home';
-          print('[Lineup] Parsing ${isHome ? "HOME" : "AWAY"} team from players');
+          print(
+              '[Lineup] Parsing ${isHome ? "HOME" : "AWAY"} team from players');
 
           final formation = teamData['formation']?.toString() ?? '';
           if (isHome && formation.isNotEmpty) homeFormation = formation;
@@ -2605,13 +2830,14 @@ class ApiService {
             for (final athleteData in athletes) {
               if (athleteData is! Map) continue;
 
-              final athlete = athleteData['athlete'] as Map<String, dynamic>? ?? athleteData;
+              final athlete = athleteData['athlete'] as Map<String, dynamic>? ??
+                  athleteData;
 
               final id = athlete['id']?.toString() ?? '';
-              final fullName = athlete['displayName']?.toString()
-                  ?? athlete['fullName']?.toString()
-                  ?? athlete['name']?.toString()
-                  ?? '';
+              final fullName = athlete['displayName']?.toString() ??
+                  athlete['fullName']?.toString() ??
+                  athlete['name']?.toString() ??
+                  '';
               if (fullName.isEmpty) continue;
 
               final shortName = athlete['shortName']?.toString() ??
@@ -2620,9 +2846,10 @@ class ApiService {
               final number = athlete['jersey']?.toString() ??
                   athlete['number']?.toString() ??
                   '';
-              final position = athlete['position']?['abbreviation']?.toString()
-                  ?? athlete['position']?.toString()
-                  ?? '';
+              final position =
+                  athlete['position']?['abbreviation']?.toString() ??
+                      athlete['position']?.toString() ??
+                      '';
 
               bool starter = athleteData['starter'] == true ||
                   athlete['starter'] == true ||
@@ -2637,9 +2864,12 @@ class ApiService {
                 final stats = athleteData['stats'] as List? ?? [];
                 for (final stat in stats) {
                   if (stat is Map) {
-                    final statName = stat['name']?.toString().toLowerCase() ?? '';
-                    final displayName = stat['displayName']?.toString().toLowerCase() ?? '';
-                    final abbreviation = stat['abbreviation']?.toString().toLowerCase() ?? '';
+                    final statName =
+                        stat['name']?.toString().toLowerCase() ?? '';
+                    final displayName =
+                        stat['displayName']?.toString().toLowerCase() ?? '';
+                    final abbreviation =
+                        stat['abbreviation']?.toString().toLowerCase() ?? '';
 
                     if (statName.contains('rating') ||
                         statName == 'player rating' ||
@@ -2655,7 +2885,8 @@ class ApiService {
                         final parsed = double.tryParse(val);
                         if (parsed != null && parsed > 0 && parsed <= 10.5) {
                           rating = parsed;
-                          print('[Lineup] ✅ Found rating for $fullName: $rating');
+                          print(
+                              '[Lineup] ✅ Found rating for $fullName: $rating');
                           break;
                         }
                       }
@@ -2666,17 +2897,20 @@ class ApiService {
 
               // Check direct rating fields
               if (rating == null && athleteData['rating'] != null) {
-                final parsed = double.tryParse(athleteData['rating'].toString());
+                final parsed =
+                    double.tryParse(athleteData['rating'].toString());
                 if (parsed != null && parsed > 0 && parsed <= 10.5) {
                   rating = parsed;
-                  print('[Lineup] ✅ Found rating for $fullName: $rating (direct)');
+                  print(
+                      '[Lineup] ✅ Found rating for $fullName: $rating (direct)');
                 }
               }
               if (rating == null && athlete['rating'] != null) {
                 final parsed = double.tryParse(athlete['rating'].toString());
                 if (parsed != null && parsed > 0 && parsed <= 10.5) {
                   rating = parsed;
-                  print('[Lineup] ✅ Found rating for $fullName: $rating (athlete)');
+                  print(
+                      '[Lineup] ✅ Found rating for $fullName: $rating (athlete)');
                 }
               }
 
@@ -2691,7 +2925,8 @@ class ApiService {
                     '';
               }
               if (headshot.isEmpty && id.isNotEmpty) {
-                headshot = 'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$id.png&w=96&h=70&cb=1';
+                headshot =
+                    'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$id.png&w=96&h=70&cb=1';
               }
 
               final player = LineupPlayer(
@@ -2729,7 +2964,8 @@ class ApiService {
           final teamName = team?['displayName']?.toString() ??
               team?['name']?.toString() ??
               'Unknown';
-          print('[Lineup] Parsing ${isHome ? "HOME" : "AWAY"} team from teams: $teamName');
+          print(
+              '[Lineup] Parsing ${isHome ? "HOME" : "AWAY"} team from teams: $teamName');
 
           final formation = teamEntry['formation']?.toString() ?? '';
           if (isHome && formation.isNotEmpty) homeFormation = formation;
@@ -2745,13 +2981,14 @@ class ApiService {
             for (final athleteData in athletes) {
               if (athleteData is! Map) continue;
 
-              final athlete = athleteData['athlete'] as Map<String, dynamic>? ?? athleteData;
+              final athlete = athleteData['athlete'] as Map<String, dynamic>? ??
+                  athleteData;
 
               final id = athlete['id']?.toString() ?? '';
-              final fullName = athlete['displayName']?.toString()
-                  ?? athlete['fullName']?.toString()
-                  ?? athlete['name']?.toString()
-                  ?? '';
+              final fullName = athlete['displayName']?.toString() ??
+                  athlete['fullName']?.toString() ??
+                  athlete['name']?.toString() ??
+                  '';
               if (fullName.isEmpty) continue;
 
               final shortName = athlete['shortName']?.toString() ??
@@ -2760,9 +2997,10 @@ class ApiService {
               final number = athlete['jersey']?.toString() ??
                   athlete['number']?.toString() ??
                   '';
-              final position = athlete['position']?['abbreviation']?.toString()
-                  ?? athlete['position']?.toString()
-                  ?? '';
+              final position =
+                  athlete['position']?['abbreviation']?.toString() ??
+                      athlete['position']?.toString() ??
+                      '';
 
               bool starter = athleteData['starter'] == true ||
                   athlete['starter'] == true ||
@@ -2776,8 +3014,10 @@ class ApiService {
                 final stats = athleteData['stats'] as List? ?? [];
                 for (final stat in stats) {
                   if (stat is Map) {
-                    final statName = stat['name']?.toString().toLowerCase() ?? '';
-                    final displayName = stat['displayName']?.toString().toLowerCase() ?? '';
+                    final statName =
+                        stat['name']?.toString().toLowerCase() ?? '';
+                    final displayName =
+                        stat['displayName']?.toString().toLowerCase() ?? '';
 
                     if (statName.contains('rating') ||
                         statName == 'player rating' ||
@@ -2790,7 +3030,8 @@ class ApiService {
                         final parsed = double.tryParse(val);
                         if (parsed != null && parsed > 0 && parsed <= 10.5) {
                           rating = parsed;
-                          print('[Lineup] ✅ Found rating for $fullName: $rating');
+                          print(
+                              '[Lineup] ✅ Found rating for $fullName: $rating');
                           break;
                         }
                       }
@@ -2800,7 +3041,8 @@ class ApiService {
               }
 
               if (rating == null && athleteData['rating'] != null) {
-                final parsed = double.tryParse(athleteData['rating'].toString());
+                final parsed =
+                    double.tryParse(athleteData['rating'].toString());
                 if (parsed != null && parsed > 0 && parsed <= 10.5) {
                   rating = parsed;
                 }
@@ -2823,7 +3065,8 @@ class ApiService {
                     '';
               }
               if (headshot.isEmpty && id.isNotEmpty) {
-                headshot = 'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$id.png&w=96&h=70&cb=1';
+                headshot =
+                    'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$id.png&w=96&h=70&cb=1';
               }
 
               final player = LineupPlayer(
@@ -2872,8 +3115,10 @@ class ApiService {
 
             final p = _parseLineupAthlete(entry, isHome: isHome);
             if (p != null) {
-              if (isHome) homePlayers.add(p);
-              else awayPlayers.add(p);
+              if (isHome)
+                homePlayers.add(p);
+              else
+                awayPlayers.add(p);
             }
           }
         }
@@ -2885,12 +3130,17 @@ class ApiService {
         homePlayers = _sortLineup(homePlayers);
         awayPlayers = _sortLineup(awayPlayers);
 
-        print('[Lineup] ✅ SUCCESS: Found ${homePlayers.length} home players (${homePlayers.where((p) => p.isStarter).length} starters), ${awayPlayers.length} away players (${awayPlayers.where((p) => p.isStarter).length} starters)');
+        print(
+            '[Lineup] ✅ SUCCESS: Found ${homePlayers.length} home players (${homePlayers.where((p) => p.isStarter).length} starters), ${awayPlayers.length} away players (${awayPlayers.where((p) => p.isStarter).length} starters)');
 
-        final homeWithRatings = homePlayers.where((p) => p.rating != null).length;
-        final awayWithRatings = awayPlayers.where((p) => p.rating != null).length;
-        print('[Lineup] Home players with ratings: $homeWithRatings/${homePlayers.length}');
-        print('[Lineup] Away players with ratings: $awayWithRatings/${awayPlayers.length}');
+        final homeWithRatings =
+            homePlayers.where((p) => p.rating != null).length;
+        final awayWithRatings =
+            awayPlayers.where((p) => p.rating != null).length;
+        print(
+            '[Lineup] Home players with ratings: $homeWithRatings/${homePlayers.length}');
+        print(
+            '[Lineup] Away players with ratings: $awayWithRatings/${awayPlayers.length}');
 
         if (homePlayers.isNotEmpty || awayPlayers.isNotEmpty) {
           return MatchLineup(
@@ -2914,24 +3164,22 @@ class ApiService {
     if (raw == null) return null;
     final a = raw as Map<String, dynamic>;
 
-    final athlete = (a['athlete'] is Map)
-        ? a['athlete'] as Map<String, dynamic>
-        : a;
+    final athlete =
+        (a['athlete'] is Map) ? a['athlete'] as Map<String, dynamic> : a;
 
     final id = athlete['id']?.toString() ?? '';
-    final fullName = athlete['displayName']?.toString()
-        ?? athlete['fullName']?.toString()
-        ?? athlete['shortName']?.toString()
-        ?? '';
+    final fullName = athlete['displayName']?.toString() ??
+        athlete['fullName']?.toString() ??
+        athlete['shortName']?.toString() ??
+        '';
     if (fullName.isEmpty) return null;
 
     final shortName =
-    (athlete['shortName'] ?? athlete['displayName'] ?? '').toString();
+        (athlete['shortName'] ?? athlete['displayName'] ?? '').toString();
     final number = (athlete['jersey'] ?? athlete['number'] ?? '').toString();
-    final posAbbr =
-        athlete['position']?['abbreviation']?.toString()
-            ?? athlete['position']?.toString()
-            ?? '';
+    final posAbbr = athlete['position']?['abbreviation']?.toString() ??
+        athlete['position']?.toString() ??
+        '';
 
     // ─── Starter detection ──────────────────────────────────────────────────
     bool starter = false;
@@ -2942,7 +3190,8 @@ class ApiService {
       starter = true;
     } else if (a['starting'] == true || a['starting'] == 'true') {
       starter = true;
-    } else if (a['statistics'] != null && (a['statistics'] as List).isNotEmpty) {
+    } else if (a['statistics'] != null &&
+        (a['statistics'] as List).isNotEmpty) {
       final stats = a['statistics'] as List? ?? [];
       for (final statGroup in stats) {
         if (statGroup is Map) {
@@ -2979,18 +3228,21 @@ class ApiService {
       for (final stat in stats) {
         if (stat is Map) {
           final statName = stat['name']?.toString().toLowerCase() ?? '';
-          final displayName = stat['displayName']?.toString().toLowerCase() ?? '';
+          final displayName =
+              stat['displayName']?.toString().toLowerCase() ?? '';
 
           if (statName.contains('rating') ||
               statName == 'player rating' ||
               statName == 'matchrating' ||
               displayName.contains('rating')) {
             final val = stat['displayValue']?.toString() ??
-                stat['value']?.toString() ?? '';
+                stat['value']?.toString() ??
+                '';
             if (val.isNotEmpty) {
               rating = double.tryParse(val);
               if (rating != null) {
-                print('[Lineup] ✅ Found rating for $fullName: $rating (from stats array)');
+                print(
+                    '[Lineup] ✅ Found rating for $fullName: $rating (from stats array)');
                 break;
               }
             }
@@ -3006,11 +3258,14 @@ class ApiService {
         if (stat is Map) {
           final statName = stat['name']?.toString().toLowerCase() ?? '';
           if (statName.contains('rating')) {
-            final val = stat['displayValue']?.toString() ?? stat['value']?.toString() ?? '';
+            final val = stat['displayValue']?.toString() ??
+                stat['value']?.toString() ??
+                '';
             if (val.isNotEmpty) {
               rating = double.tryParse(val);
               if (rating != null) {
-                print('[Lineup] ✅ Found rating for $fullName: $rating (from athlete stats)');
+                print(
+                    '[Lineup] ✅ Found rating for $fullName: $rating (from athlete stats)');
                 break;
               }
             }
@@ -3030,11 +3285,14 @@ class ApiService {
             if (stat is Map) {
               final statName = stat['name']?.toString().toLowerCase() ?? '';
               if (statName.contains('rating')) {
-                final val = stat['displayValue']?.toString() ?? stat['value']?.toString() ?? '';
+                final val = stat['displayValue']?.toString() ??
+                    stat['value']?.toString() ??
+                    '';
                 if (val.isNotEmpty) {
                   rating = double.tryParse(val);
                   if (rating != null) {
-                    print('[Lineup] ✅ Found rating for $fullName: $rating (from statistics group)');
+                    print(
+                        '[Lineup] ✅ Found rating for $fullName: $rating (from statistics group)');
                     break;
                   }
                 }
@@ -3052,11 +3310,14 @@ class ApiService {
                 if (stat is Map) {
                   final statName = stat['name']?.toString().toLowerCase() ?? '';
                   if (statName.contains('rating')) {
-                    final val = stat['displayValue']?.toString() ?? stat['value']?.toString() ?? '';
+                    final val = stat['displayValue']?.toString() ??
+                        stat['value']?.toString() ??
+                        '';
                     if (val.isNotEmpty) {
                       rating = double.tryParse(val);
                       if (rating != null) {
-                        print('[Lineup] ✅ Found rating for $fullName: $rating (from athlete in statistics group)');
+                        print(
+                            '[Lineup] ✅ Found rating for $fullName: $rating (from athlete in statistics group)');
                         break;
                       }
                     }
@@ -3103,10 +3364,12 @@ class ApiService {
     if (rawHs is String) {
       headshot = rawHs;
     } else if (rawHs is Map) {
-      headshot = (rawHs['href'] ?? rawHs['full'] ?? rawHs['default'] ?? '').toString();
+      headshot =
+          (rawHs['href'] ?? rawHs['full'] ?? rawHs['default'] ?? '').toString();
     }
     if (headshot.isEmpty && id.isNotEmpty) {
-      headshot = 'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$id.png&w=96&h=70&cb=1';
+      headshot =
+          'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$id.png&w=96&h=70&cb=1';
     }
 
     return LineupPlayer(
@@ -3157,14 +3420,36 @@ class ApiService {
   List<LineupPlayer> _sortLineup(List<LineupPlayer> players) {
     int posOrder(String pos) {
       switch (pos.toUpperCase()) {
-        case 'GK': return 0;
-        case 'CB': case 'LB': case 'RB': case 'LWB': case 'RWB':
-        case 'D': case 'DEF': return 1;
-        case 'CDM': case 'CM': case 'CAM': case 'LM': case 'RM':
-        case 'M': case 'MF': case 'MID': return 2;
-        case 'LW': case 'RW': case 'SS': case 'ST': case 'CF':
-        case 'F': case 'FW': case 'ATT': return 3;
-        default: return 4;
+        case 'GK':
+          return 0;
+        case 'CB':
+        case 'LB':
+        case 'RB':
+        case 'LWB':
+        case 'RWB':
+        case 'D':
+        case 'DEF':
+          return 1;
+        case 'CDM':
+        case 'CM':
+        case 'CAM':
+        case 'LM':
+        case 'RM':
+        case 'M':
+        case 'MF':
+        case 'MID':
+          return 2;
+        case 'LW':
+        case 'RW':
+        case 'SS':
+        case 'ST':
+        case 'CF':
+        case 'F':
+        case 'FW':
+        case 'ATT':
+          return 3;
+        default:
+          return 4;
       }
     }
 
@@ -3199,7 +3484,8 @@ class ApiService {
     final s = raw.toLowerCase().trim();
     if (_ratingKeyNames.contains(s)) return true;
     // avoid over-matching unrelated fields like "ratingCount" / "ratingsUrl"
-    return s == 'rating' || (s.contains('rating') && !s.contains('count') && !s.contains('url'));
+    return s == 'rating' ||
+        (s.contains('rating') && !s.contains('count') && !s.contains('url'));
   }
 
   /// A sane numeric range for ESPN-style 0–10 (or occasionally 0–100) match
@@ -3223,7 +3509,9 @@ class ApiService {
       final positionalNames = keys ?? labels;
       final statsArr = node['stats'];
       if (positionalNames != null && statsArr is List) {
-        for (int i = 0; i < positionalNames.length && i < statsArr.length; i++) {
+        for (int i = 0;
+            i < positionalNames.length && i < statsArr.length;
+            i++) {
           if (_looksLikeRatingKey(positionalNames[i].toString())) {
             final v = double.tryParse(statsArr[i].toString());
             if (v != null && _isPlausibleRating(v)) return v;
@@ -3232,15 +3520,22 @@ class ApiService {
       }
 
       // 2. Named-map shape: {"name"/"abbreviation"/"displayName": "...", "displayValue"/"value": "..."}
-      final nameKey = (node['name'] ?? node['abbreviation'] ?? node['displayName'])?.toString();
+      final nameKey =
+          (node['name'] ?? node['abbreviation'] ?? node['displayName'])
+              ?.toString();
       if (nameKey != null && _looksLikeRatingKey(nameKey)) {
-        final v = double.tryParse((node['displayValue'] ?? node['value'] ?? '').toString());
+        final v = double.tryParse(
+            (node['displayValue'] ?? node['value'] ?? '').toString());
         if (v != null && _isPlausibleRating(v)) return v;
       }
 
       // 3. Direct field on this map, e.g. {"rating": "7.4"} or {"playerRating": 7.4}
       for (final k in node.keys) {
-        if (k is String && _looksLikeRatingKey(k) && node[k] != null && node[k] is! Map && node[k] is! List) {
+        if (k is String &&
+            _looksLikeRatingKey(k) &&
+            node[k] != null &&
+            node[k] is! Map &&
+            node[k] is! List) {
           final v = double.tryParse(node[k].toString());
           if (v != null && _isPlausibleRating(v)) return v;
         }
@@ -3297,11 +3592,13 @@ class ApiService {
         articles = data['headlines'] as List;
       } else if (data['items'] is List && (data['items'] as List).isNotEmpty) {
         articles = data['items'] as List;
-      } else if (data['articles'] is List && (data['articles'] as List).isNotEmpty) {
+      } else if (data['articles'] is List &&
+          (data['articles'] as List).isNotEmpty) {
         articles = data['articles'] as List;
       } else if (data['news'] is List && (data['news'] as List).isNotEmpty) {
         articles = data['news'] as List;
-      } else if (data['results'] is List && (data['results'] as List).isNotEmpty) {
+      } else if (data['results'] is List &&
+          (data['results'] as List).isNotEmpty) {
         articles = data['results'] as List;
       }
 
@@ -3328,7 +3625,9 @@ class ApiService {
         final imgMap = img as Map<String, dynamic>;
         final name = (imgMap['name'] ?? '').toString().toLowerCase();
         final caption = (imgMap['caption'] ?? imgMap['title'] ?? '').toString();
-        if (name.contains('header') || name.contains('feature') || name.contains('story')) {
+        if (name.contains('header') ||
+            name.contains('feature') ||
+            name.contains('story')) {
           best = imgMap;
           imageCaption = caption;
           break;
@@ -3339,7 +3638,10 @@ class ApiService {
         for (final img in imagesList) {
           final imgMap = img as Map<String, dynamic>;
           final w = (imgMap['width'] as num?)?.toInt() ?? 0;
-          if (w > maxWidth) { maxWidth = w; best = imgMap; }
+          if (w > maxWidth) {
+            maxWidth = w;
+            best = imgMap;
+          }
         }
         if (best != null) {
           imageCaption = (best['caption'] ?? best['title'] ?? '').toString();
@@ -3357,19 +3659,19 @@ class ApiService {
       author = a['byline'].toString();
     } else if (a['author'] is Map) {
       final auth = a['author'] as Map;
-      author = auth['displayName']?.toString()
-          ?? auth['fullName']?.toString()
-          ?? auth['name']?.toString()
-          ?? 'ESPN';
+      author = auth['displayName']?.toString() ??
+          auth['fullName']?.toString() ??
+          auth['name']?.toString() ??
+          'ESPN';
     }
 
     List<String> categories = [];
     if (a['categories'] is List) {
       for (final c in a['categories'] as List) {
         if (c is Map) {
-          final name = c['description']?.toString()
-              ?? c['name']?.toString()
-              ?? c['displayName']?.toString();
+          final name = c['description']?.toString() ??
+              c['name']?.toString() ??
+              c['displayName']?.toString();
           if (name != null && name.isNotEmpty) categories.add(name);
         } else {
           categories.add(c.toString());
@@ -3381,8 +3683,10 @@ class ApiService {
     String? videoUrl;
     if (a['links'] is Map) {
       final links = a['links'] as Map;
-      videoUrl = (links['source'] is Map ? links['source']['href']?.toString() : null)
-          ?? (links['video'] is Map ? links['video']['href']?.toString() : null);
+      videoUrl = (links['source'] is Map
+              ? links['source']['href']?.toString()
+              : null) ??
+          (links['video'] is Map ? links['video']['href']?.toString() : null);
     }
     if (videoUrl == null && a['video'] is Map) {
       videoUrl = (a['video'] as Map)['url']?.toString();
@@ -3391,23 +3695,32 @@ class ApiService {
     String? webUrl;
     if (a['links'] is Map) {
       final links = a['links'] as Map;
-      webUrl = (links['web'] is Map ? links['web']['href']?.toString() : null)
-          ?? (links['mobile'] is Map ? links['mobile']['href']?.toString() : null)
-          ?? (links['app'] is Map ? links['app']['href']?.toString() : null);
+      webUrl =
+          (links['web'] is Map ? links['web']['href']?.toString() : null) ??
+              (links['mobile'] is Map
+                  ? links['mobile']['href']?.toString()
+                  : null) ??
+              (links['app'] is Map ? links['app']['href']?.toString() : null);
     }
 
     if (webUrl != null && !webUrl.startsWith('http')) {
       webUrl = 'https://$webUrl';
     }
 
-    final publishedAt = (a['published'] ?? a['date'] ?? a['pubDate'] ?? a['createdAt'] ?? '').toString();
-    final description = (a['description'] ?? a['summary'] ?? a['abstract'] ?? '').toString();
+    final publishedAt =
+        (a['published'] ?? a['date'] ?? a['pubDate'] ?? a['createdAt'] ?? '')
+            .toString();
+    final description =
+        (a['description'] ?? a['summary'] ?? a['abstract'] ?? '').toString();
     final body = (a['body'] ?? a['content'] ?? a['story'] ?? '').toString();
     final type = (a['type'] ?? 'story').toString().toLowerCase();
 
     return NewsArticle(
-      id: a['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
-      headline: a['headline']?.toString() ?? a['title']?.toString() ?? 'Football News',
+      id: a['id']?.toString() ??
+          DateTime.now().millisecondsSinceEpoch.toString(),
+      headline: a['headline']?.toString() ??
+          a['title']?.toString() ??
+          'Football News',
       description: description,
       body: body,
       imageUrl: imageUrl,
@@ -3427,8 +3740,6 @@ class ApiService {
     return firstBatch;
   }
 
-
-
 // ─── SEARCH METHODS ─────────────────────────────────────────────────────────────
 
   /// Search for players, teams, and leagues using ESPN's API
@@ -3441,7 +3752,6 @@ class ApiService {
 
   /// Search for players, teams, and leagues using ESPN's API
 // ─── SEARCH METHODS ─────────────────────────────────────────────────────────────
-
 
 // ─── SEARCH METHODS USING API-FOOTBALL ──────────────────────────────────────
 
@@ -3478,7 +3788,8 @@ class ApiService {
       //    2024-season restriction misses: other leagues, players who moved
       //    since 2024, etc.) ────────────────────────────────────────────────
       if (players.length < 15) {
-        final seenNames = players.map((p) => p.displayName.toLowerCase()).toSet();
+        final seenNames =
+            players.map((p) => p.displayName.toLowerCase()).toSet();
         final sportsDbResults = await _searchPlayersSportsDb(lowerQuery);
         for (final p in sportsDbResults) {
           if (players.length >= 30) break;
@@ -3489,7 +3800,8 @@ class ApiService {
       }
       print('[Search] Found ${players.length} players total');
 
-      print('[Search] Total: ${players.length + teams.length + leagues.length} results (players: ${players.length}, teams: ${teams.length}, leagues: ${leagues.length})');
+      print(
+          '[Search] Total: ${players.length + teams.length + leagues.length} results (players: ${players.length}, teams: ${teams.length}, leagues: ${leagues.length})');
 
       return SearchResponse(
         players: players,
@@ -3579,7 +3891,8 @@ class ApiService {
           String leagueName = '';
           String leagueCode = '';
           for (final league in AppConstants.allLeagues) {
-            if (name.toLowerCase().contains(league['name']!.toLowerCase().split(' ').first.toLowerCase())) {
+            if (name.toLowerCase().contains(
+                league['name']!.toLowerCase().split(' ').first.toLowerCase())) {
               leagueName = league['name']!;
               leagueCode = league['code']!;
               break;
@@ -3654,7 +3967,6 @@ class ApiService {
     return null;
   }
 
-
   // ─── THESPORTSDB INTEGRATION METHODS ───────────────────────────────────────
 
   /// Get a player from TheSportsDB by ESPN ID (or name fallback)
@@ -3705,7 +4017,9 @@ class ApiService {
     }
 
     // Add size modifiers for smaller images
-    if (headshot.isNotEmpty && !headshot.contains('/tiny') && !headshot.contains('/small')) {
+    if (headshot.isNotEmpty &&
+        !headshot.contains('/tiny') &&
+        !headshot.contains('/small')) {
       headshot = '$headshot/small';
     }
 
@@ -3738,7 +4052,8 @@ class ApiService {
         final birth = DateTime.parse(birthDate);
         final now = DateTime.now();
         age = now.year - birth.year;
-        if (now.month < birth.month || (now.month == birth.month && now.day < birth.day)) {
+        if (now.month < birth.month ||
+            (now.month == birth.month && now.day < birth.day)) {
           age--;
         }
       } catch (_) {}
@@ -3751,7 +4066,11 @@ class ApiService {
     double? marketValue;
     final valueStr = data['strValue']?.toString() ?? '';
     if (valueStr.isNotEmpty) {
-      final clean = valueStr.replaceAll('€', '').replaceAll('M', '').replaceAll('B', '').trim();
+      final clean = valueStr
+          .replaceAll('€', '')
+          .replaceAll('M', '')
+          .replaceAll('B', '')
+          .trim();
       final val = double.tryParse(clean);
       if (val != null) {
         if (valueStr.contains('B')) {
@@ -3765,9 +4084,14 @@ class ApiService {
     // Build statistics map
     final stats = <String, dynamic>{};
     final statKeys = [
-      'intGoals', 'intAssists', 'intAppearances',
-      'intShots', 'intShotsOnTarget', 'intPasses',
-      'intTackles', 'intClearances',
+      'intGoals',
+      'intAssists',
+      'intAppearances',
+      'intShots',
+      'intShotsOnTarget',
+      'intPasses',
+      'intTackles',
+      'intClearances',
     ];
     for (final key in statKeys) {
       if (data.containsKey(key)) {
@@ -3831,7 +4155,7 @@ class ApiService {
     }
 
     // ✅ FIX: Use 2024 season (max supported by free plan)
-    final season = 2024;  // Hardcoded to 2024 for free plan
+    final season = 2024; // Hardcoded to 2024 for free plan
     print('[SearchPlayers] Using season: $season');
 
     // ✅ FIX: strip accents / percent-encode — API-Football's `search`
@@ -3845,12 +4169,12 @@ class ApiService {
 
     // ✅ FIX: Search fewer leagues to avoid rate limit
     final leagueIds = [
-      39,   // Premier League
-      140,  // La Liga
-      135,  // Serie A
-      78,   // Bundesliga
-      61,   // Ligue 1
-      2,    // Champions League
+      39, // Premier League
+      140, // La Liga
+      135, // Serie A
+      78, // Bundesliga
+      61, // Ligue 1
+      2, // Champions League
     ];
 
     // ✅ FIX: Add delay between requests
@@ -3866,7 +4190,8 @@ class ApiService {
       requestCount++;
 
       try {
-        final url = Uri.parse('${AppConstants.apiFootballBaseUrl}/players').replace(
+        final url =
+            Uri.parse('${AppConstants.apiFootballBaseUrl}/players').replace(
           queryParameters: {
             'league': '$leagueId',
             'season': '$season',
@@ -3890,7 +4215,8 @@ class ApiService {
           }
 
           final response = data['response'] as List? ?? [];
-          print('[SearchPlayers] League $leagueId found ${response.length} players');
+          print(
+              '[SearchPlayers] League $leagueId found ${response.length} players');
 
           for (final playerData in response) {
             if (results.length >= 30) break;
@@ -4053,7 +4379,9 @@ class ApiService {
           imageUrl: logoUrl,
           leagueName: name,
           leagueCode: code,
-          abbreviation: code.length > 3 ? code.substring(0, 3).toUpperCase() : code.toUpperCase(),
+          abbreviation: code.length > 3
+              ? code.substring(0, 3).toUpperCase()
+              : code.toUpperCase(),
         ));
 
         print('[SearchLeagues] Added: $name');
@@ -4062,6 +4390,7 @@ class ApiService {
 
     return results;
   }
+
   /// Helper method to extract headshot URL from athlete data
   String? _extractHeadshotFromAthleteData(dynamic data) {
     if (data == null) return null;
@@ -4091,7 +4420,8 @@ class ApiService {
       final rels = (link['rel'] as List? ?? [])
           .map((r) => r.toString().toLowerCase())
           .toList();
-      if (rels.contains('headshot') || rels.contains('photo') ||
+      if (rels.contains('headshot') ||
+          rels.contains('photo') ||
           rels.contains('athlete-headshot')) {
         final href = link['href']?.toString() ?? '';
         if (href.isNotEmpty && href.startsWith('http')) return href;
@@ -4102,7 +4432,8 @@ class ApiService {
     for (final img in images) {
       if (img is! Map) continue;
       final imgType = img['type']?.toString().toLowerCase() ??
-          img['name']?.toString().toLowerCase() ?? '';
+          img['name']?.toString().toLowerCase() ??
+          '';
       if (imgType.contains('headshot') || imgType.contains('photo')) {
         final href = img['href']?.toString() ?? img['url']?.toString() ?? '';
         if (href.isNotEmpty && href.startsWith('http')) return href;
@@ -4117,10 +4448,11 @@ class ApiService {
   // ══════════════════════════════════════════════════════════════════════════════
 
   Future<TeamPageData> getTeamPageData(
-      String teamId, {
-        String? leagueCode,
-      }) async {
-    print('[TeamPage] ▶ getTeamPageData called: teamId=$teamId leagueCode=$leagueCode');
+    String teamId, {
+    String? leagueCode,
+  }) async {
+    print(
+        '[TeamPage] ▶ getTeamPageData called: teamId=$teamId leagueCode=$leagueCode');
 
     // Composed from the two staged methods below so there's a single
     // source of truth for the club/national fetch + fallback logic.
@@ -4150,10 +4482,11 @@ class ApiService {
   /// soon as possible, without waiting on the (much slower) roster fetch,
   /// headshot enrichment, and analytics calculation.
   Future<TeamMatchesData> getTeamMatchesData(
-      String teamId, {
-        String? leagueCode,
-      }) async {
-    print('[TeamPage] ▶ getTeamMatchesData called: teamId=$teamId leagueCode=$leagueCode');
+    String teamId, {
+    String? leagueCode,
+  }) async {
+    print(
+        '[TeamPage] ▶ getTeamMatchesData called: teamId=$teamId leagueCode=$leagueCode');
 
     final resolvedLeague = leagueCode ?? await _detectTeamLeague(teamId);
     print('[TeamPage] Resolved league: $resolvedLeague');
@@ -4177,17 +4510,20 @@ class ApiService {
   /// [TeamMatchesData] returned by [getTeamMatchesData] for the same team,
   /// so the club/national routing matches stage 1 exactly.
   Future<TeamSquadAnalyticsData> getTeamSquadAndAnalytics(
-      String teamId, {
-        required String queryLeagueCode,
-        required List<TeamRecentMatch> recentMatches,
-      }) async {
-    print('[TeamPage] ▶ getTeamSquadAndAnalytics called: teamId=$teamId leagueCode=$queryLeagueCode');
+    String teamId, {
+    required String queryLeagueCode,
+    required List<TeamRecentMatch> recentMatches,
+  }) async {
+    print(
+        '[TeamPage] ▶ getTeamSquadAndAnalytics called: teamId=$teamId leagueCode=$queryLeagueCode');
 
     if (AppConstants.isNationalTeamLeague(queryLeagueCode)) {
-      return _getTeamSquadAnalyticsDataNational(teamId, queryLeagueCode, recentMatches);
+      return _getTeamSquadAnalyticsDataNational(
+          teamId, queryLeagueCode, recentMatches);
     }
 
-    return _getTeamSquadAnalyticsDataClub(teamId, queryLeagueCode, recentMatches);
+    return _getTeamSquadAnalyticsDataClub(
+        teamId, queryLeagueCode, recentMatches);
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
@@ -4195,10 +4531,11 @@ class ApiService {
   // ══════════════════════════════════════════════════════════════════════════════
 
   Future<TeamMatchesData> _getTeamMatchesDataClub(
-      String teamId,
-      String leagueCode,
-      ) async {
-    print('[ClubTeam] ▶ _getTeamMatchesDataClub teamId=$teamId league=$leagueCode');
+    String teamId,
+    String leagueCode,
+  ) async {
+    print(
+        '[ClubTeam] ▶ _getTeamMatchesDataClub teamId=$teamId league=$leagueCode');
 
     // Get current season data first — roster is intentionally NOT fetched
     // here; it's fetched separately in stage 2 so matches can render sooner.
@@ -4210,7 +4547,8 @@ class ApiService {
     _ScheduleResult currentSchedule = currentResults[0] as _ScheduleResult;
     final currentStanding = currentResults[1] as TeamStandingInfo;
 
-    print('[ClubTeam] Current season: ${currentSchedule.recentMatches.length} recent, ${currentSchedule.upcoming.length} upcoming');
+    print(
+        '[ClubTeam] Current season: ${currentSchedule.recentMatches.length} recent, ${currentSchedule.upcoming.length} upcoming');
 
     // ── Check if current season has started ──────────────────────────────────
     final now = DateTime.now();
@@ -4231,13 +4569,17 @@ class ApiService {
     _ScheduleResult recentMatchesFromLastSeason = _ScheduleResult.empty();
     _ScheduleResult upcomingFromNextSeason = _ScheduleResult.empty();
 
-    final needsLastSeason = currentSchedule.recentMatches.isEmpty || allMatchesOld;
+    final needsLastSeason =
+        currentSchedule.recentMatches.isEmpty || allMatchesOld;
     final needsNextSeason = currentSchedule.upcoming.isEmpty;
     final lastYear = now.year - 1;
     final nextYear = now.year + 1;
 
-    if (needsLastSeason) print('[ClubTeam] Fetching last season ($lastYear) for recent matches');
-    if (needsNextSeason) print('[ClubTeam] Fetching next season ($nextYear) for upcoming fixtures');
+    if (needsLastSeason)
+      print('[ClubTeam] Fetching last season ($lastYear) for recent matches');
+    if (needsNextSeason)
+      print(
+          '[ClubTeam] Fetching next season ($nextYear) for upcoming fixtures');
 
     final fallbackResults = await Future.wait([
       needsLastSeason
@@ -4250,19 +4592,35 @@ class ApiService {
 
     if (needsLastSeason && fallbackResults[0].recentMatches.isNotEmpty) {
       recentMatchesFromLastSeason = fallbackResults[0];
-      print('[ClubTeam] Found ${recentMatchesFromLastSeason.recentMatches.length} matches from last season');
+      print(
+          '[ClubTeam] Found ${recentMatchesFromLastSeason.recentMatches.length} matches from last season');
     }
 
     if (needsNextSeason) {
       if (fallbackResults[1].upcoming.isNotEmpty) {
         upcomingFromNextSeason = fallbackResults[1];
-        print('[ClubTeam] Found ${upcomingFromNextSeason.upcoming.length} upcoming fixtures from next season');
+        print(
+            '[ClubTeam] Found ${upcomingFromNextSeason.upcoming.length} upcoming fixtures from next season');
       } else {
-        final currentYearSchedule = await _fetchTeamScheduleForYear(teamId, leagueCode, now.year);
+        final currentYearSchedule =
+            await _fetchTeamScheduleForYear(teamId, leagueCode, now.year);
         if (currentYearSchedule.upcoming.isNotEmpty) {
           upcomingFromNextSeason = currentYearSchedule;
-          print('[ClubTeam] Found ${upcomingFromNextSeason.upcoming.length} upcoming fixtures from current season');
+          print(
+              '[ClubTeam] Found ${upcomingFromNextSeason.upcoming.length} upcoming fixtures from current season');
         }
+      }
+    }
+
+    // ESPN's team schedule often contains only played matches. The league
+    // scoreboard publishes future rounds separately, so use it when needed.
+    if (currentSchedule.upcoming.isEmpty) {
+      final scoreboard = await _fetchUpcomingFromScoreboard(teamId, leagueCode);
+      if (scoreboard.upcoming.isNotEmpty &&
+          (upcomingFromNextSeason.upcoming.isEmpty ||
+              scoreboard.upcoming.first.date.compareTo(
+                  upcomingFromNextSeason.upcoming.first.date) < 0)) {
+        upcomingFromNextSeason = scoreboard;
       }
     }
 
@@ -4286,9 +4644,13 @@ class ApiService {
     }
 
     // Sort recent by date (newest first) and take top 5
-    final sortedPairs = List.generate(finalRecentMatches.length, (i) => [finalRecentMatches[i], finalRecentIds[i]])
-      ..sort((a, b) => (b[0] as TeamRecentMatch).date.compareTo((a[0] as TeamRecentMatch).date));
-    final recent = sortedPairs.take(5).map((p) => p[0] as TeamRecentMatch).toList();
+    final sortedPairs = List.generate(finalRecentMatches.length,
+        (i) => [finalRecentMatches[i], finalRecentIds[i]])
+      ..sort((a, b) => (b[0] as TeamRecentMatch)
+          .date
+          .compareTo((a[0] as TeamRecentMatch).date));
+    final recent =
+        sortedPairs.take(5).map((p) => p[0] as TeamRecentMatch).toList();
     final recentIds = sortedPairs.take(5).map((p) => p[1] as String).toList();
 
     // Sort upcoming by date (oldest first) and take top 5
@@ -4303,7 +4665,8 @@ class ApiService {
       leagueCode,
     );
 
-    print('[ClubTeam] Matches ready: ${recent.length} recent, ${upcoming.length} upcoming');
+    print(
+        '[ClubTeam] Matches ready: ${recent.length} recent, ${upcoming.length} upcoming');
 
     return TeamMatchesData(
       leagueCode: leagueCode,
@@ -4311,20 +4674,23 @@ class ApiService {
       standingInfo: currentStanding,
       recentMatches: enrichedMatches,
       upcoming: upcoming,
-      headCoach: currentSchedule.headCoach ?? recentMatchesFromLastSeason.headCoach,
+      headCoach:
+          currentSchedule.headCoach ?? recentMatchesFromLastSeason.headCoach,
     );
   }
 
   Future<TeamSquadAnalyticsData> _getTeamSquadAnalyticsDataClub(
-      String teamId,
-      String leagueCode,
-      List<TeamRecentMatch> enrichedMatches,
-      ) async {
-    print('[ClubTeam] ▶ _getTeamSquadAnalyticsDataClub teamId=$teamId league=$leagueCode');
+    String teamId,
+    String leagueCode,
+    List<TeamRecentMatch> enrichedMatches,
+  ) async {
+    print(
+        '[ClubTeam] ▶ _getTeamSquadAnalyticsDataClub teamId=$teamId league=$leagueCode');
 
     // ── Fetch roster + enrich headshots ──────────────────────────────────────
     final roster = await _fetchTeamRosterFull(teamId, leagueCode);
-    final squadPlayers = await _enrichRosterHeadshots(roster, leagueCode, teamId: teamId);
+    final squadPlayers =
+        await _enrichRosterHeadshots(roster, leagueCode, teamId: teamId);
 
     // ── Calculate analytics ──────────────────────────────────────────────────
     final analytics = _calculateAnalytics(enrichedMatches, squadPlayers);
@@ -4340,9 +4706,11 @@ class ApiService {
 
   Future<TeamMatchesData> _getTeamMatchesDataNational(
       String teamId, String leagueCode) async {
-    print('[NationalTeam] ▶ _getTeamMatchesDataNational teamId=$teamId league=$leagueCode');
+    print(
+        '[NationalTeam] ▶ _getTeamMatchesDataNational teamId=$teamId league=$leagueCode');
 
-    final primaryLeague = AppConstants.isWorldCup(leagueCode) ? 'fifa.world' : leagueCode;
+    final primaryLeague =
+        AppConstants.isWorldCup(leagueCode) ? 'fifa.world' : leagueCode;
     final isWorldCup = AppConstants.isWorldCup(leagueCode);
 
     // ── For World Cup 2026, use the specialized fixture fetcher ──────────────
@@ -4378,10 +4746,12 @@ class ApiService {
       scheduleData = results[0] as _ScheduleResult;
       standingInfo = results[1] as TeamStandingInfo;
 
-      print('[NationalTeam] Primary schedule: ${scheduleData.recentMatches.length} recent, ${scheduleData.upcoming.length} upcoming');
+      print(
+          '[NationalTeam] Primary schedule: ${scheduleData.recentMatches.length} recent, ${scheduleData.upcoming.length} upcoming');
 
       if (scheduleData.recentMatches.length < 3) {
-        print('[NationalTeam] Supplementing with international fallback matches');
+        print(
+            '[NationalTeam] Supplementing with international fallback matches');
         final fallback = await _fetchNationalTeamFallbackMatches(
           teamId,
           existing: scheduleData.recentMatches,
@@ -4390,29 +4760,46 @@ class ApiService {
         );
 
         if (fallback.recentMatches.isNotEmpty) {
-          final combined = [...scheduleData.recentMatches, ...fallback.recentMatches];
-          final combinedIds = [...scheduleData.recentMatchEventIds, ...fallback.recentMatchEventIds];
-          final sortedPairs = List.generate(combined.length, (i) => [combined[i], combinedIds[i]])
-            ..sort((a, b) =>
-                (b[0] as TeamRecentMatch).date.compareTo((a[0] as TeamRecentMatch).date));
+          final combined = [
+            ...scheduleData.recentMatches,
+            ...fallback.recentMatches
+          ];
+          final combinedIds = [
+            ...scheduleData.recentMatchEventIds,
+            ...fallback.recentMatchEventIds
+          ];
+          final sortedPairs = List.generate(
+              combined.length, (i) => [combined[i], combinedIds[i]])
+            ..sort((a, b) => (b[0] as TeamRecentMatch)
+                .date
+                .compareTo((a[0] as TeamRecentMatch).date));
           scheduleData = _ScheduleResult(
-            recentMatches: sortedPairs.take(5).map((p) => p[0] as TeamRecentMatch).toList(),
-            upcoming: scheduleData.upcoming.isNotEmpty ? scheduleData.upcoming : fallback.upcoming,
+            recentMatches: sortedPairs
+                .take(5)
+                .map((p) => p[0] as TeamRecentMatch)
+                .toList(),
+            upcoming: scheduleData.upcoming.isNotEmpty
+                ? scheduleData.upcoming
+                : fallback.upcoming,
             headCoach: scheduleData.headCoach ?? fallback.headCoach,
-            recentMatchEventIds: sortedPairs.take(5).map((p) => p[1] as String).toList(),
+            recentMatchEventIds:
+                sortedPairs.take(5).map((p) => p[1] as String).toList(),
           );
-          print('[NationalTeam] After fallback: ${scheduleData.recentMatches.length} recent');
+          print(
+              '[NationalTeam] After fallback: ${scheduleData.recentMatches.length} recent');
         }
       }
 
       if (scheduleData.upcoming.isEmpty) {
-        print('[NationalTeam] No upcoming fixtures — searching international fallback leagues');
+        print(
+            '[NationalTeam] No upcoming fixtures — searching international fallback leagues');
         final fallbackUpcoming = await _fetchUpcomingFromAllLeagues(
           teamId,
           AppConstants.internationalFallbackLeagues,
         );
         if (fallbackUpcoming.isNotEmpty) {
-          print('[NationalTeam] Found ${fallbackUpcoming.length} upcoming fixtures in fallback leagues');
+          print(
+              '[NationalTeam] Found ${fallbackUpcoming.length} upcoming fixtures in fallback leagues');
           scheduleData = _ScheduleResult(
             recentMatches: scheduleData.recentMatches,
             upcoming: fallbackUpcoming,
@@ -4424,7 +4811,8 @@ class ApiService {
 
       if (scheduleData.upcoming.isEmpty) {
         final nextYear = DateTime.now().year + 1;
-        final nextSchedule = await _fetchTeamScheduleForYear(teamId, primaryLeague, nextYear);
+        final nextSchedule =
+            await _fetchTeamScheduleForYear(teamId, primaryLeague, nextYear);
         if (nextSchedule.upcoming.isNotEmpty) {
           scheduleData = _ScheduleResult(
             recentMatches: scheduleData.recentMatches,
@@ -4434,6 +4822,27 @@ class ApiService {
           );
         }
       }
+
+      if (scheduleData.upcoming.isEmpty) {
+        final scoreboard =
+            await _fetchUpcomingFromScoreboard(teamId, primaryLeague);
+        scheduleData = _ScheduleResult(
+          recentMatches: scheduleData.recentMatches,
+          upcoming: scoreboard.upcoming,
+          headCoach: scheduleData.headCoach,
+          recentMatchEventIds: scheduleData.recentMatchEventIds,
+        );
+      }
+    }
+
+    if (isWorldCup && scheduleData.upcoming.isEmpty) {
+      final scoreboard = await _fetchUpcomingFromScoreboard(teamId, primaryLeague);
+      scheduleData = _ScheduleResult(
+        recentMatches: scheduleData.recentMatches,
+        upcoming: scoreboard.upcoming,
+        headCoach: scheduleData.headCoach,
+        recentMatchEventIds: scheduleData.recentMatchEventIds,
+      );
     }
 
     final enrichedMatches = await _enrichMatchesWithSummaryStats(
@@ -4443,7 +4852,8 @@ class ApiService {
       primaryLeague,
     );
 
-    print('[NationalTeam] Matches ready: ${enrichedMatches.length} recent, ${scheduleData.upcoming.length} upcoming');
+    print(
+        '[NationalTeam] Matches ready: ${enrichedMatches.length} recent, ${scheduleData.upcoming.length} upcoming');
 
     return TeamMatchesData(
       leagueCode: primaryLeague,
@@ -4456,22 +4866,25 @@ class ApiService {
   }
 
   Future<TeamSquadAnalyticsData> _getTeamSquadAnalyticsDataNational(
-      String teamId,
-      String leagueCode,
-      List<TeamRecentMatch> enrichedMatches,
-      ) async {
-    print('[NationalTeam] ▶ _getTeamSquadAnalyticsDataNational teamId=$teamId league=$leagueCode');
+    String teamId,
+    String leagueCode,
+    List<TeamRecentMatch> enrichedMatches,
+  ) async {
+    print(
+        '[NationalTeam] ▶ _getTeamSquadAnalyticsDataNational teamId=$teamId league=$leagueCode');
 
-    final primaryLeague = AppConstants.isWorldCup(leagueCode) ? 'fifa.world' : leagueCode;
+    final primaryLeague =
+        AppConstants.isWorldCup(leagueCode) ? 'fifa.world' : leagueCode;
 
     // ── Fetch roster, with domestic-league fallback ──────────────────────────
-    List<TeamSquadPlayer> finalSquad = await _fetchTeamRosterFull(teamId, primaryLeague);
+    List<TeamSquadPlayer> finalSquad =
+        await _fetchTeamRosterFull(teamId, primaryLeague);
     if (finalSquad.isEmpty && leagueCode != primaryLeague) {
       finalSquad = await _fetchTeamRosterFull(teamId, leagueCode);
     }
 
-    finalSquad = await _enrichRosterHeadshots(finalSquad, primaryLeague,
-        teamId: teamId);
+    finalSquad =
+        await _enrichRosterHeadshots(finalSquad, primaryLeague, teamId: teamId);
 
     final analytics = _calculateAnalytics(enrichedMatches, finalSquad);
 
@@ -4491,23 +4904,19 @@ class ApiService {
     final tournamentStart = DateTime(2026, 6, 11);
     final tournamentEnd = DateTime(2026, 7, 19);
 
-    final startDate = now.isBefore(tournamentStart)
-        ? tournamentStart
-        : tournamentStart;
+    final startDate =
+        now.isBefore(tournamentStart) ? tournamentStart : tournamentStart;
 
-    final endDate = now.isAfter(tournamentEnd)
-        ? tournamentEnd
-        : tournamentEnd;
+    final endDate = now.isAfter(tournamentEnd) ? tournamentEnd : tournamentEnd;
 
-    print('[WorldCup] Fetching matches from ${_fmt(startDate)} to ${_fmt(endDate)}');
+    print(
+        '[WorldCup] Fetching matches from ${_fmt(startDate)} to ${_fmt(endDate)}');
 
     final allMatches = await _fetchAllLeaguesForLocalDayRange(
-        startDate,
-        endDate,
-        ['fifa.world']
-    );
+        startDate, endDate, ['fifa.world']);
 
-    print('[WorldCup] Found ${allMatches.length} World Cup matches in date range');
+    print(
+        '[WorldCup] Found ${allMatches.length} World Cup matches in date range');
 
     final List<TeamRecentMatch> recentMatches = [];
     final List<String> recentEventIds = [];
@@ -4521,18 +4930,25 @@ class ApiService {
       final gameDate = DateTime.tryParse(game.date);
 
       if (game.status == 'STATUS_FINAL' || game.status == 'STATUS_LIVE') {
-        final myScore = int.tryParse(isHome ? game.homeScore : game.awayScore) ?? 0;
-        final oppScore = int.tryParse(isHome ? game.awayScore : game.homeScore) ?? 0;
+        final myScore =
+            int.tryParse(isHome ? game.homeScore : game.awayScore) ?? 0;
+        final oppScore =
+            int.tryParse(isHome ? game.awayScore : game.homeScore) ?? 0;
 
         String result;
-        if (myScore > oppScore) result = 'win';
-        else if (myScore < oppScore) result = 'loss';
-        else result = 'draw';
+        if (myScore > oppScore)
+          result = 'win';
+        else if (myScore < oppScore)
+          result = 'loss';
+        else
+          result = 'draw';
 
         recentMatches.add(TeamRecentMatch(
           opponentId: opponent.id,
           opponentName: opponent.displayName,
-          opponentLogo: opponent.logo.isNotEmpty ? opponent.logo : 'https://a.espncdn.com/i/teamlogos/soccer/500/${opponent.id}.png',
+          opponentLogo: opponent.logo.isNotEmpty
+              ? opponent.logo
+              : 'https://a.espncdn.com/i/teamlogos/soccer/500/${opponent.id}.png',
           opponentAbbr: opponent.abbreviation,
           score: '$myScore-$oppScore',
           result: result,
@@ -4549,11 +4965,15 @@ class ApiService {
           shotsOnTarget: null,
         ));
         recentEventIds.add(game.id);
-      } else if (game.status == 'STATUS_SCHEDULED' && gameDate != null && gameDate.isAfter(now)) {
+      } else if (game.status == 'STATUS_SCHEDULED' &&
+          gameDate != null &&
+          gameDate.isAfter(now)) {
         upcoming.add(TeamUpcomingFixture(
           opponentId: opponent.id,
           opponentName: opponent.displayName,
-          opponentLogo: opponent.logo.isNotEmpty ? opponent.logo : 'https://a.espncdn.com/i/teamlogos/soccer/500/${opponent.id}.png',
+          opponentLogo: opponent.logo.isNotEmpty
+              ? opponent.logo
+              : 'https://a.espncdn.com/i/teamlogos/soccer/500/${opponent.id}.png',
           opponentAbbr: opponent.abbreviation,
           competition: 'FIFA World Cup 2026',
           leagueFlag: '🏆',
@@ -4566,7 +4986,8 @@ class ApiService {
     recentMatches.sort((a, b) => b.date.compareTo(a.date));
     upcoming.sort((a, b) => a.date.compareTo(b.date));
 
-    print('[WorldCup] Found ${recentMatches.length} recent matches and ${upcoming.length} upcoming matches');
+    print(
+        '[WorldCup] Found ${recentMatches.length} recent matches and ${upcoming.length} upcoming matches');
 
     return _ScheduleResult(
       recentMatches: recentMatches.take(5).toList(),
@@ -4613,11 +5034,11 @@ class ApiService {
   }
 
   Future<_ScheduleResult> _fetchNationalTeamFallbackMatches(
-      String teamId, {
-        required List<TeamRecentMatch> existing,
-        required List<String> existingIds,
-        int targetCount = 5,
-      }) async {
+    String teamId, {
+    required List<TeamRecentMatch> existing,
+    required List<String> existingIds,
+    int targetCount = 5,
+  }) async {
     final needed = targetCount - existing.length;
     if (needed <= 0) return _ScheduleResult.empty();
 
@@ -4695,7 +5116,8 @@ class ApiService {
 
   Future<_ScheduleResult> _fetchTeamScheduleForYear(
       String teamId, String leagueCode, int year) async {
-    String url = '${AppConstants.baseUrl}/$leagueCode/teams/$teamId/schedule?season=$year';
+    String url =
+        '${AppConstants.baseUrl}/$leagueCode/teams/$teamId/schedule?season=$year';
     print('[TeamPage] Fetching schedule for year $year: $url');
 
     try {
@@ -4730,6 +5152,71 @@ class ApiService {
     return _ScheduleResult.empty();
   }
 
+  Future<_ScheduleResult> _fetchUpcomingFromScoreboard(
+      String teamId, String leagueCode) async {
+    final now = DateTime.now().toUtc();
+    final fixtures = <TeamUpcomingFixture>[];
+    final seen = <String>{};
+    String date(DateTime d) =>
+        '${d.year}${d.month.toString().padLeft(2, '0')}${d.day.toString().padLeft(2, '0')}';
+
+    Future<bool> collect(String dates) async {
+      final url = '${AppConstants.baseUrl}/$leagueCode/scoreboard?dates=$dates';
+      try {
+        final response = await _espnGetTeamPage(url);
+        print('[TeamPage] Upcoming scoreboard $dates HTTP ${response.statusCode}');
+        if (response.statusCode != 200) return false;
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        final events = (data['events'] as List? ?? []).where((event) {
+          if (event is! Map) return false;
+          final competitions = event['competitions'] as List? ?? [];
+          return competitions.any((competition) =>
+              competition is Map &&
+              (competition['competitors'] as List? ?? []).any((competitor) =>
+                  competitor is Map &&
+                  competitor['team'] is Map &&
+                  competitor['team']['id']?.toString() == teamId));
+        }).toList();
+        for (final fixture in _parseTeamSchedule(
+          {'events': events},
+          leagueCode,
+          teamId,
+        ).upcoming) {
+          if (seen.add('${fixture.date}:${fixture.opponentId}')) {
+            fixtures.add(fixture);
+          }
+        }
+        return true;
+      } catch (e) {
+        print('[TeamPage] Scoreboard fixture fallback error: $e');
+        return false;
+      }
+    }
+
+    // Soccer scoreboards reject a YYYYMMDD-YYYYMMDD range with HTTP 400.
+    // Try month selectors first, then individual dates when unsupported.
+    final monthStarts = <DateTime>[
+      for (var i = 0; i < 3; i++) DateTime.utc(now.year, now.month + i),
+    ];
+    var monthSupported = false;
+    for (final month in monthStarts) {
+      final selector = '${month.year}${month.month.toString().padLeft(2, '0')}';
+      if (await collect(selector)) monthSupported = true;
+      if (fixtures.length >= 5) break;
+    }
+    if (!monthSupported || fixtures.isEmpty) {
+      for (var offset = 0; offset < 42 && fixtures.length < 5; offset += 7) {
+        await Future.wait([
+          for (var day = offset; day < offset + 7; day++)
+            collect(date(now.add(Duration(days: day)))),
+        ]);
+      }
+    }
+    fixtures.sort((a, b) => a.date.compareTo(b.date));
+    return _ScheduleResult(
+        recentMatches: const [], upcoming: fixtures.take(5).toList());
+  }
+
   _ScheduleResult _parseTeamSchedule(
       Map<String, dynamic> data, String leagueCode, String teamId) {
     final events = data['events'] as List? ?? [];
@@ -4747,14 +5234,14 @@ class ApiService {
     }
 
     final leagueEntry = AppConstants.allLeagues.firstWhere(
-          (l) => l['code'] == leagueCode,
+      (l) => l['code'] == leagueCode,
       orElse: () => {'name': leagueCode, 'flag': '⚽'},
     );
 
     for (final event in events) {
       try {
         final competition =
-        (event['competitions'] as List?)?.first as Map<String, dynamic>?;
+            (event['competitions'] as List?)?.first as Map<String, dynamic>?;
         if (competition == null) continue;
         final competitors = competition['competitors'] as List? ?? [];
         if (competitors.length < 2) continue;
@@ -4771,7 +5258,8 @@ class ApiService {
 
         if (myData == null || oppData == null) {
           if (competitors.length >= 2) {
-            final eventName = (event['name'] ?? event['shortName'] ?? '').toString();
+            final eventName =
+                (event['name'] ?? event['shortName'] ?? '').toString();
             for (final c in competitors) {
               final tAbbr = c['team']?['abbreviation']?.toString() ?? '';
               final tName = c['team']?['name']?.toString() ?? '';
@@ -4790,7 +5278,8 @@ class ApiService {
         final eventDate = DateTime.tryParse(event['date']?.toString() ?? '');
 
         if (eventDate != null) {
-          print('[TeamPage] Event ${event['id']}: status=$normStatus, date=${eventDate.toLocal()}, isAfterNow=${eventDate.isAfter(now)}');
+          print(
+              '[TeamPage] Event ${event['id']}: status=$normStatus, date=${eventDate.toLocal()}, isAfterNow=${eventDate.isAfter(now)}');
         }
 
         if (normStatus == 'STATUS_FINAL' || normStatus == 'STATUS_LIVE') {
@@ -4801,13 +5290,17 @@ class ApiService {
           final oppScoreRaw = oppData['score'];
 
           if (myScoreRaw is Map) {
-            myScore = int.tryParse(myScoreRaw['displayValue']?.toString() ?? '0') ?? 0;
+            myScore =
+                int.tryParse(myScoreRaw['displayValue']?.toString() ?? '0') ??
+                    0;
           } else {
             myScore = int.tryParse(myScoreRaw?.toString() ?? '0') ?? 0;
           }
 
           if (oppScoreRaw is Map) {
-            oppScore = int.tryParse(oppScoreRaw['displayValue']?.toString() ?? '0') ?? 0;
+            oppScore =
+                int.tryParse(oppScoreRaw['displayValue']?.toString() ?? '0') ??
+                    0;
           } else {
             oppScore = int.tryParse(oppScoreRaw?.toString() ?? '0') ?? 0;
           }
@@ -4829,17 +5322,26 @@ class ApiService {
             final myLines = myData['linescores'] as List? ?? [];
             final oppLines = oppData['linescores'] as List? ?? [];
             if (myLines.isNotEmpty) {
-              myScore = myLines.fold<int>(0, (sum, ls) =>
-              sum + (int.tryParse(ls['value']?.toString() ?? '0') ?? 0));
-              oppScore = oppLines.fold<int>(0, (sum, ls) =>
-              sum + (int.tryParse(ls['value']?.toString() ?? '0') ?? 0));
+              myScore = myLines.fold<int>(
+                  0,
+                  (sum, ls) =>
+                      sum +
+                      (int.tryParse(ls['value']?.toString() ?? '0') ?? 0));
+              oppScore = oppLines.fold<int>(
+                  0,
+                  (sum, ls) =>
+                      sum +
+                      (int.tryParse(ls['value']?.toString() ?? '0') ?? 0));
             }
           }
 
           String result;
-          if (myScore > oppScore) result = 'win';
-          else if (myScore < oppScore) result = 'loss';
-          else result = 'draw';
+          if (myScore > oppScore)
+            result = 'win';
+          else if (myScore < oppScore)
+            result = 'loss';
+          else
+            result = 'draw';
 
           int yc = 0, rc = 0;
           double? poss, shots, sot;
@@ -4853,7 +5355,8 @@ class ApiService {
               if (t.contains('red card')) rc++;
             }
 
-            final compBoxTeams = competition['boxScore']?['teams'] as List? ?? [];
+            final compBoxTeams =
+                competition['boxScore']?['teams'] as List? ?? [];
             for (final ts in compBoxTeams) {
               if (ts['team']?['id']?.toString() != teamId) continue;
               for (final stat in (ts['statistics'] as List? ?? [])) {
@@ -4862,8 +5365,13 @@ class ApiService {
                     stat['displayValue']?.toString().replaceAll('%', '') ?? '');
                 if (v == null) continue;
                 if (n.contains('possession')) poss ??= v;
-                if (n == 'shots' || n == 'totalshots' || n == 'shotsattempted') shots ??= v;
-                if (n.contains('shotsontarget') || n.contains('shots on target') || n == 'sot' || n.contains('on target') || n == 'ontarget') sot ??= v;
+                if (n == 'shots' || n == 'totalshots' || n == 'shotsattempted')
+                  shots ??= v;
+                if (n.contains('shotsontarget') ||
+                    n.contains('shots on target') ||
+                    n == 'sot' ||
+                    n.contains('on target') ||
+                    n == 'ontarget') sot ??= v;
                 if (n.contains('yellow') && yc == 0) yc = v.toInt();
                 if (n.contains('red') && rc == 0) rc = v.toInt();
               }
@@ -4874,13 +5382,18 @@ class ApiService {
               final isMyTeam = c['team']?['id']?.toString() == teamId;
               final cStats = c['statistics'] as List? ?? [];
               for (final stat in cStats) {
-                final n = (stat['name'] ?? stat['abbreviation'] ?? '').toString().toLowerCase();
+                final n = (stat['name'] ?? stat['abbreviation'] ?? '')
+                    .toString()
+                    .toLowerCase();
                 final v = double.tryParse(
                     stat['displayValue']?.toString().replaceAll('%', '') ?? '');
                 if (v == null || !isMyTeam) continue;
                 if (n.contains('poss')) poss ??= v;
                 if (n == 'sh' || n == 'shots') shots ??= v;
-                if (n == 'sot' || n.contains('on target') || n == 'ontarget' || n.contains('shotsontarget')) sot ??= v;
+                if (n == 'sot' ||
+                    n.contains('on target') ||
+                    n == 'ontarget' ||
+                    n.contains('shotsontarget')) sot ??= v;
               }
             }
           } catch (_) {}
@@ -4888,7 +5401,8 @@ class ApiService {
           allRecent.add(TeamRecentMatch(
             opponentId: oppData['team']?['id']?.toString() ?? '',
             opponentName: oppData['team']?['displayName']?.toString() ??
-                oppData['team']?['name']?.toString() ?? 'Unknown',
+                oppData['team']?['name']?.toString() ??
+                'Unknown',
             opponentLogo: _resolveTeamLogo(oppData['team'] ?? {}),
             opponentAbbr: oppData['team']?['abbreviation']?.toString() ?? '',
             score: '$myScore-$oppScore',
@@ -4906,15 +5420,19 @@ class ApiService {
             shotsOnTarget: sot,
           ));
           allRecentEventIds.add(event['id']?.toString() ?? '');
-        } else if (normStatus == 'STATUS_SCHEDULED' && eventDate != null && eventDate.isAfter(now)) {
+        } else if (normStatus == 'STATUS_SCHEDULED' &&
+            eventDate != null &&
+            eventDate.isAfter(now)) {
           final opponentId = oppData['team']?['id']?.toString() ?? '';
           final opponentName = oppData['team']?['displayName']?.toString() ??
-              oppData['team']?['name']?.toString() ?? 'Unknown';
-          final opponentAbbr = oppData['team']?['abbreviation']?.toString() ?? '';
+              oppData['team']?['name']?.toString() ??
+              'Unknown';
+          final opponentAbbr =
+              oppData['team']?['abbreviation']?.toString() ?? '';
           final opponentLogo = _resolveTeamLogo(oppData['team'] ?? {});
 
           final exists = upcoming.any((f) =>
-          f.opponentId == opponentId &&
+              f.opponentId == opponentId &&
               f.date == event['date']?.toString() &&
               f.competition == leagueEntry['name']);
 
@@ -4929,21 +5447,27 @@ class ApiService {
               date: event['date']?.toString() ?? '',
               isHome: isHome,
             ));
-            print('[TeamPage] ✅ Added upcoming fixture: $opponentName on ${event['date']}');
+            print(
+                '[TeamPage] ✅ Added upcoming fixture: $opponentName on ${event['date']}');
           }
-        } else if (eventDate != null && eventDate.isAfter(now) && normStatus != 'STATUS_FINAL') {
+        } else if (eventDate != null &&
+            eventDate.isAfter(now) &&
+            normStatus != 'STATUS_FINAL') {
           final opponentId = oppData['team']?['id']?.toString() ?? '';
           final opponentName = oppData['team']?['displayName']?.toString() ??
-              oppData['team']?['name']?.toString() ?? 'Unknown';
-          final opponentAbbr = oppData['team']?['abbreviation']?.toString() ?? '';
+              oppData['team']?['name']?.toString() ??
+              'Unknown';
+          final opponentAbbr =
+              oppData['team']?['abbreviation']?.toString() ?? '';
           final opponentLogo = _resolveTeamLogo(oppData['team'] ?? {});
 
           final exists = upcoming.any((f) =>
-          f.opponentId == opponentId &&
+              f.opponentId == opponentId &&
               f.date == event['date']?.toString());
 
           if (!exists) {
-            print('[TeamPage] ⚠️ Fallback: Adding future event with status "$normStatus" as upcoming');
+            print(
+                '[TeamPage] ⚠️ Fallback: Adding future event with status "$normStatus" as upcoming');
             upcoming.add(TeamUpcomingFixture(
               opponentId: opponentId,
               opponentName: opponentName,
@@ -4961,11 +5485,13 @@ class ApiService {
       }
     }
 
-    final sortedPairs =
-    List.generate(allRecent.length, (i) => [allRecent[i], allRecentEventIds[i]])
-      ..sort((a, b) =>
-          (b[0] as TeamRecentMatch).date.compareTo((a[0] as TeamRecentMatch).date));
-    final recent = sortedPairs.take(5).map((p) => p[0] as TeamRecentMatch).toList();
+    final sortedPairs = List.generate(
+        allRecent.length, (i) => [allRecent[i], allRecentEventIds[i]])
+      ..sort((a, b) => (b[0] as TeamRecentMatch)
+          .date
+          .compareTo((a[0] as TeamRecentMatch).date));
+    final recent =
+        sortedPairs.take(5).map((p) => p[0] as TeamRecentMatch).toList();
     final recentIds = sortedPairs.take(5).map((p) => p[1] as String).toList();
 
     upcoming.sort((a, b) => a.date.compareTo(b.date));
@@ -5017,8 +5543,7 @@ class ApiService {
 
       print('[TeamPage] Total athletes in roster: ${athletes.length}');
 
-      final cachedHeadshots =
-      await _cache.getCachedSquadHeadshots(teamId);
+      final cachedHeadshots = await _cache.getCachedSquadHeadshots(teamId);
 
       final List<TeamSquadPlayer> players = [];
       for (final a in athletes) {
@@ -5066,22 +5591,24 @@ class ApiService {
               }
             }
             if (headshot.isEmpty) {
-              headshot = hs['full']?.toString() ?? hs['default']?.toString() ?? '';
+              headshot =
+                  hs['full']?.toString() ?? hs['default']?.toString() ?? '';
             }
           }
         }
 
         final posAbbr =
-        (a['position']?['abbreviation'] ?? a['position'] ?? '').toString();
+            (a['position']?['abbreviation'] ?? a['position'] ?? '').toString();
         final posName =
-        (a['position']?['name'] ?? a['position']?['displayName'] ?? '')
-            .toString()
-            .toLowerCase();
+            (a['position']?['name'] ?? a['position']?['displayName'] ?? '')
+                .toString()
+                .toLowerCase();
         final cat = _positionCategory(posAbbr, posName);
 
         final nationality = a['citizenship']?.toString() ??
             a['birthPlace']?['country']?.toString() ??
-            a['nationality']?.toString() ?? '';
+            a['nationality']?.toString() ??
+            '';
 
         players.add(TeamSquadPlayer(
           id: playerId,
@@ -5101,7 +5628,9 @@ class ApiService {
       print('[TeamPage] Parsed ${players.length} players with IDs');
 
       if (cachedHeadshots != null && players.isNotEmpty) {
-        final hits = players.where((p) => (cachedHeadshots[p.id] ?? '').isNotEmpty).length;
+        final hits = players
+            .where((p) => (cachedHeadshots[p.id] ?? '').isNotEmpty)
+            .length;
         final hitRate = hits / players.length;
 
         if (hitRate >= 0.6) {
@@ -5161,7 +5690,8 @@ class ApiService {
       return 'GOALKEEPERS';
     }
     if (['CB', 'LB', 'RB', 'SW', 'WB', 'LWB', 'RWB'].contains(a) ||
-        name.contains('back') || name.contains('defender')) {
+        name.contains('back') ||
+        name.contains('defender')) {
       return 'DEFENDERS';
     }
     if (['ST', 'CF', 'LW', 'RW', 'SS', 'FW'].contains(a) ||
@@ -5181,24 +5711,23 @@ class ApiService {
     final headers = {
       ..._headers,
       'Referer': 'https://www.espn.com/',
-      'Origin':  'https://www.espn.com',
+      'Origin': 'https://www.espn.com',
     };
 
     final enriched = <String, String>{
       for (final p in players) p.id: p.headshotUrl,
     };
 
-    final missing = players
-        .where((p) => p.id.isNotEmpty && p.headshotUrl.isEmpty)
-        .toList();
+    final missing =
+        players.where((p) => p.id.isNotEmpty && p.headshotUrl.isEmpty).toList();
 
-    print('[Headshot] ${players.length} total players, ${missing.length} missing headshots');
+    print(
+        '[Headshot] ${players.length} total players, ${missing.length} missing headshots');
 
     final Map<String, String> bulkHeadshots = {};
     if (missing.isNotEmpty) {
       try {
-        final bulkUrl =
-            'https://sports.core.api.espn.com/v3/sports/soccer/'
+        final bulkUrl = 'https://sports.core.api.espn.com/v3/sports/soccer/'
             '$leagueCode/athletes?limit=200&active=true';
         final res = await _client
             .get(Uri.parse(bulkUrl), headers: headers)
@@ -5206,7 +5735,8 @@ class ApiService {
 
         if (res.statusCode == 200) {
           final data = json.decode(res.body) as Map<String, dynamic>;
-          final items = data['athletes'] as List? ?? data['items'] as List? ?? [];
+          final items =
+              data['athletes'] as List? ?? data['items'] as List? ?? [];
           for (final item in items) {
             if (item is! Map) continue;
             final athleteData = item as Map<String, dynamic>;
@@ -5217,7 +5747,8 @@ class ApiService {
               bulkHeadshots[id] = found;
             }
           }
-          print('[Headshot] Bulk v3 lookup: ${bulkHeadshots.length} headshots available');
+          print(
+              '[Headshot] Bulk v3 lookup: ${bulkHeadshots.length} headshots available');
         }
       } catch (e) {
         print('[Headshot] Bulk v3 lookup failed (non-fatal): $e');
@@ -5226,7 +5757,8 @@ class ApiService {
 
     const batchSize = 10;
     for (int i = 0; i < missing.length; i += batchSize) {
-      final batch = missing.sublist(i, (i + batchSize).clamp(0, missing.length));
+      final batch =
+          missing.sublist(i, (i + batchSize).clamp(0, missing.length));
 
       await Future.wait(batch.map((player) async {
         final pid = player.id;
@@ -5277,8 +5809,7 @@ class ApiService {
         } catch (_) {}
 
         try {
-          final siteUrl =
-              '${AppConstants.baseUrl}/$leagueCode/athletes/$pid';
+          final siteUrl = '${AppConstants.baseUrl}/$leagueCode/athletes/$pid';
           final res = await _client
               .get(Uri.parse(siteUrl), headers: headers)
               .timeout(const Duration(seconds: 5));
@@ -5296,10 +5827,12 @@ class ApiService {
     }
 
     final gotHeadshot = enriched.values.where((v) => v.isNotEmpty).length;
-    print('[Headshot] Enrichment complete: $gotHeadshot/${players.length} have URLs');
+    print(
+        '[Headshot] Enrichment complete: $gotHeadshot/${players.length} have URLs');
 
     try {
-      await _cache.cacheSquadHeadshots(teamId, Map<String, String>.from(enriched));
+      await _cache.cacheSquadHeadshots(
+          teamId, Map<String, String>.from(enriched));
     } catch (e) {
       print('[Headshot] Failed to persist headshot cache: $e');
     }
@@ -5322,8 +5855,6 @@ class ApiService {
       return p;
     }).toList();
   }
-
-
 
   Future<String?> _fetchTeamCoach(String teamId, String leagueCode) async {
     try {
@@ -5374,7 +5905,8 @@ class ApiService {
       final sub = child['children'] as List? ?? [];
       for (final s in sub) {
         final entries = s['standings']?['entries'] as List? ??
-            s['standings'] as List? ?? [];
+            s['standings'] as List? ??
+            [];
         for (final ts in entries) {
           if (ts['team']?['id']?.toString() == teamId) {
             int? pts;
@@ -5391,7 +5923,8 @@ class ApiService {
         }
       }
       final entries = child['standings']?['entries'] as List? ??
-          child['standings'] as List? ?? [];
+          child['standings'] as List? ??
+          [];
       for (final ts in entries) {
         if (ts['team']?['id']?.toString() == teamId) {
           int? pts;
@@ -5420,42 +5953,45 @@ class ApiService {
     int possN = 0, shotsN = 0, sotN = 0;
 
     for (final m in matches) {
-      if (m.result == 'win') wins++;
-      else if (m.result == 'draw') draws++;
-      else losses++;
+      if (m.result == 'win')
+        wins++;
+      else if (m.result == 'draw')
+        draws++;
+      else
+        losses++;
       gf += m.goalsFor;
       ga += m.goalsAgainst;
       yc += m.yellowCards;
       rc += m.redCards;
       if (m.possession != null && m.possession! > 0) {
-        possSum += m.possession!; possN++;
+        possSum += m.possession!;
+        possN++;
       }
       if (m.shots != null && m.shots! > 0) {
-        shotsSum += m.shots!; shotsN++;
+        shotsSum += m.shots!;
+        shotsN++;
       }
       if (m.shotsOnTarget != null && m.shotsOnTarget! > 0) {
-        sotSum += m.shotsOnTarget!; sotN++;
+        sotSum += m.shotsOnTarget!;
+        sotN++;
       }
     }
 
     final n = matches.length;
-    final avgPoss  = possN > 0 ? possSum / possN : null;
+    final avgPoss = possN > 0 ? possSum / possN : null;
     final avgShots = shotsN > 0 ? shotsSum / shotsN : null;
 
-    final totalSot   = sotN > 0 ? sotSum : (shotsN > 0 ? shotsSum : null);
-    final avgSot     = sotN > 0 ? sotSum / sotN : null;
+    final totalSot = sotN > 0 ? sotSum : (shotsN > 0 ? shotsSum : null);
+    final avgSot = sotN > 0 ? sotSum / sotN : null;
 
-    final conv = totalSot != null && totalSot > 0
-        ? gf / totalSot
-        : null;
+    final conv = totalSot != null && totalSot > 0 ? gf / totalSot : null;
 
-    final effectiveShotsPerGame =
-        avgShots ?? (gf / n * 6.0).clamp(3.0, 20.0);
+    final effectiveShotsPerGame = avgShots ?? (gf / n * 6.0).clamp(3.0, 20.0);
 
-    final gaPerGame   = n > 0 ? ga / n : 0.0;
+    final gaPerGame = n > 0 ? ga / n : 0.0;
     final goalsPerGame = n > 0 ? gf / n : 0.0;
-    final attackScore  = (goalsPerGame / 2.5 * 100).clamp(0.0, 100.0);
-    final defScore     = ((1 - gaPerGame / 3.0) * 100).clamp(0.0, 100.0);
+    final attackScore = (goalsPerGame / 2.5 * 100).clamp(0.0, 100.0);
+    final defScore = ((1 - gaPerGame / 3.0) * 100).clamp(0.0, 100.0);
 
     final possScore = avgPoss != null
         ? avgPoss.clamp(0.0, 100.0)
@@ -5466,13 +6002,15 @@ class ApiService {
     final midScore = (possScore * 0.55 + shotScore * 0.45).clamp(0.0, 100.0);
 
     final cardPenalty = n > 0 ? (yc + rc * 3) / (n * 5.0) : 0.0;
-    final discScore   = ((1 - cardPenalty) * 100).clamp(0.0, 100.0);
+    final discScore = ((1 - cardPenalty) * 100).clamp(0.0, 100.0);
 
-    print('[TeamPage] SOT-DATA: avgShots=$avgShots avgSot=$avgSot conv=$conv sotN=$sotN shotsN=$shotsN');
+    print(
+        '[TeamPage] SOT-DATA: avgShots=$avgShots avgSot=$avgSot conv=$conv sotN=$sotN shotsN=$shotsN');
     print('[TeamPage] Analytics: attack=${attackScore.toStringAsFixed(1)} '
         'def=${defScore.toStringAsFixed(1)} poss=${possScore.toStringAsFixed(1)} '
         'mid=${midScore.toStringAsFixed(1)} disc=${discScore.toStringAsFixed(1)}');
-    print('[TeamPage] Goals: $gf for, $ga against | W$wins D$draws L$losses | Cards: $yc Y, $rc R');
+    print(
+        '[TeamPage] Goals: $gf for, $ga against | W$wins D$draws L$losses | Cards: $yc Y, $rc R');
 
     TeamSquadPlayer? best;
     double? bestRating;
@@ -5485,12 +6023,17 @@ class ApiService {
     }
 
     if (best == null && squad.isNotEmpty) {
-      final priorities = ['FORWARDS', 'MIDFIELDERS', 'DEFENDERS', 'GOALKEEPERS'];
+      final priorities = [
+        'FORWARDS',
+        'MIDFIELDERS',
+        'DEFENDERS',
+        'GOALKEEPERS'
+      ];
       for (final cat in priorities) {
         final pool = squad.where((p) => p.positionCategory == cat).toList();
         if (pool.isNotEmpty) {
-          pool.sort((a, b) =>
-              (int.tryParse(a.jersey) ?? 99).compareTo(int.tryParse(b.jersey) ?? 99));
+          pool.sort((a, b) => (int.tryParse(a.jersey) ?? 99)
+              .compareTo(int.tryParse(b.jersey) ?? 99));
           best = pool.first;
           break;
         }
@@ -5515,10 +6058,12 @@ class ApiService {
           note = 'Engine of the team · $formStr · $winRate% win rate';
           break;
         case 'DEFENDERS':
-          note = 'Defensive anchor · $ga goals conceded in last ${matches.length}';
+          note =
+              'Defensive anchor · $ga goals conceded in last ${matches.length}';
           break;
         default:
-          note = 'Shot-stopper · $ga goals conceded · Last ${matches.length} matches';
+          note =
+              'Shot-stopper · $ga goals conceded · Last ${matches.length} matches';
       }
     }
 
@@ -5552,11 +6097,12 @@ class ApiService {
   // ══════════════════════════════════════════════════════════════════════════════
 
   Future<List<Game>> _fetchAllLeaguesForLocalDayRange(
-      DateTime startDate,
-      DateTime endDate,
-      List<String> leagueCodes,
-      ) async {
-    print('[API] Fetching matches from ${_fmt(startDate)} to ${_fmt(endDate)} for ${leagueCodes.length} leagues');
+    DateTime startDate,
+    DateTime endDate,
+    List<String> leagueCodes,
+  ) async {
+    print(
+        '[API] Fetching matches from ${_fmt(startDate)} to ${_fmt(endDate)} for ${leagueCodes.length} leagues');
 
     final leagues = AppConstants.allLeagues
         .where((l) => leagueCodes.contains(l['code']))
@@ -5595,11 +6141,11 @@ class ApiService {
   }
 
   Future<List<TeamRecentMatch>> _enrichMatchesWithSummaryStats(
-      List<TeamRecentMatch> matches,
-      List<String> eventIds,
-      String teamId,
-      String leagueCode,
-      ) async {
+    List<TeamRecentMatch> matches,
+    List<String> eventIds,
+    String teamId,
+    String leagueCode,
+  ) async {
     if (matches.isEmpty) return matches;
 
     final futures = List.generate(matches.length, (i) async {
@@ -5632,10 +6178,10 @@ class ApiService {
   }
 
   TeamRecentMatch _applyMatchSummaryStats(
-      TeamRecentMatch match,
-      Map<String, dynamic> summary,
-      String teamId,
-      ) {
+    TeamRecentMatch match,
+    Map<String, dynamic> summary,
+    String teamId,
+  ) {
     double? poss = match.possession;
     double? shots = match.shots;
     double? sot = match.shotsOnTarget;
@@ -5666,9 +6212,12 @@ class ApiService {
             }
           }
           if (scoreFixed) {
-            if (goalsFor > goalsAgainst) result = 'win';
-            else if (goalsFor < goalsAgainst) result = 'loss';
-            else result = 'draw';
+            if (goalsFor > goalsAgainst)
+              result = 'win';
+            else if (goalsFor < goalsAgainst)
+              result = 'loss';
+            else
+              result = 'draw';
             score = '$goalsFor-$goalsAgainst';
             print('[TeamPage] Score fixed from summary: $score ($result)');
           }
@@ -5676,10 +6225,11 @@ class ApiService {
       }
 
       if (yc == 0 && rc == 0) {
-        final plays = summary['keyPlays'] as List? ??
-            summary['keyEvents'] as List? ?? [];
+        final plays =
+            summary['keyPlays'] as List? ?? summary['keyEvents'] as List? ?? [];
         for (final play in plays) {
-          final typeText = (play['type']?['text'] ?? '').toString().toLowerCase();
+          final typeText =
+              (play['type']?['text'] ?? '').toString().toLowerCase();
           final teamRef = play['team']?['id']?.toString() ?? '';
           if (teamRef != teamId) continue;
           if (typeText.contains('yellow')) yc++;
@@ -5697,19 +6247,33 @@ class ApiService {
           for (final stat in statList) {
             final rawName = (stat['name'] ?? '').toString();
             final rawAbbr = (stat['abbreviation'] ?? '').toString();
-            final name = rawName.toLowerCase().replaceAll(RegExp(r'[\s_\-]'), '');
-            final abbr = rawAbbr.toLowerCase().replaceAll(RegExp(r'[\s_\-]'), '');
+            final name =
+                rawName.toLowerCase().replaceAll(RegExp(r'[\s_\-]'), '');
+            final abbr =
+                rawAbbr.toLowerCase().replaceAll(RegExp(r'[\s_\-]'), '');
             final rawVal = (stat['displayValue'] ?? '').toString();
             final val = double.tryParse(rawVal.replaceAll('%', '').trim());
             if (val == null) continue;
-            if ((name.contains('possession') || abbr == 'poss') && poss == null) poss = val;
-            if (shots == null && (name == 'shots' || name == 'totalshots' ||
-                name == 'shotsattempted' || abbr == 'sh' || abbr == 'shots')) shots = val;
-            if (sot == null && (name == 'shotsontarget' || name == 'ontarget' ||
-                name == 'shotson' || name == 'targettotal' ||
-                abbr == 'sot' || abbr == 'st' || abbr == 'ontarget' || abbr == 'sog')) sot = val;
+            if ((name.contains('possession') || abbr == 'poss') && poss == null)
+              poss = val;
+            if (shots == null &&
+                (name == 'shots' ||
+                    name == 'totalshots' ||
+                    name == 'shotsattempted' ||
+                    abbr == 'sh' ||
+                    abbr == 'shots')) shots = val;
+            if (sot == null &&
+                (name == 'shotsontarget' ||
+                    name == 'ontarget' ||
+                    name == 'shotson' ||
+                    name == 'targettotal' ||
+                    abbr == 'sot' ||
+                    abbr == 'st' ||
+                    abbr == 'ontarget' ||
+                    abbr == 'sog')) sot = val;
             if (name.contains('yellow') && yc == 0) yc = val.toInt();
-            if ((name == 'redcards' || name == 'red' || abbr == 'rc') && rc == 0) rc = val.toInt();
+            if ((name == 'redcards' || name == 'red' || abbr == 'rc') &&
+                rc == 0) rc = val.toInt();
           }
         }
       }
@@ -5718,16 +6282,33 @@ class ApiService {
       if (directStats != null) {
         for (final ts in directStats) {
           if (ts is! Map) continue;
-          final tsId = ts['team']?['id']?.toString() ?? ts['id']?.toString() ?? '';
+          final tsId =
+              ts['team']?['id']?.toString() ?? ts['id']?.toString() ?? '';
           if (tsId != teamId && tsId.isNotEmpty) continue;
-          for (final stat in (ts['stats'] as List? ?? ts['statistics'] as List? ?? [])) {
-            final name = (stat['name'] ?? '').toString().toLowerCase().replaceAll(RegExp(r'[\s_\-]'), '');
+          for (final stat
+              in (ts['stats'] as List? ?? ts['statistics'] as List? ?? [])) {
+            final name = (stat['name'] ?? '')
+                .toString()
+                .toLowerCase()
+                .replaceAll(RegExp(r'[\s_\-]'), '');
             final abbr = (stat['abbreviation'] ?? '').toString().toLowerCase();
-            final val = double.tryParse((stat['displayValue'] ?? stat['value'] ?? '').toString().replaceAll('%', '').trim());
+            final val = double.tryParse(
+                (stat['displayValue'] ?? stat['value'] ?? '')
+                    .toString()
+                    .replaceAll('%', '')
+                    .trim());
             if (val == null) continue;
-            if ((name.contains('possession') || abbr == 'poss') && poss == null) poss = val;
-            if (shots == null && (name == 'shots' || name == 'totalshots' || abbr == 'sh')) shots = val;
-            if (sot == null && (name == 'shotsontarget' || name == 'ontarget' || abbr == 'sot' || abbr == 'sog' || abbr == 'st')) sot = val;
+            if ((name.contains('possession') || abbr == 'poss') && poss == null)
+              poss = val;
+            if (shots == null &&
+                (name == 'shots' || name == 'totalshots' || abbr == 'sh'))
+              shots = val;
+            if (sot == null &&
+                (name == 'shotsontarget' ||
+                    name == 'ontarget' ||
+                    abbr == 'sot' ||
+                    abbr == 'sog' ||
+                    abbr == 'st')) sot = val;
           }
         }
       }
@@ -5737,15 +6318,23 @@ class ApiService {
         final competitions = header?['competitions'] as List?;
         if (competitions != null && competitions.isNotEmpty) {
           final comp = competitions.first as Map<String, dynamic>;
-          final compStats = comp['statistics'] as List? ?? comp['stats'] as List? ?? [];
+          final compStats =
+              comp['statistics'] as List? ?? comp['stats'] as List? ?? [];
           for (final stat in compStats) {
             final name = (stat['name'] ?? '').toString().toLowerCase();
             final val = double.tryParse(
-                (stat['displayValue'] ?? stat['value'] ?? '').toString().replaceAll('%', ''));
+                (stat['displayValue'] ?? stat['value'] ?? '')
+                    .toString()
+                    .replaceAll('%', ''));
             if (val == null) continue;
             if (name.contains('possession') && poss == null) poss = val;
             if (name == 'shots' && shots == null) shots = val;
-            if ((name.contains('shotsontarget') || name.contains('shots on target') || name == 'sot' || name.contains('on target') || name == 'ontarget') && sot == null) sot = val;
+            if ((name.contains('shotsontarget') ||
+                    name.contains('shots on target') ||
+                    name == 'sot' ||
+                    name.contains('on target') ||
+                    name == 'ontarget') &&
+                sot == null) sot = val;
           }
         }
       }
@@ -5755,7 +6344,8 @@ class ApiService {
         if (drives != null) {
           final homePoss = drives['homeTeamHasBall'];
           if (homePoss is num) {
-            poss = match.isHome ? homePoss.toDouble() : 100 - homePoss.toDouble();
+            poss =
+                match.isHome ? homePoss.toDouble() : 100 - homePoss.toDouble();
           }
         }
       }
@@ -5764,8 +6354,10 @@ class ApiService {
     }
 
     if (!scoreFixed &&
-        poss == match.possession && shots == match.shots &&
-        sot == match.shotsOnTarget && yc == match.yellowCards &&
+        poss == match.possession &&
+        shots == match.shots &&
+        sot == match.shotsOnTarget &&
+        yc == match.yellowCards &&
         rc == match.redCards) {
       return match;
     }

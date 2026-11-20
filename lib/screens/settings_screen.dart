@@ -11,6 +11,8 @@ import 'package:livescore/providers/app_provider.dart';
 import 'package:livescore/services/cache_service.dart';
 import 'package:livescore/services/profile_service.dart';
 import 'package:livescore/services/quiz_service.dart';
+import 'package:livescore/services/preferences_service.dart';
+import 'package:livescore/services/notification_service.dart';
 import 'package:livescore/models/quiz_model.dart';
 import 'package:livescore/models/user_profile_model.dart';
 import 'package:livescore/models/team_model.dart';
@@ -25,10 +27,12 @@ import 'team_detail_screen.dart';
 
 // ── App Links ──────────────────────────────────────────────────────
 class _AppLinks {
-  static const String privacyPolicyUrl = 'https://raw.githubusercontent.com/SanjayNewar7/livescore/master/privacy_policy.md';
+  static const String privacyPolicyUrl =
+      'https://raw.githubusercontent.com/SanjayNewar7/livescore/master/privacy_policy.md';
   static const String developerUrl = 'https://sanjayrajbhandari.com.np/';
   static const String feedbackEmail = 'sanjaynewar007@gmail.com';
-  static const String playStoreUrl = 'https://play.google.com/store/apps/details?id=com.sanjaya.livegoal';
+  static const String playStoreUrl =
+      'https://play.google.com/store/apps/details?id=com.sanjaya.livegoal';
   static const String buyMeCoffeeUrl = 'https://buymeacoffee.com/sanjay_newar7';
   static const String appVersion = '1.0.0';
 }
@@ -60,7 +64,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _profile = ProfileService().profile;
-    _favoriteTeamRotationTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+    ProfileService().addListener(_refreshProfile);
+    _favoriteTeamRotationTimer =
+        Timer.periodic(const Duration(seconds: 15), (_) {
       if (!mounted) return;
       setState(() => _favoriteTeamRotationIndex++);
     });
@@ -68,31 +74,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
+    ProfileService().removeListener(_refreshProfile);
     _favoriteTeamRotationTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _openEditProfile() async {
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => const EditProfileScreen()));
+  void _refreshProfile() {
     if (mounted) setState(() => _profile = ProfileService().profile);
   }
 
+  Future<void> _openEditProfile() async {
+    await Navigator.push(
+        context, MaterialPageRoute(builder: (_) => const EditProfileScreen()));
+    if (mounted) setState(() => _profile = ProfileService().profile);
+  }
+
+  Future<void> _updateAlerts({bool? enabled, bool? matches, bool? news}) async {
+    if (enabled == true &&
+        !await NotificationService().requestDevicePermission()) {
+      return;
+    }
+    final service = PreferencesService();
+    final current = service.preferences;
+    await service.savePreferences(current.copyWith(
+      notificationsEnabled: enabled,
+      liveScoreAlerts: matches,
+      newsAlerts: news,
+    ));
+    await NotificationService().syncDeviceSettings();
+    if (mounted) setState(() {});
+  }
+
   Future<void> _openFavorites() async {
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => const FavoritesScreen()));
+    await Navigator.push(
+        context, MaterialPageRoute(builder: (_) => const FavoritesScreen()));
     if (mounted) setState(() => _profile = ProfileService().profile);
   }
 
   Future<void> _openQuiz() async {
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => const QuizScreen()));
+    await Navigator.push(
+        context, MaterialPageRoute(builder: (_) => const QuizScreen()));
     if (mounted) setState(() {}); // refresh quiz status card
   }
 
   Future<void> _openPrivacyPolicy() async {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()));
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()));
   }
 
   Future<void> _openDeveloper() async {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const DeveloperScreen()));
+    Navigator.push(
+        context, MaterialPageRoute(builder: (_) => const DeveloperScreen()));
   }
 
   Future<void> _openUrl(String url) async {
@@ -100,7 +132,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open link'), backgroundColor: Color(0xFFDC2626)),
+        const SnackBar(
+            content: Text('Could not open link'),
+            backgroundColor: Color(0xFFDC2626)),
       );
     }
   }
@@ -109,12 +143,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final uri = Uri(
       scheme: 'mailto',
       path: _AppLinks.feedbackEmail,
-      query: 'subject=${Uri.encodeComponent('LiveScore App Feedback')}&body=${Uri.encodeComponent('Hi Sanjaya,\n\nI would like to share my feedback about the LiveScore app:\n\n')}',
+      query:
+          'subject=${Uri.encodeComponent('LiveScore App Feedback')}&body=${Uri.encodeComponent('Hi Sanjaya,\n\nI would like to share my feedback about the LiveScore app:\n\n')}',
     );
     final launched = await launchUrl(uri);
     if (!launched && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open mail app'), backgroundColor: Color(0xFFDC2626)),
+        const SnackBar(
+            content: Text('Could not open mail app'),
+            backgroundColor: Color(0xFFDC2626)),
       );
     }
   }
@@ -127,7 +164,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
-        title: const Text('Settings', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 20)),
+        title: const Text('Settings',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 20)),
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: false,
@@ -147,6 +185,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildProfileCard(),
           const SizedBox(height: 12),
           _buildFavoritesRow(),
+          const SizedBox(height: 20),
+
+          _buildSectionHeader(
+              'Notifications', Icons.notifications_active_outlined,
+              color: _green),
+          const SizedBox(height: 8),
+          _buildSettingsCard([
+            SwitchListTile(
+              activeThumbColor: _green,
+              activeTrackColor: _green.withOpacity(0.35),
+              title: const Text('Phone notifications',
+                  style: TextStyle(fontFamily: 'SportFont')),
+              subtitle: const Text('Alerts for followed teams',
+                  style: TextStyle(fontFamily: 'SportFont')),
+              value: PreferencesService().preferences.notificationsEnabled,
+              onChanged: (value) => _updateAlerts(enabled: value),
+            ),
+            SwitchListTile(
+              activeThumbColor: _green,
+              activeTrackColor: _green.withOpacity(0.35),
+              title: const Text('Match alerts',
+                  style: TextStyle(fontFamily: 'SportFont')),
+              subtitle: const Text('Before kickoff, kickoff and final result',
+                  style: TextStyle(fontFamily: 'SportFont')),
+              value: PreferencesService().preferences.liveScoreAlerts,
+              onChanged: PreferencesService().preferences.notificationsEnabled
+                  ? (value) => _updateAlerts(matches: value)
+                  : null,
+            ),
+            SwitchListTile(
+              activeThumbColor: _green,
+              activeTrackColor: _green.withOpacity(0.35),
+              title: const Text('Team news',
+                  style: TextStyle(fontFamily: 'SportFont')),
+              subtitle: const Text('ESPN news about followed teams',
+                  style: TextStyle(fontFamily: 'SportFont')),
+              value: PreferencesService().preferences.newsAlerts,
+              onChanged: PreferencesService().preferences.notificationsEnabled
+                  ? (value) => _updateAlerts(news: value)
+                  : null,
+            ),
+          ]),
           const SizedBox(height: 20),
 
           // ── Play Quiz ────────────────────────────────────────────
@@ -190,8 +270,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       id: teamId,
                       name: teamId,
                       displayName: teamId,
-                      abbreviation: teamId.length > 3 ? teamId.substring(0, 3).toUpperCase() : teamId,
-                      logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/$teamId.png', // ✅ ESPN official logo
+                      abbreviation: teamId.length > 3
+                          ? teamId.substring(0, 3).toUpperCase()
+                          : teamId,
+                      logo:
+                          'https://a.espncdn.com/i/teamlogos/soccer/500/$teamId.png', // ✅ ESPN official logo
                       color: '#1A62C8',
                       alternateColor: '#FFFFFF',
                       record: '0-0-0',
@@ -229,7 +312,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 20),
 
           // ── Buy Me a Coffee ──────────────────────────────────────
-          _buildSectionHeader('Buy Me a Coffee', Icons.volunteer_activism_outlined),
+          _buildSectionHeader(
+              'Buy Me a Coffee', Icons.volunteer_activism_outlined),
           const SizedBox(height: 8),
           _buildCoffeeCard(),
           const SizedBox(height: 20),
@@ -301,7 +385,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
-            BoxShadow(color: _blue.withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 4)),
+            BoxShadow(
+                color: _blue.withOpacity(0.3),
+                blurRadius: 12,
+                offset: const Offset(0, 4)),
           ],
         ),
         child: Padding(
@@ -314,17 +401,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   shape: BoxShape.circle,
-                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 8)],
+                  boxShadow: [
+                    BoxShadow(
+                        color: Colors.black.withOpacity(0.1), blurRadius: 8)
+                  ],
                 ),
                 child: ClipOval(
                   child: _profile.hasImage
-                      ? Image.file(File(_profile.imagePath!), fit: BoxFit.cover, width: 60, height: 60)
+                      ? Image.file(File(_profile.imagePath!),
+                          fit: BoxFit.cover,
+                          width: 60,
+                          height: 60,
+                          errorBuilder: (_, __, ___) =>
+                              const Icon(Icons.person_rounded, color: _green))
                       : Center(
-                    child: Text(
-                      _profile.initials,
-                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: _blue),
-                    ),
-                  ),
+                          child: Text(
+                            _profile.initials,
+                            style: const TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.w800,
+                                color: _blue),
+                          ),
+                        ),
                 ),
               ),
               const SizedBox(width: 16),
@@ -334,13 +432,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   children: [
                     Text(
                       _profile.displayName,
-                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700),
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      _profile.bio.trim().isNotEmpty ? _profile.bio.trim() : 'Tap to set up your profile',
-                      style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 13),
+                      _profile.bio.trim().isNotEmpty
+                          ? _profile.bio.trim()
+                          : 'Tap to set up your profile',
+                      style: TextStyle(
+                          color: Colors.white.withOpacity(0.8), fontSize: 13),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -348,7 +452,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(20),
@@ -356,9 +461,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.edit_outlined, size: 14, color: Colors.white.withOpacity(0.9)),
+                    Icon(Icons.edit_outlined,
+                        size: 14, color: Colors.white.withOpacity(0.9)),
                     const SizedBox(width: 4),
-                    Text('Edit', style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 12, fontWeight: FontWeight.w600)),
+                    Text('Edit',
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.9),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600)),
                   ],
                 ),
               ),
@@ -379,7 +489,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         int shownPosition = 0;
         if (favoriteTeamIds.isNotEmpty) {
           shownPosition = _favoriteTeamRotationIndex % favoriteTeamIds.length;
-          rotatingTeam = _resolveFavoriteTeam(favoriteTeamIds[shownPosition], provider);
+          rotatingTeam =
+              _resolveFavoriteTeam(favoriteTeamIds[shownPosition], provider);
         }
 
         final clubLabel = hasMultipleTeams
@@ -387,11 +498,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             : 'Favorite Club';
         final clubName = rotatingTeam != null
             ? rotatingTeam.displayName
-            : (_profile.hasFavoriteClub ? _profile.favoriteClubName ?? '' : 'Not set');
+            : (_profile.hasFavoriteClub
+                ? _profile.favoriteClubName ?? ''
+                : 'Not set');
         final clubImage = rotatingTeam != null
             ? (rotatingTeam.logo.isNotEmpty
-            ? rotatingTeam.logo
-            : 'https://a.espncdn.com/i/teamlogos/soccer/500/${rotatingTeam.id}.png')
+                ? rotatingTeam.logo
+                : 'https://a.espncdn.com/i/teamlogos/soccer/500/${rotatingTeam.id}.png')
             : _profile.favoriteClubLogo;
 
         return Row(
@@ -434,7 +547,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return _buildFavoriteChip(
         key: const ValueKey('profile_favorite_player'),
         label: 'Favorite Player',
-        name: _profile.hasFavoritePlayer ? _profile.favoritePlayerName ?? '' : 'Not set',
+        name: _profile.hasFavoritePlayer
+            ? _profile.favoritePlayerName ?? ''
+            : 'Not set',
         imageUrl: _profile.favoritePlayerImage,
         fallbackIcon: Icons.person_outline,
         accent: _green,
@@ -450,7 +565,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       label: hasMultiplePlayers
           ? 'Favorite Player (${shownPosition + 1}/${favoritePlayers.length})'
           : 'Favorite Player',
-      name: player['name']?.trim().isNotEmpty == true ? player['name']! : 'Unknown Player',
+      name: player['name']?.trim().isNotEmpty == true
+          ? player['name']!
+          : 'Unknown Player',
       imageUrl: player['image'],
       fallbackIcon: Icons.person_outline,
       accent: _green,
@@ -468,7 +585,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         id: teamId,
         name: teamId,
         displayName: teamId,
-        abbreviation: teamId.length > 3 ? teamId.substring(0, 3).toUpperCase() : teamId,
+        abbreviation:
+            teamId.length > 3 ? teamId.substring(0, 3).toUpperCase() : teamId,
         logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/$teamId.png',
         color: '#1A62C8',
         alternateColor: '#FFFFFF',
@@ -493,7 +611,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 2))
+          ],
         ),
         child: Row(
           children: [
@@ -501,13 +624,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               borderRadius: BorderRadius.circular(10),
               child: (imageUrl != null && imageUrl.isNotEmpty)
                   ? CachedNetworkImage(
-                imageUrl: imageUrl,
-                width: 36,
-                height: 36,
-                fit: BoxFit.cover,
-                errorWidget: (context, url, error) => _favoriteFallbackIcon(fallbackIcon, accent),
-                placeholder: (context, url) => _favoriteFallbackIcon(fallbackIcon, accent),
-              )
+                      imageUrl: imageUrl,
+                      width: 36,
+                      height: 36,
+                      fit: BoxFit.cover,
+                      errorWidget: (context, url, error) =>
+                          _favoriteFallbackIcon(fallbackIcon, accent),
+                      placeholder: (context, url) =>
+                          _favoriteFallbackIcon(fallbackIcon, accent),
+                    )
                   : _favoriteFallbackIcon(fallbackIcon, accent),
             ),
             const SizedBox(width: 10),
@@ -515,11 +640,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(label, style: TextStyle(fontSize: 10, color: Colors.grey.shade500, fontWeight: FontWeight.w600)),
+                  Text(label,
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey.shade500,
+                          fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
                   Text(
                     name,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _ink),
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w700, color: _ink),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -536,7 +666,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Container(
       width: 36,
       height: 36,
-      decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+      decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(10)),
       child: Icon(icon, size: 18, color: color),
     );
   }
@@ -557,10 +689,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           statusLabel = 'Loading today\'s quiz...';
           buttonLabel = 'Play';
         } else if (quiz.isFullyAnswered) {
-          statusLabel = '${quiz.correctCount} / ${quiz.questions.length} correct today';
+          statusLabel =
+              '${quiz.correctCount} / ${quiz.questions.length} correct today';
           buttonLabel = 'View Results';
         } else if (quiz.answeredCount > 0) {
-          statusLabel = '${quiz.answeredCount} / ${quiz.questions.length} answered';
+          statusLabel =
+              '${quiz.answeredCount} / ${quiz.questions.length} answered';
           buttonLabel = 'Continue';
         } else {
           statusLabel = '10 new questions ready';
@@ -572,41 +706,70 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [_green, Color(0xFF0F7A3D)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+              gradient: const LinearGradient(
+                  colors: [_green, Color(0xFF0F7A3D)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight),
               borderRadius: BorderRadius.circular(18),
-              boxShadow: [BoxShadow(color: _green.withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 4))],
+              boxShadow: [
+                BoxShadow(
+                    color: _green.withOpacity(0.3),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4))
+              ],
             ),
             child: Row(
               children: [
                 Container(
                   width: 52,
                   height: 52,
-                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
-                  child: const Icon(Icons.sports_soccer_rounded, color: Colors.white, size: 26),
+                  decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      shape: BoxShape.circle),
+                  child: const Icon(Icons.sports_soccer_rounded,
+                      color: Colors.white, size: 26),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Daily Football Quiz', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+                      const Text('Daily Football Quiz',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700)),
                       const SizedBox(height: 3),
-                      Text(statusLabel, style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 12)),
+                      Text(statusLabel,
+                          style: TextStyle(
+                              color: Colors.white.withOpacity(0.85),
+                              fontSize: 12)),
                       const SizedBox(height: 6),
                       Row(
                         children: [
-                          const Icon(Icons.sports_soccer_rounded, color: Colors.white, size: 13),
+                          const Icon(Icons.sports_soccer_rounded,
+                              color: Colors.white, size: 13),
                           const SizedBox(width: 4),
-                          Text('${stats.totalBalls} balls collected', style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 11)),
+                          Text('${stats.totalBalls} balls collected',
+                              style: TextStyle(
+                                  color: Colors.white.withOpacity(0.85),
+                                  fontSize: 11)),
                         ],
                       ),
                     ],
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
-                  child: Text(buttonLabel, style: const TextStyle(color: _green, fontSize: 12, fontWeight: FontWeight.w700)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12)),
+                  child: Text(buttonLabel,
+                      style: const TextStyle(
+                          color: _green,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700)),
                 ),
               ],
             ),
@@ -625,7 +788,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: _green.withOpacity(0.2)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 2))],
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.03),
+              blurRadius: 8,
+              offset: const Offset(0, 2))
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -635,14 +803,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Container(
                 width: 44,
                 height: 44,
-                decoration: BoxDecoration(color: _green.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
-                child: const Icon(Icons.local_cafe_outlined, color: _green, size: 22),
+                decoration: BoxDecoration(
+                    color: _green.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12)),
+                child: const Icon(Icons.local_cafe_outlined,
+                    color: _green, size: 22),
               ),
               const SizedBox(width: 12),
               const Expanded(
                 child: Text(
                   'Enjoying the app?',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: _ink),
+                  style: TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w700, color: _ink),
                 ),
               ),
             ],
@@ -650,7 +822,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 10),
           Text(
             'This app is built and maintained independently. If it helps you follow the game, consider supporting its development with a coffee.',
-            style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600, height: 1.4),
+            style: TextStyle(
+                fontSize: 12.5, color: Colors.grey.shade600, height: 1.4),
           ),
           const SizedBox(height: 14),
           SizedBox(
@@ -658,12 +831,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: ElevatedButton.icon(
               onPressed: () => _openUrl(_AppLinks.buyMeCoffeeUrl),
               icon: const Icon(Icons.favorite_rounded, size: 18),
-              label: const Text('Buy Me a Coffee', style: TextStyle(fontWeight: FontWeight.w700)),
+              label: const Text('Buy Me a Coffee',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
               style: ElevatedButton.styleFrom(
                 backgroundColor: _green,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 13),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
             ),
           ),
@@ -674,14 +849,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // ── Shared building blocks ───────────────────────────────────────
 
-  Widget _buildSectionHeader(String title, IconData icon) {
+  Widget _buildSectionHeader(String title, IconData icon,
+      {Color color = _blue}) {
     return Padding(
       padding: const EdgeInsets.only(left: 4, bottom: 8),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: _blue),
+          Icon(icon, size: 18, color: color),
           const SizedBox(width: 8),
-          Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: _blue, letterSpacing: 0.5)),
+          Text(title,
+              style: TextStyle(
+                  fontFamily: 'SportFont',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                  letterSpacing: 0.5)),
         ],
       ),
     );
@@ -692,7 +874,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2))
+        ],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
@@ -714,12 +901,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       leading: Container(
         width: 36,
         height: 36,
-        decoration: BoxDecoration(color: iconColor.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+        decoration: BoxDecoration(
+            color: iconColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(10)),
         child: Icon(icon, size: 20, color: iconColor),
       ),
-      title: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: _ink)),
-      subtitle: Text(subtitle, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-      trailing: showArrow ? const Icon(Icons.chevron_right_rounded, color: Color(0xFF6B7A96)) : null,
+      title: Text(title,
+          style: const TextStyle(
+              fontSize: 15, fontWeight: FontWeight.w600, color: _ink)),
+      subtitle: Text(subtitle,
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+      trailing: showArrow
+          ? const Icon(Icons.chevron_right_rounded, color: Color(0xFF6B7A96))
+          : null,
       onTap: onTap,
     );
   }
@@ -736,12 +930,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
       leading: Container(
         width: 36,
         height: 36,
-        decoration: BoxDecoration(color: iconColor.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+        decoration: BoxDecoration(
+            color: iconColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(10)),
         child: Icon(icon, size: 20, color: iconColor),
       ),
-      title: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: _ink)),
-      subtitle: subtitle != null ? Text(subtitle, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)) : null,
-      trailing: const Icon(Icons.chevron_right_rounded, color: Color(0xFF6B7A96)),
+      title: Text(title,
+          style: const TextStyle(
+              fontSize: 15, fontWeight: FontWeight.w600, color: _ink)),
+      subtitle: subtitle != null
+          ? Text(subtitle,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600))
+          : null,
+      trailing:
+          const Icon(Icons.chevron_right_rounded, color: Color(0xFF6B7A96)),
       onTap: onTap,
     );
   }
@@ -757,11 +959,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       leading: Container(
         width: 36,
         height: 36,
-        decoration: BoxDecoration(color: iconColor.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+        decoration: BoxDecoration(
+            color: iconColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(10)),
         child: Icon(icon, size: 20, color: iconColor),
       ),
-      title: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: _ink)),
-      trailing: Text(value, style: TextStyle(fontSize: 13, color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+      title: Text(title,
+          style: const TextStyle(
+              fontSize: 15, fontWeight: FontWeight.w600, color: _ink)),
+      trailing: Text(value,
+          style: TextStyle(
+              fontSize: 13,
+              color: Colors.grey.shade600,
+              fontWeight: FontWeight.w500)),
     );
   }
 
@@ -790,7 +1000,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       background: Container(
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 20),
-        decoration: BoxDecoration(color: Colors.red.shade100, borderRadius: BorderRadius.circular(12)),
+        decoration: BoxDecoration(
+            color: Colors.red.shade100,
+            borderRadius: BorderRadius.circular(12)),
         child: const Icon(Icons.delete_outline, color: Colors.red),
       ),
       onDismissed: (_) => provider.toggleFavoriteTeam(team.id),
@@ -805,19 +1017,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
             height: 36,
             fit: BoxFit.contain,
             placeholder: (context, url) => Container(
-              width: 36, height: 36,
-              decoration: BoxDecoration(color: _blue.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-              child: const Center(child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: _blue))),
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                  color: _blue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8)),
+              child: const Center(
+                  child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: _blue))),
             ),
             errorWidget: (context, url, error) => Container(
-              width: 36, height: 36,
-              decoration: BoxDecoration(color: _blue.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-              child: const Icon(Icons.sports_soccer_rounded, size: 20, color: _blue),
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                  color: _blue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8)),
+              child: const Icon(Icons.sports_soccer_rounded,
+                  size: 20, color: _blue),
             ),
           ),
         ),
-        title: Text(team.displayName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _ink)),
-        subtitle: Text(team.abbreviation, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+        title: Text(team.displayName,
+            style: const TextStyle(
+                fontSize: 14, fontWeight: FontWeight.w600, color: _ink)),
+        subtitle: Text(team.abbreviation,
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
         trailing: IconButton(
           icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
           onPressed: () => provider.toggleFavoriteTeam(team.id),
@@ -836,18 +1063,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2))
+        ],
       ),
       child: Column(
         children: [
           Container(
             width: 56,
             height: 56,
-            decoration: BoxDecoration(color: _blue.withOpacity(0.1), shape: BoxShape.circle),
+            decoration: BoxDecoration(
+                color: _blue.withOpacity(0.1), shape: BoxShape.circle),
             child: Icon(icon, size: 28, color: _blue),
           ),
           const SizedBox(height: 12),
-          Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _ink)),
+          Text(title,
+              style: const TextStyle(
+                  fontSize: 16, fontWeight: FontWeight.w700, color: _ink)),
           const SizedBox(height: 4),
           Text(
             subtitle,
@@ -862,9 +1097,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Same tile format as [_buildFavoriteTeamTile] (swipe-to-delete list
   /// tile, circular avatar leading, name + subtitle, trailing delete
   /// button) applied to a favorite-player map ({id, name, image, team}).
-  Widget _buildFavoritePlayerTile(Map<String, String> player, AppProvider provider) {
+  Widget _buildFavoritePlayerTile(
+      Map<String, String> player, AppProvider provider) {
     final id = player['id'] ?? '';
-    final name = player['name']?.trim().isNotEmpty == true ? player['name']! : 'Unknown Player';
+    final name = player['name']?.trim().isNotEmpty == true
+        ? player['name']!
+        : 'Unknown Player';
     final team = player['team'] ?? '';
     final imageUrl = player['image'] ?? '';
     final initials = name.isNotEmpty ? name.substring(0, 1).toUpperCase() : '?';
@@ -875,7 +1113,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       background: Container(
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 20),
-        decoration: BoxDecoration(color: Colors.red.shade100, borderRadius: BorderRadius.circular(12)),
+        decoration: BoxDecoration(
+            color: Colors.red.shade100,
+            borderRadius: BorderRadius.circular(12)),
         child: const Icon(Icons.delete_outline, color: Colors.red),
       ),
       onDismissed: (_) => provider.removeFavoritePlayer(id),
@@ -885,29 +1125,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
           borderRadius: BorderRadius.circular(18),
           child: imageUrl.isNotEmpty
               ? CachedNetworkImage(
-            imageUrl: imageUrl,
-            width: 36,
-            height: 36,
-            fit: BoxFit.cover,
-            placeholder: (context, url) => Container(
-              width: 36, height: 36,
-              decoration: BoxDecoration(color: _green.withOpacity(0.1), borderRadius: BorderRadius.circular(18)),
-              child: const Center(child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: _green))),
-            ),
-            errorWidget: (context, url, error) => Container(
-              width: 36, height: 36,
-              decoration: BoxDecoration(color: _green.withOpacity(0.1), borderRadius: BorderRadius.circular(18)),
-              child: Center(child: Text(initials, style: const TextStyle(color: _green, fontWeight: FontWeight.w700, fontSize: 13))),
-            ),
-          )
+                  imageUrl: imageUrl,
+                  width: 36,
+                  height: 36,
+                  fit: BoxFit.cover,
+                  placeholder: (context, url) => Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                        color: _green.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(18)),
+                    child: const Center(
+                        child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: _green))),
+                  ),
+                  errorWidget: (context, url, error) => Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                        color: _green.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(18)),
+                    child: Center(
+                        child: Text(initials,
+                            style: const TextStyle(
+                                color: _green,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13))),
+                  ),
+                )
               : Container(
-            width: 36, height: 36,
-            decoration: BoxDecoration(color: _green.withOpacity(0.1), borderRadius: BorderRadius.circular(18)),
-            child: Center(child: Text(initials, style: const TextStyle(color: _green, fontWeight: FontWeight.w700, fontSize: 13))),
-          ),
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                      color: _green.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(18)),
+                  child: Center(
+                      child: Text(initials,
+                          style: const TextStyle(
+                              color: _green,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13))),
+                ),
         ),
-        title: Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _ink)),
-        subtitle: team.isNotEmpty ? Text(team, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)) : null,
+        title: Text(name,
+            style: const TextStyle(
+                fontSize: 14, fontWeight: FontWeight.w600, color: _ink)),
+        subtitle: team.isNotEmpty
+            ? Text(team,
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade600))
+            : null,
         trailing: IconButton(
           icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
           onPressed: () => provider.removeFavoritePlayer(id),
@@ -916,7 +1185,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildDivider() => Divider(height: 1, thickness: 1, color: Colors.grey.shade100);
+  Widget _buildDivider() =>
+      Divider(height: 1, thickness: 1, color: Colors.grey.shade100);
 
   void _showClearCacheDialog(BuildContext context) async {
     const Color danger = Color(0xFFDC2626);
@@ -933,7 +1203,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             color: Colors.white,
             borderRadius: BorderRadius.circular(24),
             boxShadow: [
-              BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 30, offset: const Offset(0, 12)),
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.15),
+                  blurRadius: 30,
+                  offset: const Offset(0, 12)),
             ],
           ),
           child: Column(
@@ -945,11 +1218,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 padding: const EdgeInsets.only(top: 28, bottom: 20),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [danger.withOpacity(0.08), danger.withOpacity(0.02)],
+                    colors: [
+                      danger.withOpacity(0.08),
+                      danger.withOpacity(0.02)
+                    ],
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                   ),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(24)),
                 ),
                 child: Center(
                   child: Container(
@@ -959,7 +1236,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       color: danger.withOpacity(0.12),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.delete_sweep_rounded, color: danger, size: 32),
+                    child: const Icon(Icons.delete_sweep_rounded,
+                        color: danger, size: 32),
                   ),
                 ),
               ),
@@ -971,14 +1249,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const Text(
                       'Clear Cache',
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: _ink),
+                      style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          color: _ink),
                     ),
                     const SizedBox(height: 8),
                     Text(
                       'This removes cached scores, standings, and images to free up storage. '
-                          'Your profile, favorites, and quiz progress are not affected.',
+                      'Your profile, favorites, and quiz progress are not affected.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 13, color: Colors.grey.shade600, height: 1.4),
+                      style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade600,
+                          height: 1.4),
                     ),
                     const SizedBox(height: 24),
                     Row(
@@ -990,9 +1274,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               foregroundColor: muted,
                               side: BorderSide(color: Colors.grey.shade300),
                               padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
                             ),
-                            child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                            child: const Text('Cancel',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.w700, fontSize: 14)),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -1016,9 +1303,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               foregroundColor: Colors.white,
                               elevation: 0,
                               padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
                             ),
-                            child: const Text('Clear Cache', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                            child: const Text('Clear Cache',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.w700, fontSize: 14)),
                           ),
                         ),
                       ],

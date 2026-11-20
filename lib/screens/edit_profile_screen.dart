@@ -9,7 +9,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:livescore/models/user_profile_model.dart';
 import 'package:livescore/models/user_preferences.dart';
 import 'package:livescore/services/profile_service.dart';
+import 'package:livescore/services/avatar_catalog_service.dart';
+import 'package:livescore/utils/suggested_profile_names.dart';
 import 'package:livescore/services/preferences_service.dart';
+import 'package:livescore/services/notification_service.dart';
 import 'package:livescore/services/quiz_service.dart';
 import 'package:livescore/utils/predefined_data.dart';
 
@@ -47,6 +50,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   void initState() {
     super.initState();
     _profile = ProfileService().profile;
+    ProfileService().addListener(_refreshProfile);
     _preferences = PreferencesService().preferences;
     _nameController = TextEditingController(text: _profile.name);
     _bioController = TextEditingController(text: _profile.bio);
@@ -56,9 +60,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   @override
   void dispose() {
+    ProfileService().removeListener(_refreshProfile);
     _nameController.dispose();
     _bioController.dispose();
     super.dispose();
+  }
+
+  void _refreshProfile() {
+    if (mounted) setState(() => _profile = ProfileService().profile);
   }
 
   Future<void> _loadStats() async {
@@ -117,7 +126,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   bool get _hasUnsavedTextChanges =>
       _nameController.text.trim() != _profile.name ||
-          _bioController.text.trim() != _profile.bio;
+      _bioController.text.trim() != _profile.bio;
 
   Future<bool> _confirmDiscardIfNeeded() async {
     if (!_hasUnsavedTextChanges) return true;
@@ -197,7 +206,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       );
 
       if (image != null) {
-        final updated = await ProfileService().saveProfileImage(File(image.path));
+        final updated =
+            await ProfileService().saveProfileImage(File(image.path));
         if (updated != null && mounted) {
           setState(() => _profile = updated);
           _showSnack('Profile photo updated', _green);
@@ -271,7 +281,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 const SizedBox(width: 20),
                 const Text(
                   'Profile Photo',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _ink),
+                  style: TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w700, color: _ink),
                 ),
                 const Spacer(),
                 TextButton(
@@ -282,6 +293,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               ],
             ),
             const Divider(height: 1, color: Color(0xFFEEEEEE)),
+            _buildSheetTile(
+              icon: Icons.auto_awesome_rounded,
+              title: 'Choose Anime Avatar',
+              subtitle: 'Browse your football avatars',
+              color: _green,
+              onTap: () {
+                Navigator.pop(context);
+                _showAvatarPicker();
+              },
+            ),
             _buildSheetTile(
               icon: Icons.camera_alt_rounded,
               title: 'Take a Photo',
@@ -307,6 +328,86 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               ),
             const SizedBox(height: 16),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _showAvatarPicker() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.of(sheetContext).size.height * .68,
+          child: Column(children: [
+            const SizedBox(height: 18),
+            const Text('Choose an Anime Avatar',
+                style: TextStyle(
+                    fontFamily: 'SportFont',
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            const Text('Saved on your phone for offline use',
+                style: TextStyle(fontFamily: 'SportFont', color: _muted)),
+            const SizedBox(height: 12),
+            Expanded(
+                child: FutureBuilder<List<AnimeAvatar>>(
+              future: AvatarCatalogService().getAvatars(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData)
+                  return const Center(
+                      child: CircularProgressIndicator(color: _green));
+                final avatars = snapshot.data!;
+                if (avatars.isEmpty)
+                  return const Center(
+                      child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text(
+                        'Avatars are unavailable. Check your connection and avatar catalog setup.',
+                        textAlign: TextAlign.center),
+                  ));
+                return GridView.builder(
+                  padding: const EdgeInsets.all(16),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 3,
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 12),
+                  itemCount: avatars.length,
+                  itemBuilder: (context, index) => InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () async {
+                      Navigator.pop(sheetContext);
+                      setState(() => _isPickingImage = true);
+                      final updated = await ProfileService()
+                          .saveAnimeAvatar(avatars[index]);
+                      if (!mounted) return;
+                      setState(() {
+                        _isPickingImage = false;
+                        if (updated != null) _profile = updated;
+                      });
+                      _showSnack(
+                          updated == null
+                              ? 'Could not save avatar'
+                              : 'Avatar saved for offline use',
+                          updated == null ? _dangerRed : _green);
+                    },
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Image.network(avatars[index].url,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) =>
+                              const Icon(Icons.person_rounded, color: _green)),
+                    ),
+                  ),
+                );
+              },
+            )),
+          ]),
         ),
       ),
     );
@@ -338,7 +439,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           color: isDestructive ? _dangerRed : _ink,
         ),
       ),
-      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12, color: _muted)),
+      subtitle:
+          Text(subtitle, style: const TextStyle(fontSize: 12, color: _muted)),
       onTap: onTap,
     );
   }
@@ -387,7 +489,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   color: _green.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(9),
                 ),
-                child: const Icon(Icons.verified_rounded, size: 16, color: _green),
+                child:
+                    const Icon(Icons.verified_rounded, size: 16, color: _green),
               ),
               const SizedBox(width: 10),
               const Text(
@@ -401,7 +504,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               ),
               const Spacer(),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: isComplete ? _green : _blue,
                   borderRadius: BorderRadius.circular(20),
@@ -452,7 +556,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 SizedBox(width: 6),
                 Text(
                   'Your profile is complete!',
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _green),
+                  style: TextStyle(
+                      fontSize: 11, fontWeight: FontWeight.w700, color: _green),
                 ),
               ],
             )
@@ -467,8 +572,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   // ─── FAVORITE CLUB / PLAYER ────────────────────────────────────────────
-
-
 
   Widget _buildFavoriteClubTile() {
     final hasClub = _profile.hasFavoriteClub;
@@ -503,7 +606,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    hasClub ? _profile.favoriteClubName! : 'Tap to choose your club',
+                    hasClub
+                        ? _profile.favoriteClubName!
+                        : 'Tap to choose your club',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -564,7 +669,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   Text(
                     hasPlayer
                         ? '${_profile.favoritePlayerName}'
-                        '${(_profile.favoritePlayerTeam?.isNotEmpty ?? false) ? ' · ${_profile.favoritePlayerTeam}' : ''}'
+                            '${(_profile.favoritePlayerTeam?.isNotEmpty ?? false) ? ' · ${_profile.favoritePlayerTeam}' : ''}'
                         : 'Tap to choose your player',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -603,14 +708,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       clipBehavior: Clip.antiAlias,
       child: (url != null && url.isNotEmpty)
           ? Padding(
-        padding: const EdgeInsets.all(4),
-        child: Image.network(
-          url,
-          fit: BoxFit.contain,
-          errorBuilder: (context, error, stackTrace) =>
-              Icon(fallbackIcon, size: 20, color: _muted),
-        ),
-      )
+              padding: const EdgeInsets.all(4),
+              child: Image.network(
+                url,
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) =>
+                    Icon(fallbackIcon, size: 20, color: _muted),
+              ),
+            )
           : Icon(fallbackIcon, size: 20, color: _muted),
     );
   }
@@ -646,12 +751,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 children: [
                   const Text(
                     'Choose Favorite Club',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _ink),
+                    style: TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w700, color: _ink),
                   ),
                   const Spacer(),
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: const Text('Cancel', style: TextStyle(color: _muted)),
+                    child:
+                        const Text('Cancel', style: TextStyle(color: _muted)),
                   ),
                 ],
               ),
@@ -663,7 +770,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 itemCount: famousClubs.length,
                 itemBuilder: (context, i) {
                   final club = famousClubs[i];
-                  final logo = 'https://a.espncdn.com/i/teamlogos/soccer/500/${club['id']}.png';
+                  final logo =
+                      'https://a.espncdn.com/i/teamlogos/soccer/500/${club['id']}.png';
                   final isSelected = _profile.favoriteClubId == club['id'];
                   return ListTile(
                     leading: ClipOval(
@@ -676,16 +784,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           logo,
                           fit: BoxFit.contain,
                           errorBuilder: (context, error, stackTrace) =>
-                          const Icon(Icons.shield_outlined, color: _muted),
+                              const Icon(Icons.shield_outlined, color: _muted),
                         ),
                       ),
                     ),
-                    title: Text(club['name']!, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    title: Text(club['name']!,
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
                     subtitle: Text(
                       club['leagueName'] ?? '',
                       style: const TextStyle(color: _muted, fontSize: 12),
                     ),
-                    trailing: isSelected ? const Icon(Icons.check_circle_rounded, color: _blue) : null,
+                    trailing: isSelected
+                        ? const Icon(Icons.check_circle_rounded, color: _blue)
+                        : null,
                     onTap: () => _selectFavoriteClub(club, logo),
                   );
                 },
@@ -728,12 +839,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 children: [
                   const Text(
                     'Choose Favorite Player',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _ink),
+                    style: TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w700, color: _ink),
                   ),
                   const Spacer(),
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: const Text('Cancel', style: TextStyle(color: _muted)),
+                    child:
+                        const Text('Cancel', style: TextStyle(color: _muted)),
                   ),
                 ],
               ),
@@ -756,16 +869,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           player['imageUrl'] as String,
                           fit: BoxFit.cover,
                           errorBuilder: (context, error, stackTrace) =>
-                          const Icon(Icons.person_rounded, color: _muted),
+                              const Icon(Icons.person_rounded, color: _muted),
                         ),
                       ),
                     ),
-                    title: Text(player['name'] as String, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    title: Text(player['name'] as String,
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
                     subtitle: Text(
                       '${player['teamName']} · ${player['position']}',
                       style: const TextStyle(color: _muted, fontSize: 12),
                     ),
-                    trailing: isSelected ? const Icon(Icons.check_circle_rounded, color: _green) : null,
+                    trailing: isSelected
+                        ? const Icon(Icons.check_circle_rounded, color: _green)
+                        : null,
                     onTap: () => _selectFavoritePlayer(player),
                   );
                 },
@@ -777,7 +893,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
-  Future<void> _selectFavoriteClub(Map<String, String> club, String logo) async {
+  Future<void> _selectFavoriteClub(
+      Map<String, String> club, String logo) async {
     Navigator.pop(context);
     final updated = await ProfileService().setFavoriteClub(
       id: club['id']!,
@@ -827,18 +944,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _toggleNotifications(bool value) async {
-    setState(() => _preferences = _preferences.copyWith(notificationsEnabled: value));
+    if (value && !await NotificationService().requestDevicePermission()) return;
+    setState(() =>
+        _preferences = _preferences.copyWith(notificationsEnabled: value));
     await PreferencesService().savePreferences(_preferences);
+    await NotificationService().syncDeviceSettings();
   }
 
   Future<void> _toggleLiveScoreAlerts(bool value) async {
-    setState(() => _preferences = _preferences.copyWith(liveScoreAlerts: value));
+    setState(
+        () => _preferences = _preferences.copyWith(liveScoreAlerts: value));
     await PreferencesService().savePreferences(_preferences);
+    await NotificationService().syncDeviceSettings();
   }
 
   Future<void> _toggleNewsAlerts(bool value) async {
     setState(() => _preferences = _preferences.copyWith(newsAlerts: value));
     await PreferencesService().savePreferences(_preferences);
+    await NotificationService().syncDeviceSettings();
   }
 
   Widget _buildPreferencesCard() {
@@ -897,7 +1020,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             title: 'Live Score Alerts',
             subtitle: 'Get notified the moment your teams score',
             value: _preferences.liveScoreAlerts,
-            onChanged: _preferences.notificationsEnabled ? _toggleLiveScoreAlerts : null,
+            onChanged: _preferences.notificationsEnabled
+                ? _toggleLiveScoreAlerts
+                : null,
             enabled: _preferences.notificationsEnabled,
           ),
           const SizedBox(height: 14),
@@ -906,7 +1031,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             title: 'News Alerts',
             subtitle: 'Get notified about breaking football news',
             value: _preferences.newsAlerts,
-            onChanged: _preferences.notificationsEnabled ? _toggleNewsAlerts : null,
+            onChanged:
+                _preferences.notificationsEnabled ? _toggleNewsAlerts : null,
             enabled: _preferences.notificationsEnabled,
           ),
         ],
@@ -937,12 +1063,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   children: [
                     Text(
                       title,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: _ink),
+                      style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: _ink),
                     ),
                     if (comingSoon) ...[
                       const SizedBox(width: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
                         decoration: BoxDecoration(
                           color: _blue.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(10),
@@ -960,7 +1090,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   ],
                 ),
                 const SizedBox(height: 2),
-                Text(subtitle, style: const TextStyle(fontSize: 11, color: _muted)),
+                Text(subtitle,
+                    style: const TextStyle(fontSize: 11, color: _muted)),
               ],
             ),
           ),
@@ -996,7 +1127,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   color: _green.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(9),
                 ),
-                child: const Icon(Icons.emoji_events_rounded, size: 16, color: _green),
+                child: const Icon(Icons.emoji_events_rounded,
+                    size: 16, color: _green),
               ),
               const SizedBox(width: 10),
               const Text(
@@ -1022,7 +1154,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   ),
                   child: Column(
                     children: [
-                      const Icon(Icons.sports_soccer_rounded, size: 24, color: _green),
+                      const Icon(Icons.sports_soccer_rounded,
+                          size: 24, color: _green),
                       const SizedBox(height: 6),
                       Text(
                         '$_totalBallsCollected',
@@ -1054,7 +1187,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   ),
                   child: Column(
                     children: [
-                      const Icon(Icons.calendar_today_rounded, size: 24, color: _blue),
+                      const Icon(Icons.calendar_today_rounded,
+                          size: 24, color: _blue),
                       const SizedBox(height: 6),
                       Text(
                         _footballFanSince,
@@ -1133,14 +1267,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               onPressed: _isSaving ? null : _save,
               child: _isSaving
                   ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: _green),
-              )
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: _green),
+                    )
                   : const Text(
-                'Save',
-                style: TextStyle(color: _green, fontWeight: FontWeight.w700, fontSize: 15),
-              ),
+                      'Save',
+                      style: TextStyle(
+                          color: _green,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15),
+                    ),
             ),
           ],
         ),
@@ -1176,24 +1314,31 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         child: ClipOval(
                           child: _profile.hasImage
                               ? Image.file(
-                            File(_profile.imagePath!),
-                            fit: BoxFit.cover,
-                            width: 120,
-                            height: 120,
-                          )
+                                  File(_profile.imagePath!),
+                                  fit: BoxFit.cover,
+                                  width: 120,
+                                  height: 120,
+                                  errorBuilder: (_, __, ___) =>
+                                      const ColoredBox(
+                                    color: Colors.white,
+                                    child: Center(
+                                        child: Icon(Icons.person_rounded,
+                                            size: 52, color: _green)),
+                                  ),
+                                )
                               : Container(
-                            color: Colors.white,
-                            child: Center(
-                              child: Text(
-                                _profile.initials,
-                                style: const TextStyle(
-                                  fontSize: 36,
-                                  fontWeight: FontWeight.w800,
-                                  color: _green,
+                                  color: Colors.white,
+                                  child: Center(
+                                    child: Text(
+                                      _profile.initials,
+                                      style: const TextStyle(
+                                        fontSize: 36,
+                                        fontWeight: FontWeight.w800,
+                                        color: _green,
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ),
-                          ),
                         ),
                       ),
                       Positioned(
@@ -1216,10 +1361,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           ),
                           child: _isPickingImage
                               ? const Padding(
-                            padding: EdgeInsets.all(8),
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          )
-                              : const Icon(Icons.camera_alt_rounded, size: 18, color: Colors.white),
+                                  padding: EdgeInsets.all(8),
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.camera_alt_rounded,
+                                  size: 18, color: Colors.white),
                         ),
                       ),
                     ],
@@ -1229,7 +1376,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               const SizedBox(height: 8),
               Center(
                 child: Text(
-                  _profile.hasImage ? 'Tap to change photo' : 'Tap to add a photo',
+                  _profile.hasImage
+                      ? 'Tap to change photo'
+                      : 'Tap to add a photo',
                   style: const TextStyle(fontSize: 12, color: _muted),
                 ),
               ),
@@ -1247,6 +1396,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 hint: 'Enter your name',
                 icon: Icons.person_outline_rounded,
                 maxLength: 40,
+              ),
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                title: const Text('Suggested anime names',
+                    style: TextStyle(
+                        fontFamily: 'SportFont',
+                        color: _green,
+                        fontWeight: FontWeight.w600)),
+                children: [
+                  SizedBox(
+                    height: 220,
+                    child: ListView.builder(
+                      itemCount: suggestedProfileNames.length,
+                      itemBuilder: (context, index) => ListTile(
+                        dense: true,
+                        title: Text(suggestedProfileNames[index],
+                            style: const TextStyle(fontFamily: 'SportFont')),
+                        onTap: () => setState(() => _nameController.text =
+                            suggestedProfileNames[index]),
+                      ),
+                    ),
+                  )
+                ],
               ),
               const SizedBox(height: 20),
 
@@ -1280,19 +1452,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     backgroundColor: _green,
                     foregroundColor: Colors.white,
                     elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
                     disabledBackgroundColor: Colors.grey.shade300,
                   ),
                   child: _isSaving
                       ? const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
-                  )
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.5, color: Colors.white),
+                        )
                       : const Text(
-                    'Save Changes',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, letterSpacing: 0.5),
-                  ),
+                          'Save Changes',
+                          style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.5),
+                        ),
                 ),
               ),
               const SizedBox(height: 20),
@@ -1311,7 +1488,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           Container(
             width: 3,
             height: 14,
-            decoration: BoxDecoration(color: _green, borderRadius: BorderRadius.circular(2)),
+            decoration: BoxDecoration(
+                color: _green, borderRadius: BorderRadius.circular(2)),
           ),
           const SizedBox(width: 8),
           Text(
@@ -1340,7 +1518,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2)),
+          BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2)),
         ],
       ),
       child: TextField(
@@ -1348,19 +1529,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         maxLength: maxLength,
         maxLines: maxLines,
         onChanged: (_) => setState(() {}),
-        style: const TextStyle(fontSize: 15, color: _ink, fontWeight: FontWeight.w500),
+        style: const TextStyle(
+            fontSize: 15, color: _ink, fontWeight: FontWeight.w500),
         decoration: InputDecoration(
           hintText: hint,
           hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 15),
           prefixIcon: Padding(
-            padding: EdgeInsets.only(left: 4, right: 4, bottom: maxLines > 1 ? 40 : 0),
+            padding: EdgeInsets.only(
+                left: 4, right: 4, bottom: maxLines > 1 ? 40 : 0),
             child: Icon(icon, size: 22, color: _green),
           ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
             borderSide: BorderSide.none,
           ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           counterStyle: TextStyle(color: Colors.grey.shade400, fontSize: 11),
           filled: true,
           fillColor: Colors.white,

@@ -302,12 +302,8 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
         // brightness and blending into this screen's background. Setting
         // this explicitly based on the actual theme brightness fixes it.
         systemOverlayStyle: isDark
-            ? SystemUiOverlayStyle.light.copyWith(
-          statusBarColor: Colors.transparent,
-        )
-            : SystemUiOverlayStyle.dark.copyWith(
-          statusBarColor: Colors.transparent,
-        ),
+            ? SystemUiOverlayStyle.light
+            : SystemUiOverlayStyle.dark,
         leading: Padding(
           padding: const EdgeInsets.only(left: 12),
           child: _buildAppBarIcon(

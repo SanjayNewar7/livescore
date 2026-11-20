@@ -8,6 +8,7 @@ class UserProfile {
   final String name;
   final String bio;
   final String? imagePath;
+  final String? avatarId;
 
   final String? favoriteClubId;
   final String? favoriteClubName;
@@ -22,6 +23,7 @@ class UserProfile {
     this.name = '',
     this.bio = '',
     this.imagePath,
+    this.avatarId,
     this.favoriteClubId,
     this.favoriteClubName,
     this.favoriteClubLogo,
@@ -35,8 +37,10 @@ class UserProfile {
 
   bool get hasName => name.trim().isNotEmpty;
   bool get hasImage => imagePath != null && imagePath!.isNotEmpty;
-  bool get hasFavoriteClub => favoriteClubId != null && favoriteClubId!.isNotEmpty;
-  bool get hasFavoritePlayer => favoritePlayerId != null && favoritePlayerId!.isNotEmpty;
+  bool get hasFavoriteClub =>
+      favoriteClubId != null && favoriteClubId!.isNotEmpty;
+  bool get hasFavoritePlayer =>
+      favoritePlayerId != null && favoritePlayerId!.isNotEmpty;
 
   String get displayName => hasName ? name.trim() : 'Football Fan';
 
@@ -54,7 +58,9 @@ class UserProfile {
     String? name,
     String? bio,
     String? imagePath,
+    String? avatarId,
     bool clearImage = false,
+    bool clearAvatar = false,
     String? favoriteClubId,
     String? favoriteClubName,
     String? favoriteClubLogo,
@@ -69,28 +75,43 @@ class UserProfile {
       name: name ?? this.name,
       bio: bio ?? this.bio,
       imagePath: clearImage ? null : (imagePath ?? this.imagePath),
-      favoriteClubId: clearFavoriteClub ? null : (favoriteClubId ?? this.favoriteClubId),
-      favoriteClubName: clearFavoriteClub ? null : (favoriteClubName ?? this.favoriteClubName),
-      favoriteClubLogo: clearFavoriteClub ? null : (favoriteClubLogo ?? this.favoriteClubLogo),
-      favoritePlayerId: clearFavoritePlayer ? null : (favoritePlayerId ?? this.favoritePlayerId),
-      favoritePlayerName: clearFavoritePlayer ? null : (favoritePlayerName ?? this.favoritePlayerName),
-      favoritePlayerImage: clearFavoritePlayer ? null : (favoritePlayerImage ?? this.favoritePlayerImage),
-      favoritePlayerTeam: clearFavoritePlayer ? null : (favoritePlayerTeam ?? this.favoritePlayerTeam),
+      avatarId: clearAvatar ? null : (avatarId ?? this.avatarId),
+      favoriteClubId:
+          clearFavoriteClub ? null : (favoriteClubId ?? this.favoriteClubId),
+      favoriteClubName: clearFavoriteClub
+          ? null
+          : (favoriteClubName ?? this.favoriteClubName),
+      favoriteClubLogo: clearFavoriteClub
+          ? null
+          : (favoriteClubLogo ?? this.favoriteClubLogo),
+      favoritePlayerId: clearFavoritePlayer
+          ? null
+          : (favoritePlayerId ?? this.favoritePlayerId),
+      favoritePlayerName: clearFavoritePlayer
+          ? null
+          : (favoritePlayerName ?? this.favoritePlayerName),
+      favoritePlayerImage: clearFavoritePlayer
+          ? null
+          : (favoritePlayerImage ?? this.favoritePlayerImage),
+      favoritePlayerTeam: clearFavoritePlayer
+          ? null
+          : (favoritePlayerTeam ?? this.favoritePlayerTeam),
     );
   }
 
   Map<String, dynamic> toMap() => {
-    'name': name,
-    'bio': bio,
-    'imagePath': imagePath,
-    'favoriteClubId': favoriteClubId,
-    'favoriteClubName': favoriteClubName,
-    'favoriteClubLogo': favoriteClubLogo,
-    'favoritePlayerId': favoritePlayerId,
-    'favoritePlayerName': favoritePlayerName,
-    'favoritePlayerImage': favoritePlayerImage,
-    'favoritePlayerTeam': favoritePlayerTeam,
-  };
+        'name': name,
+        'bio': bio,
+        'imagePath': imagePath,
+        'avatarId': avatarId,
+        'favoriteClubId': favoriteClubId,
+        'favoriteClubName': favoriteClubName,
+        'favoriteClubLogo': favoriteClubLogo,
+        'favoritePlayerId': favoritePlayerId,
+        'favoritePlayerName': favoritePlayerName,
+        'favoritePlayerImage': favoritePlayerImage,
+        'favoritePlayerTeam': favoritePlayerTeam,
+      };
 
   factory UserProfile.fromMap(Map? map) {
     if (map == null) return UserProfile.empty;
@@ -98,6 +119,7 @@ class UserProfile {
       name: map['name']?.toString() ?? '',
       bio: map['bio']?.toString() ?? '',
       imagePath: map['imagePath']?.toString(),
+      avatarId: map['avatarId']?.toString(),
       favoriteClubId: map['favoriteClubId']?.toString(),
       favoriteClubName: map['favoriteClubName']?.toString(),
       favoriteClubLogo: map['favoriteClubLogo']?.toString(),

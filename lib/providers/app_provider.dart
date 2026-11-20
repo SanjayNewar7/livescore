@@ -56,21 +56,30 @@ class AppProvider extends ChangeNotifier {
   /// this never resets an already-read notification back to unread.
   Future<void> generateNotifications() async {
     try {
-      final favTeamNames = favoriteTeamIds
-          .map((id) {
+      final notificationPrefs = _prefs.preferences;
+      if (!notificationPrefs.notificationsEnabled) {
+        _refreshUnreadNotificationCount();
+        if (_isMounted) notifyListeners();
+        return;
+      }
+      final favoriteNames = favoriteTeamIds.map((id) {
         final matches = _allTeams.where((t) => t.id == id);
         if (matches.isEmpty) return null;
         final team = matches.first;
         return team.displayName.isNotEmpty ? team.displayName : team.name;
-      })
-          .whereType<String>()
-          .toList();
+      }).whereType<String>();
+      final favTeamNames = <String>{
+        ...favoriteNames,
+        ..._notificationService.followedTeamNames,
+      }.toList();
 
-      await _notificationService.generateNewsNotifications(
-        articles: _news,
-        favoriteTeamNames: favTeamNames,
-        favoritePlayers: favoritePlayers,
-      );
+      if (notificationPrefs.newsAlerts) {
+        await _notificationService.generateNewsNotifications(
+          articles: _news,
+          favoriteTeamNames: favTeamNames,
+          favoritePlayers: favoritePlayers,
+        );
+      }
 
       // Today's games cover most same-day full-time results. A favorite
       // team's match could also have gone final just before local
@@ -78,23 +87,26 @@ class AppProvider extends ChangeNotifier {
       // SportService (which caches internally) rather than reusing
       // fetchYesterdaysMatches(), which would overwrite the Yesterday
       // tab's _allGames/_yesterdaysGames state as a side effect.
-      List<Game> yesterdaysGamesForNotifications = _yesterdaysGames;
-      if (yesterdaysGamesForNotifications.isEmpty) {
-        try {
-          yesterdaysGamesForNotifications = await _sportService.getYesterdaysMatches();
-        } catch (e) {
-          print('[Notifications] Could not fetch yesterday\'s games: $e');
+      if (notificationPrefs.liveScoreAlerts) {
+        List<Game> yesterdaysGamesForNotifications = _yesterdaysGames;
+        if (yesterdaysGamesForNotifications.isEmpty) {
+          try {
+            yesterdaysGamesForNotifications = await _sportService.getYesterdaysMatches();
+          } catch (e) {
+            print('[Notifications] Could not fetch yesterday\'s games: $e');
+          }
         }
+        final Map<String, Game> uniqueGames = {
+          for (final g in [..._todaysGames, ...yesterdaysGamesForNotifications]) g.id: g,
+        };
+        await _notificationService.generateMatchResultNotifications(
+          games: uniqueGames.values.toList(),
+          favoriteTeamIds: <String>{
+            ...favoriteTeamIds,
+            ..._notificationService.followedTeamIds,
+          }.toList(),
+        );
       }
-
-      final Map<String, Game> uniqueGames = {
-        for (final g in [..._todaysGames, ...yesterdaysGamesForNotifications]) g.id: g,
-      };
-
-      await _notificationService.generateMatchResultNotifications(
-        games: uniqueGames.values.toList(),
-        favoriteTeamIds: favoriteTeamIds,
-      );
 
       _refreshUnreadNotificationCount();
       if (_isMounted) notifyListeners();
