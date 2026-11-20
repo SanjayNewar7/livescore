@@ -169,11 +169,98 @@ class Game {
     this.homeTeamShortName = '',
   });
 
-  // Helper getters
+  // ─── Helper getters ──────────────────────────────────────────────────────────
+
   List<GoalScorer> get awayTeamGoals => goalScorers.where((g) => !g.isHomeTeam).toList();
   List<GoalScorer> get homeTeamGoals => goalScorers.where((g) => g.isHomeTeam).toList();
 
   bool get hasGoals => goalScorers.isNotEmpty;
+
+  /// Check if the game is actually live based on multiple factors.
+  /// This is more reliable than just checking status == 'STATUS_LIVE'
+  /// because ESPN's API sometimes reports live games as SCHEDULED.
+  bool get isActuallyLive {
+    // If status is already LIVE, it's definitely live
+    if (status == 'STATUS_LIVE') return true;
+
+    // If status is FINAL, it's definitely not live
+    if (status == 'STATUS_FINAL') return false;
+
+    // For SCHEDULED status, check if there are signs of a live match
+    if (status == 'STATUS_SCHEDULED') {
+      // Check if clock is running (not "0:00" or empty)
+      if (clock.isNotEmpty && clock != '0:00' && clock != '0') {
+        // Check if there are any goals or scores
+        if (goalScorers.isNotEmpty) return true;
+        // Check if awayScore or homeScore is not '0'
+        if (awayScore != '0' || homeScore != '0') return true;
+        // Check if line scores exist (indicates periods have been played)
+        if (awayLineScores.isNotEmpty || homeLineScores.isNotEmpty) return true;
+        // If clock is running and it's not the start time, it's likely live
+        try {
+          final gameDate = DateTime.parse(date);
+          final now = DateTime.now();
+          final gameStart = gameDate;
+          final gameEnd = gameDate.add(const Duration(hours: 2, minutes: 30));
+          if (now.isAfter(gameStart) && now.isBefore(gameEnd)) {
+            return true;
+          }
+        } catch (_) {}
+      }
+
+      // Check if the event has started based on time
+      try {
+        final gameDate = DateTime.parse(date);
+        final now = DateTime.now();
+        final gameStart = gameDate;
+        final gameEnd = gameDate.add(const Duration(hours: 2, minutes: 30));
+        // If current time is within the match window and there's any score data
+        if (now.isAfter(gameStart) && now.isBefore(gameEnd)) {
+          if (awayScore != '0' || homeScore != '0' || goalScorers.isNotEmpty) {
+            return true;
+          }
+        }
+      } catch (_) {}
+    }
+
+    return false;
+  }
+
+  /// Returns true if the game is currently in progress
+  bool get isLive => status == 'STATUS_LIVE' || isActuallyLive;
+
+  /// Returns true if the game has finished
+  bool get isFinal => status == 'STATUS_FINAL';
+
+  /// Returns true if the game hasn't started yet
+  bool get isUpcoming => !isLive && !isFinal;
+
+  /// Get the appropriate status label for display
+  String get statusLabel {
+    if (isLive) return 'LIVE';
+    if (isFinal) return 'FT';
+    return 'SCHEDULED';
+  }
+
+  /// Get the live clock display string
+  String get liveClockDisplay {
+    if (isLive) {
+      if (clock.isNotEmpty && clock != '0:00' && clock != '0') {
+        // Check if it's halftime
+        if (clock == '0:00' && period == '2') {
+          return "HT";
+        }
+        return "$clock'";
+      }
+      return "LIVE";
+    }
+    return "";
+  }
+
+  /// Check if the game is at halftime
+  bool get isHalftime {
+    return isLive && clock == '0:00' && period == '2';
+  }
 
   String get formattedDate {
     try {
@@ -198,6 +285,28 @@ class Game {
     try {
       final gameDate = DateTime.parse(date);
       return '$formattedDate • ${_formatTime(gameDate)}';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /// Get the game time in a formatted string (e.g., "7:30 PM")
+  String get formattedTime {
+    try {
+      final gameDate = DateTime.parse(date);
+      return _formatTime(gameDate);
+    } catch (e) {
+      return 'TBD';
+    }
+  }
+
+  /// Get the game date in a formatted string (e.g., "Jan 15, 2026")
+  String get formattedDateOnly {
+    try {
+      final gameDate = DateTime.parse(date);
+      final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return '${months[gameDate.month - 1]} ${gameDate.day}, ${gameDate.year}';
     } catch (e) {
       return '';
     }
@@ -261,6 +370,58 @@ class Game {
       homeTeamShortName: json['homeTeamShortName'] ?? '',
     );
   }
+
+  /// Create a copy of this Game with updated fields
+  Game copyWith({
+    String? id,
+    String? status,
+    String? shortDetail,
+    TeamInfo? awayTeam,
+    TeamInfo? homeTeam,
+    String? awayScore,
+    String? homeScore,
+    List<int>? awayLineScores,
+    List<int>? homeLineScores,
+    Venue? venue,
+    String? date,
+    String? clock,
+    String? period,
+    String? leagueName,
+    String? leagueFlag,
+    List<GoalScorer>? goalScorers,
+    String? awayTeamFullName,
+    String? homeTeamFullName,
+    String? awayTeamShortName,
+    String? homeTeamShortName,
+  }) {
+    return Game(
+      id: id ?? this.id,
+      status: status ?? this.status,
+      shortDetail: shortDetail ?? this.shortDetail,
+      awayTeam: awayTeam ?? this.awayTeam,
+      homeTeam: homeTeam ?? this.homeTeam,
+      awayScore: awayScore ?? this.awayScore,
+      homeScore: homeScore ?? this.homeScore,
+      awayLineScores: awayLineScores ?? this.awayLineScores,
+      homeLineScores: homeLineScores ?? this.homeLineScores,
+      venue: venue ?? this.venue,
+      date: date ?? this.date,
+      clock: clock ?? this.clock,
+      period: period ?? this.period,
+      leagueName: leagueName ?? this.leagueName,
+      leagueFlag: leagueFlag ?? this.leagueFlag,
+      goalScorers: goalScorers ?? this.goalScorers,
+      awayTeamFullName: awayTeamFullName ?? this.awayTeamFullName,
+      homeTeamFullName: homeTeamFullName ?? this.homeTeamFullName,
+      awayTeamShortName: awayTeamShortName ?? this.awayTeamShortName,
+      homeTeamShortName: homeTeamShortName ?? this.homeTeamShortName,
+    );
+  }
+
+  @override
+  String toString() {
+    return 'Game(id: $id, homeTeam: ${homeTeam.name} vs awayTeam: ${awayTeam.name}, status: $status, score: $homeScore-$awayScore)';
+  }
 }
 
 @HiveType(typeId: 2)
@@ -322,6 +483,24 @@ class Venue {
       state: json['state'] ?? '',
       capacity: json['capacity'] ?? 0,
       imageUrl: json['imageUrl'],
+    );
+  }
+
+  Venue copyWith({
+    String? id,
+    String? fullName,
+    String? city,
+    String? state,
+    int? capacity,
+    String? imageUrl,
+  }) {
+    return Venue(
+      id: id ?? this.id,
+      fullName: fullName ?? this.fullName,
+      city: city ?? this.city,
+      state: state ?? this.state,
+      capacity: capacity ?? this.capacity,
+      imageUrl: imageUrl ?? this.imageUrl,
     );
   }
 }

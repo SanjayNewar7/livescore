@@ -11,7 +11,6 @@ class NetworkStatusWidget extends StatefulWidget {
 }
 
 class _NetworkStatusWidgetState extends State<NetworkStatusWidget> {
-  ConnectivityResult _connectivityStatus = ConnectivityResult.wifi;
   bool _showBanner = false;
 
   @override
@@ -19,18 +18,18 @@ class _NetworkStatusWidgetState extends State<NetworkStatusWidget> {
     super.initState();
     _checkConnectivity();
     Connectivity().onConnectivityChanged.listen((result) {
+      if (!mounted) return;
       setState(() {
-        _connectivityStatus = result;
-        _showBanner = result == ConnectivityResult.none;
+        _showBanner = result.contains(ConnectivityResult.none);
       });
     });
   }
 
   Future<void> _checkConnectivity() async {
     final result = await Connectivity().checkConnectivity();
+    if (!mounted) return;
     setState(() {
-      _connectivityStatus = result;
-      _showBanner = result == ConnectivityResult.none;
+      _showBanner = result.contains(ConnectivityResult.none);
     });
   }
 

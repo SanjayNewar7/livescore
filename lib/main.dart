@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'package:flutter/services.dart';
+import 'package:workmanager/workmanager.dart';
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:livescore/screens/onboarding_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -7,6 +12,9 @@ import 'package:livescore/screens/splash_screen.dart';
 import 'package:livescore/utils/theme.dart';
 import 'package:livescore/services/cache_service.dart';
 import 'package:livescore/services/preferences_service.dart';
+import 'package:livescore/services/profile_service.dart';
+import 'package:livescore/services/quiz_service.dart';
+import 'package:livescore/services/notification_service.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:livescore/screens/home_screen.dart';
 import 'package:livescore/screens/teams_screen.dart';
@@ -14,18 +22,76 @@ import 'package:livescore/screens/standings_screen.dart';
 import 'package:livescore/screens/news_screen.dart';
 import 'package:livescore/screens/settings_screen.dart';
 
+@pragma('vm:entry-point')
+void notificationWorker() {
+  Workmanager().executeTask((task, inputData) async {
+    try {
+      WidgetsFlutterBinding.ensureInitialized();
+      await Hive.initFlutter();
+      await PreferencesService().init();
+      await NotificationService().init();
+      await NotificationService().pollTeamActivity();
+      return true;
+    } catch (e) {
+      print('[Notifications] Background refresh failed: $e');
+      return false;
+    }
+  });
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
   try {
     await Hive.initFlutter();
-    await CacheService().init();
-    await PreferencesService().init();
   } catch (e) {
-    print('Initialization error: $e');
+    print('[Main] Hive.initFlutter error: $e');
   }
 
+  try {
+    await CacheService().init();
+  } catch (e) {
+    print('[Main] CacheService init error: $e');
+  }
+  try {
+    await PreferencesService().init();
+  } catch (e) {
+    print('[Main] PreferencesService init error: $e');
+  }
+  try {
+    await ProfileService().init();
+  } catch (e) {
+    print('[Main] ProfileService init error: $e');
+  }
+  try {
+    await QuizService().init();
+  } catch (e) {
+    print('[Main] QuizService init error: $e');
+  }
+  try {
+    await NotificationService().init();
+  } catch (e) {
+    print('[Main] NotificationService init error: $e');
+  }
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    try {
+      await Workmanager().initialize(notificationWorker);
+      await Workmanager().registerPeriodicTask(
+        'team-activity-check',
+        'team-activity-check',
+        frequency: const Duration(minutes: 15),
+        constraints: Constraints(networkType: NetworkType.connected),
+      );
+    } catch (e) {
+      print('[Main] Notification worker setup error: $e');
+    }
+  }
+
+  print('[Main] Service initialization complete');
+
   runApp(const MyApp());
+  unawaited(ProfileService().ensureDefaultAvatar());
 }
 
 class MyApp extends StatelessWidget {
@@ -42,7 +108,8 @@ class MyApp extends StatelessWidget {
           return MaterialApp(
             title: 'Livescore',
             debugShowCheckedModeBanner: false,
-            theme: provider.isDarkMode ? AppTheme.darkTheme : AppTheme.lightTheme,
+            theme:
+                provider.isDarkMode ? AppTheme.darkTheme : AppTheme.lightTheme,
             builder: (context, child) {
               return _NetworkErrorWrapper(child: child);
             },
@@ -71,6 +138,15 @@ class MyApp extends StatelessWidget {
           builder: (_) => const OnboardingScreen(),
           settings: settings,
         );
+      case '/standings':
+        // Optional league code passed as the route argument (e.g. from
+        // tapping a favourited league on the home screen). Falls back to
+        // the default FIFA World Cup view when no argument is supplied.
+        final leagueCode = settings.arguments as String?;
+        return MaterialPageRoute(
+          builder: (_) => StandingsScreen(initialLeagueCode: leagueCode),
+          settings: settings,
+        );
       default:
         return MaterialPageRoute(
           builder: (_) => const MainNavigationWrapper(),
@@ -89,7 +165,8 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// Main navigation wrapper to persist bottom nav state
+// ─── Main Navigation Wrapper ──────────────────────────────────────────────────
+
 class MainNavigationWrapper extends StatefulWidget {
   const MainNavigationWrapper({super.key});
 
@@ -104,12 +181,12 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   @override
   void initState() {
     super.initState();
-    _screens = [
-      const HomeScreen(),
-      const TeamsScreen(),
-      const StandingsScreen(),
-      const NewsScreen(),
-      const SettingsScreen(),
+    _screens = const [
+      HomeScreen(),
+      TeamsScreen(),
+      StandingsScreen(),
+      NewsScreen(),
+      SettingsScreen(),
     ];
   }
 
@@ -129,13 +206,28 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
           });
         },
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.sports_soccer_rounded), label: 'Matches'),
-          BottomNavigationBarItem(icon: Icon(Icons.people_rounded), label: 'Teams'),
-          BottomNavigationBarItem(icon: Icon(Icons.emoji_events_rounded), label: 'Standings'),
-          BottomNavigationBarItem(icon: Icon(Icons.newspaper_rounded), label: 'News'),
-          BottomNavigationBarItem(icon: Icon(Icons.person_rounded), label: 'Profile'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.sports_soccer_rounded),
+            label: 'Matches',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.people_rounded),
+            label: 'Teams',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.emoji_events_rounded),
+            label: 'Standings',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.newspaper_rounded),
+            label: 'News',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person_rounded),
+            label: 'Profile',
+          ),
         ],
-        selectedItemColor: const Color(0xFF1A62C8),
+        selectedItemColor: const Color(0xFF16A34A),
         unselectedItemColor: const Color(0xFF6B7A96),
         backgroundColor: Colors.white,
         elevation: 8,
@@ -152,7 +244,8 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   }
 }
 
-// Wrapper for network error banner
+// ─── Network Error Wrapper ────────────────────────────────────────────────────
+
 class _NetworkErrorWrapper extends StatelessWidget {
   final Widget? child;
 
@@ -164,7 +257,7 @@ class _NetworkErrorWrapper extends StatelessWidget {
       body: Stack(
         children: [
           if (child != null) child!,
-          Positioned(
+          const Positioned(
             bottom: 0,
             left: 0,
             right: 0,
@@ -176,16 +269,18 @@ class _NetworkErrorWrapper extends StatelessWidget {
   }
 }
 
-// Network status banner that shows at bottom when offline
+// ─── Network Status Banner ────────────────────────────────────────────────────
+
 class _NetworkStatusBanner extends StatefulWidget {
+  const _NetworkStatusBanner();
+
   @override
   State<_NetworkStatusBanner> createState() => _NetworkStatusBannerState();
 }
 
 class _NetworkStatusBannerState extends State<_NetworkStatusBanner> {
-  ConnectivityResult _connectivityStatus = ConnectivityResult.wifi;
   bool _isOffline = false;
-  late Stream<ConnectivityResult> _connectivityStream;
+  late Stream<List<ConnectivityResult>> _connectivityStream;
 
   @override
   void initState() {
@@ -193,30 +288,29 @@ class _NetworkStatusBannerState extends State<_NetworkStatusBanner> {
     _checkConnectivity();
     _connectivityStream = Connectivity().onConnectivityChanged;
     _connectivityStream.listen((result) {
+      if (!mounted) return;
       setState(() {
-        _connectivityStatus = result;
-        _isOffline = result == ConnectivityResult.none;
+        _isOffline = result.contains(ConnectivityResult.none);
       });
 
-      // Only show snackbar when going offline, not when coming back online
       if (_isOffline && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('No internet connection. Some features may be limited.'),
+            content:
+                Text('No internet connection. Some features may be limited.'),
             backgroundColor: Colors.red,
             duration: Duration(seconds: 3),
           ),
         );
       }
-      // Removed the "Back online!" snackbar
     });
   }
 
   Future<void> _checkConnectivity() async {
     final result = await Connectivity().checkConnectivity();
+    if (!mounted) return;
     setState(() {
-      _connectivityStatus = result;
-      _isOffline = result == ConnectivityResult.none;
+      _isOffline = result.contains(ConnectivityResult.none);
     });
   }
 

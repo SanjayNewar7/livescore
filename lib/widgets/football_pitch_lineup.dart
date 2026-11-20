@@ -90,7 +90,8 @@ class FootballPitch extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final w = constraints.maxWidth;
-            final h = customHeight ?? (w * 1.48).clamp(480.0, 780.0);
+            // Taller pitch = more breathing room between lines, so cards never crowd each other.
+            final h = customHeight ?? (w * 1.68).clamp(600.0, 900.0);
             return SizedBox(
               width: w,
               height: h,
@@ -308,8 +309,8 @@ class _PlayersLayer extends StatelessWidget {
         children: List.generate(players.length, (i) {
           if (i >= positions.length) return const SizedBox.shrink();
           return Positioned(
-            left: positions[i].dx - 30,
-            top: positions[i].dy - 38,
+            left: positions[i].dx - _PlayerCircle.cardWidth / 2,
+            top: positions[i].dy - _PlayerCircle.anchorOffsetY,
             child: _PlayerCircle(
               player: players[i],
               teamColor: teamColor,
@@ -323,39 +324,49 @@ class _PlayersLayer extends StatelessWidget {
   }
 
   List<Offset> _calculatePositions(double w, double h) {
-    final lines = formation.split('-').map((e) => int.tryParse(e) ?? 0).toList();
-    final validLines = (lines.isEmpty || lines.every((l) => l == 0))
+    final lines = formation.split('-').map((e) => int.tryParse(e) ?? 0).where((e) => e > 0).toList();
+    final validLines = lines.isEmpty
         ? (players.length <= 11 ? [1, 4, 3, 3] : [1, 4, 4, 2])
         : [1, ...lines];
 
     final List<Offset> positions = [];
-    // Zone: each team occupies 44% of pitch height; GK is at 4%/96%
-    final zoneStart = isHome ? h * 0.55 : h * 0.05;
-    final zoneEnd   = isHome ? h * 0.96 : h * 0.45;
+
+    // Each team owns just under half the pitch, leaving a clear gap around the
+    // halfway line so the two backlines never visually merge.
+    final zoneStart = isHome ? h * 0.535 : h * 0.055;
+    final zoneEnd   = isHome ? h * 0.955 : h * 0.455;
     final zoneH     = (zoneEnd - zoneStart).abs();
 
     int playerIndex = 0;
     final lineCount = validLines.length;
+    final outfieldLines = lineCount - 1;
+
+    // GK gets a small, fixed slice near the byline; outfield lines then divide
+    // the *remaining* space evenly, so a 5-line formation (e.g. 4-2-3-1) gets
+    // just as much breathing room per line as a 3-line one.
+    const gkBandFrac = 0.15;
+    const halfwayGapFrac = 0.08; // keeps the most advanced line off the centre circle
 
     for (int li = 0; li < lineCount; li++) {
       final n = validLines[li];
-      if (n == 0) continue;
 
-      // Y: GK at near end, outfield lines spread toward midfield
-      double lineY;
+      double frac; // 0 = byline, 1 = halfway line
       if (li == 0) {
-        // Goalkeeper — very close to goal line
-        lineY = isHome ? zoneEnd - (h * 0.025) : zoneStart + (h * 0.025);
+        frac = gkBandFrac * 0.45;
       } else {
-        final t = (li - 1) / ((lineCount - 1).clamp(1, lineCount - 1));
-        // Home: outfield grows from bottom toward center; away: top toward center
-        lineY = isHome
-            ? zoneEnd - h * 0.025 - (zoneH * 0.85 * t)
-            : zoneStart + h * 0.025 + (zoneH * 0.85 * t);
+        final t = outfieldLines <= 1 ? 0.0 : (li - 1) / (outfieldLines - 1);
+        frac = gkBandFrac + (1 - gkBandFrac - halfwayGapFrac) * t;
       }
 
+      final lineY = isHome ? zoneEnd - zoneH * frac : zoneStart + zoneH * frac;
+
+      // Wider side margins for small lines (e.g. a lone striker or two centre-backs)
+      // keeps players from feeling stranded near the touchline, while full-width
+      // lines (back four/five) still spread edge to edge.
+      final margin = n <= 1 ? 0.5 : (n == 2 ? 0.24 : (n <= 3 ? 0.16 : 0.10));
+
       for (int j = 0; j < n && playerIndex < players.length; j++) {
-        final xFrac = n == 1 ? 0.5 : (0.09 + j * (0.82 / (n - 1)));
+        final xFrac = n == 1 ? 0.5 : (margin + j * ((1 - margin * 2) / (n - 1)));
         positions.add(Offset(w * xFrac, lineY));
         playerIndex++;
       }
@@ -374,6 +385,11 @@ class _PlayerCircle extends StatelessWidget {
   final bool showRating;
   final VoidCallback? onTap;
 
+  // Shared layout constants — keep in sync with _PlayersLayer's anchor math.
+  static const double cardWidth = 52;
+  static const double avatarSize = 38;
+  static const double anchorOffsetY = avatarSize / 2 + 6; // room for the rating badge overhang
+
   const _PlayerCircle({
     required this.player,
     required this.teamColor,
@@ -385,8 +401,9 @@ class _PlayerCircle extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
+      behavior: HitTestBehavior.opaque,
       child: SizedBox(
-        width: 60,
+        width: cardWidth,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -396,14 +413,13 @@ class _PlayerCircle extends StatelessWidget {
               children: [
                 // ── Avatar circle ───────────────────────────────────────────
                 Container(
-                  width: 44, height: 44,
+                  width: avatarSize, height: avatarSize,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: Colors.white,
-                    border: Border.all(color: teamColor, width: 2.8),
+                    border: Border.all(color: teamColor, width: 2.2),
                     boxShadow: [
-                      BoxShadow(color: teamColor.withOpacity(0.45), blurRadius: 8, offset: const Offset(0, 2)),
-                      BoxShadow(color: Colors.black.withOpacity(0.25), blurRadius: 4),
+                      BoxShadow(color: Colors.black.withOpacity(0.30), blurRadius: 5, offset: const Offset(0, 2)),
                     ],
                   ),
                   child: ClipOval(
@@ -411,112 +427,119 @@ class _PlayerCircle extends StatelessWidget {
                         ? Image.network(
                       player.imageUrl!,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _Initials(name: player.name, color: teamColor),
+                      errorBuilder: (_, __, ___) => _PlayerFallbackAvatar(
+                        name: player.name,
+                        color: teamColor,
+                      ),
                     )
-                        : _Initials(name: player.name, color: teamColor),
+                        : _PlayerFallbackAvatar(
+                      name: player.name,
+                      color: teamColor,
+                    ),
                   ),
                 ),
 
-                // ── Jersey number badge (bottom-left) ───────────────────────
+                // ── Jersey number badge (bottom-right, overlapping avatar) ──
                 Positioned(
-                  bottom: -5, left: -6,
+                  bottom: -2, right: -2,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    width: 16, height: 16,
+                    alignment: Alignment.center,
                     decoration: BoxDecoration(
+                      shape: BoxShape.circle,
                       color: teamColor,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.white, width: 1.5),
+                      border: Border.all(color: Colors.white, width: 1.3),
                     ),
                     child: Text(
                       player.number.isEmpty ? '?' : player.number,
-                      style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900),
+                      style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w800, height: 1),
+                      maxLines: 1,
+                      overflow: TextOverflow.clip,
                     ),
                   ),
                 ),
 
-                // ── Rating badge (top-right) ─────────────────────────────────
-                if (showRating && player.rating != null)
-                  Positioned(
-                    top: -6, right: -8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: _ratingColor(player.rating!),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.white, width: 1.5),
-                      ),
-                      child: Text(
-                        player.rating!.toStringAsFixed(1),
-                        style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w900),
-                      ),
-                    ),
-                  ),
+                // Note: player ratings aren't reliably available from ESPN or
+                // SportsDB for these leagues, so no rating badge is shown here.
               ],
             ),
 
-            const SizedBox(height: 5),
+            const SizedBox(height: 4),
 
-            // ── Player name ─────────────────────────────────────────────────
-            Text(
-              player.shortName.isNotEmpty ? player.shortName : player.name,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 9.5,
-                fontWeight: FontWeight.w700,
-                shadows: [Shadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 1))],
+            // ── Player name pill — compact, high-contrast, single line ──────
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.42),
+                borderRadius: BorderRadius.circular(5),
               ),
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              constraints: const BoxConstraints(maxWidth: cardWidth + 6),
+              child: Text(
+                player.shortName.isNotEmpty ? player.shortName : player.name,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  height: 1.1,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-
-            // ── Position badge ──────────────────────────────────────────────
-            if (player.position.isNotEmpty)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                decoration: BoxDecoration(
-                  color: teamColor.withOpacity(0.70),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  player.position,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 7,
-                    fontWeight: FontWeight.w800,
-                    shadows: [Shadow(color: Colors.black38, blurRadius: 2)],
-                  ),
-                ),
-              ),
           ],
         ),
       ),
     );
   }
 
-  Color _ratingColor(double r) {
-    if (r >= 8.0) return const Color(0xFF16A34A);
-    if (r >= 6.5) return const Color(0xFF1A56DB);
-    if (r >= 5.0) return const Color(0xFFCA8A04);
-    return const Color(0xFFDC2626);
-  }
 }
 
-class _Initials extends StatelessWidget {
+/// Fallback avatar with initials or person icon
+class _PlayerFallbackAvatar extends StatelessWidget {
   final String name;
   final Color color;
-  const _Initials({required this.name, required this.color});
+
+  const _PlayerFallbackAvatar({
+    required this.name,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
     final parts = name.trim().split(' ');
-    final initials = parts.length >= 2
-        ? '${parts.first[0]}${parts.last[0]}'.toUpperCase()
-        : (name.isNotEmpty ? name[0].toUpperCase() : '?');
+    String initials = '?';
+    if (parts.length >= 2) {
+      initials = '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+    } else if (name.isNotEmpty) {
+      initials = name[0].toUpperCase();
+    }
+
+    // If initials is just '?' or empty, show a person icon
+    if (initials == '?' || initials.isEmpty) {
+      return Container(
+        color: color.withOpacity(0.12),
+        child: Center(
+          child: Icon(
+            Icons.person_rounded,
+            color: color.withOpacity(0.5),
+            size: 18,
+          ),
+        ),
+      );
+    }
+
     return Container(
       color: color.withOpacity(0.12),
       child: Center(
-        child: Text(initials, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w900)),
+        child: Text(
+          initials,
+          style: TextStyle(
+            color: color,
+            fontSize: 14,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
       ),
     );
   }
@@ -672,7 +695,7 @@ class _SubChip extends StatelessWidget {
         border: Border.all(color: const Color(0xFFDDE3F0)),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        // Avatar or jersey number
+        // Avatar
         Container(
           width: 26, height: 26,
           decoration: BoxDecoration(
@@ -681,9 +704,22 @@ class _SubChip extends StatelessWidget {
             border: Border.all(color: color.withOpacity(0.4)),
           ),
           child: (player.imageUrl != null && player.imageUrl!.isNotEmpty)
-              ? ClipOval(child: Image.network(player.imageUrl!, fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => _jerseyText(player.number, color)))
-              : _jerseyText(player.number, color),
+              ? ClipOval(
+            child: Image.network(
+              player.imageUrl!,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _SubChipFallbackAvatar(
+                name: player.name,
+                number: player.number,
+                color: color,
+              ),
+            ),
+          )
+              : _SubChipFallbackAvatar(
+            name: player.name,
+            number: player.number,
+            color: color,
+          ),
         ),
         const SizedBox(width: 7),
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -693,33 +729,55 @@ class _SubChip extends StatelessWidget {
           ),
           Text(player.position, style: const TextStyle(fontSize: 10, color: Color(0xFF6B7A96))),
         ]),
-        if (player.rating != null) ...[
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-            decoration: BoxDecoration(
-              color: _ratingColor(player.rating!).withOpacity(0.12),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              player.rating!.toStringAsFixed(1),
-              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: _ratingColor(player.rating!)),
-            ),
-          ),
-        ],
+        // Note: ratings aren't shown here — ESPN/SportsDB don't reliably
+        // provide per-match player ratings for these leagues.
       ]),
     );
   }
+}
 
-  Widget _jerseyText(String number, Color color) {
-    return Center(child: Text(number.isEmpty ? '?' : number,
-        style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w900)));
-  }
+/// Fallback avatar for substitute chips
+class _SubChipFallbackAvatar extends StatelessWidget {
+  final String name;
+  final String number;
+  final Color color;
 
-  Color _ratingColor(double r) {
-    if (r >= 8.0) return const Color(0xFF16A34A);
-    if (r >= 6.5) return const Color(0xFF1A56DB);
-    if (r >= 5.0) return const Color(0xFFCA8A04);
-    return const Color(0xFFDC2626);
+  const _SubChipFallbackAvatar({
+    required this.name,
+    required this.number,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = name.trim().split(' ');
+    String initials = '?';
+    if (parts.length >= 2) {
+      initials = '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+    } else if (name.isNotEmpty) {
+      initials = name[0].toUpperCase();
+    }
+
+    // If initials is just '?' or empty, show a person icon
+    if (initials == '?' || initials.isEmpty) {
+      return Center(
+        child: Icon(
+          Icons.person_rounded,
+          color: color.withOpacity(0.4),
+          size: 14,
+        ),
+      );
+    }
+
+    return Center(
+      child: Text(
+        initials,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
   }
 }

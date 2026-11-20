@@ -1,13 +1,19 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:livescore/services/sport_service.dart';
+import 'package:livescore/services/sportsdb_service.dart';
 import 'package:livescore/services/preferences_service.dart';
 import 'package:livescore/models/team_model.dart';
 import 'package:livescore/models/user_preferences.dart';
-import 'package:livescore/utils/theme.dart';
 import 'package:livescore/utils/constants.dart';
-import 'package:livescore/screens/home_screen.dart';
+import 'package:livescore/utils/predefined_data.dart';
+import 'package:livescore/models/search_model.dart';
 import 'package:livescore/screens/home_screen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+
+/// Onboarding uses the app's green brand color (matches favorites_screen.dart
+/// and home_screen.dart) rather than the older AppTheme.primaryBlue.
+const Color _kGreen = Color(0xFF16A34A);
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -28,6 +34,24 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   int _currentStep = 0;
 
   List<String> _selectedLeagueCodes = [];
+
+  /// Each entry has 'id', 'name', 'image', 'team' — populated either from
+  /// the famousPlayers seed list or from a live search result, since search
+  /// results have no local id->data table to look up later.
+  List<Map<String, String>> _selectedPlayers = [];
+
+  // Live player search (same SportService.search() pipeline — ESPN primary,
+  // TheSportsDB/API-Football fallback — used elsewhere in the app) so users
+  // aren't limited to the small famousPlayers seed list.
+  final TextEditingController _playerSearchController = TextEditingController();
+  Timer? _playerSearchDebounce;
+  SearchResponse _playerSearchResults = SearchResponse();
+  bool _isSearchingPlayers = false;
+  String _playerSearchQuery = '';
+
+  // 0 = Teams, 1 = Players, 2 = Leagues
+  static const int _stepCount = 3;
+  static const int maxSelectionsPerCategory = 4;
 
   // VERIFIED ESPN TEAM IDS
   final List<Map<String, String>> _popularTeams = [
@@ -183,6 +207,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     _loadTeamsProgressive();
   }
 
+  @override
+  void dispose() {
+    _playerSearchDebounce?.cancel();
+    _playerSearchController.dispose();
+    super.dispose();
+  }
+
   void _loadTeamsProgressive() {
     setState(() {
       _allTeams = _popularTeams.map((t) {
@@ -281,7 +312,23 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     });
   }
 
+  void _showCapReachedSnackbar(String category) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('You can select up to $maxSelectionsPerCategory $category'),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
   void _toggleTeamSelection(String teamId) {
+    if (!_selectedTeamIds.contains(teamId) && _selectedTeamIds.length >= maxSelectionsPerCategory) {
+      _showCapReachedSnackbar('clubs');
+      return;
+    }
     setState(() {
       if (_selectedTeamIds.contains(teamId)) {
         _selectedTeamIds.remove(teamId);
@@ -291,7 +338,65 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     });
   }
 
+  bool _isPlayerSelected(String playerId) => _selectedPlayers.any((p) => p['id'] == playerId);
+
+  void _togglePlayerSelection(Map<String, String> player) {
+    final id = player['id'];
+    if (id == null) return;
+    final alreadySelected = _isPlayerSelected(id);
+    if (!alreadySelected && _selectedPlayers.length >= maxSelectionsPerCategory) {
+      _showCapReachedSnackbar('players');
+      return;
+    }
+    setState(() {
+      if (alreadySelected) {
+        _selectedPlayers.removeWhere((p) => p['id'] == id);
+      } else {
+        _selectedPlayers.add(player);
+      }
+    });
+  }
+
+  void _searchPlayersWithDebounce(String query) {
+    _playerSearchDebounce?.cancel();
+    _playerSearchDebounce = Timer(const Duration(milliseconds: 500), () {
+      _searchPlayers(query);
+    });
+  }
+
+  Future<void> _searchPlayers(String query) async {
+    setState(() => _playerSearchQuery = query);
+    if (query.trim().isEmpty) {
+      setState(() {
+        _playerSearchResults = SearchResponse();
+        _isSearchingPlayers = false;
+      });
+      return;
+    }
+    setState(() => _isSearchingPlayers = true);
+    try {
+      // Same ESPN / TheSportsDB / API-Football search pipeline used
+      // everywhere else in the app (favorites_screen.dart's Players tab),
+      // so results here have real, accurate player ids — not limited to
+      // the small local famousPlayers seed list.
+      final results = await _sportService.search(query);
+      if (!mounted) return;
+      setState(() {
+        _playerSearchResults = results;
+        _isSearchingPlayers = false;
+      });
+    } catch (e) {
+      debugPrint('Error searching players: $e');
+      if (!mounted) return;
+      setState(() => _isSearchingPlayers = false);
+    }
+  }
+
   void _toggleLeagueSelection(String leagueCode) {
+    if (!_selectedLeagueCodes.contains(leagueCode) && _selectedLeagueCodes.length >= maxSelectionsPerCategory) {
+      _showCapReachedSnackbar('leagues');
+      return;
+    }
     setState(() {
       if (_selectedLeagueCodes.contains(leagueCode)) {
         _selectedLeagueCodes.remove(leagueCode);
@@ -305,6 +410,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final preferences = UserPreferences(
       favoriteTeamIds: _selectedTeamIds,
       favoriteLeagueIds: _selectedLeagueCodes,
+      favoritePlayers: _selectedPlayers,
       hasCompletedOnboarding: true,
     );
 
@@ -375,26 +481,28 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
       appBar: AppBar(
         title: Text(
-          _currentStep == 0
-              ? 'Choose Your Teams'
-              : 'Choose Your Leagues',
+          switch (_currentStep) {
+            0 => 'Choose Your Teams',
+            1 => 'Choose Your Players',
+            _ => 'Choose Your Leagues',
+          },
           style: const TextStyle(
             fontWeight: FontWeight.w700,
-            color: AppTheme.primaryBlue,
+            color: _kGreen,
           ),
         ),
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        leading: _currentStep == 1
+        leading: _currentStep > 0
             ? IconButton(
           icon: const Icon(
             Icons.arrow_back_ios,
-            color: AppTheme.primaryBlue,
+            color: _kGreen,
           ),
           onPressed: () {
             setState(() {
-              _currentStep = 0;
+              _currentStep -= 1;
             });
           },
         )
@@ -405,9 +513,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         children: [
 
           Expanded(
-            child: _currentStep == 0
-                ? _buildTeamSelectionStep()
-                : _buildLeagueSelectionStep(),
+            child: switch (_currentStep) {
+              0 => _buildTeamSelectionStep(),
+              1 => _buildPlayerSelectionStep(),
+              _ => _buildLeagueSelectionStep(),
+            },
           ),
 
           _buildBottomButtons(),
@@ -417,6 +527,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   Widget _buildBottomButtons() {
+    final isLastStep = _currentStep == _stepCount - 1;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
 
@@ -425,16 +536,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         height: 52,
 
         child: ElevatedButton(
-          onPressed: _currentStep == 0
-              ? () {
+          onPressed: isLastStep
+              ? _completeOnboarding
+              : () {
             setState(() {
-              _currentStep = 1;
+              _currentStep += 1;
             });
-          }
-              : _completeOnboarding,
+          },
 
           style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.primaryBlue,
+            backgroundColor: _kGreen,
             foregroundColor: Colors.white,
             elevation: 0,
 
@@ -444,9 +555,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
 
           child: Text(
-            _currentStep == 0
-                ? 'Continue'
-                : 'Get Started',
+            isLastStep ? 'Get Started' : 'Continue',
 
             style: const TextStyle(
               fontSize: 16,
@@ -498,9 +607,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             children: [
 
               Text(
-                '${_selectedTeamIds.length} clubs selected',
+                '${_selectedTeamIds.length}/$maxSelectionsPerCategory clubs selected',
                 style: const TextStyle(
-                  color: AppTheme.primaryBlue,
+                  color: _kGreen,
                   fontWeight: FontWeight.w600,
                   fontSize: 13,
                 ),
@@ -560,14 +669,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? AppTheme.primaryBlue.withOpacity(0.08)
+                        ? _kGreen.withOpacity(0.08)
                         : Colors.grey.shade50,
 
                     borderRadius: BorderRadius.circular(16),
 
                     border: Border.all(
                       color: isSelected
-                          ? AppTheme.primaryBlue
+                          ? _kGreen
                           : Colors.grey.shade200,
                       width: isSelected ? 2 : 1,
                     ),
@@ -630,7 +739,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: AppTheme.primaryBlue
+                              color: _kGreen
                                   .withOpacity(0.1),
                             ),
 
@@ -644,7 +753,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                                   fontSize: 22,
                                   fontWeight: FontWeight.bold,
                                   color:
-                                  AppTheme.primaryBlue,
+                                  _kGreen,
                                 ),
                               ),
                             ),
@@ -661,7 +770,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                         style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
-                          color: AppTheme.primaryBlue,
+                          color: _kGreen,
                         ),
 
                         maxLines: 1,
@@ -695,7 +804,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
                           child: Icon(
                             Icons.check_circle,
-                            color: AppTheme.primaryBlue,
+                            color: _kGreen,
                             size: 16,
                           ),
                         ),
@@ -710,14 +819,250 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
+  Widget _buildPlayerSelectionStep() {
+    final showingSearch = _playerSearchQuery.trim().isNotEmpty;
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: TextField(
+            controller: _playerSearchController,
+            decoration: InputDecoration(
+              hintText: 'Search any player...',
+              prefixIcon: const Icon(Icons.search, color: Colors.grey),
+              suffixIcon: _playerSearchController.text.isNotEmpty
+                  ? IconButton(
+                icon: const Icon(Icons.close, color: Colors.grey, size: 18),
+                onPressed: () {
+                  _playerSearchController.clear();
+                  _searchPlayers('');
+                },
+              )
+                  : null,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(30),
+                borderSide: BorderSide.none,
+              ),
+              filled: true,
+              fillColor: Colors.grey.shade100,
+              contentPadding: const EdgeInsets.symmetric(vertical: 0),
+            ),
+            onChanged: _searchPlayersWithDebounce,
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              Text(
+                '${_selectedPlayers.length}/$maxSelectionsPerCategory players selected',
+                style: const TextStyle(
+                  color: _kGreen,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+              const Spacer(),
+              if (_selectedPlayers.isNotEmpty)
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _selectedPlayers.clear();
+                    });
+                  },
+                  child: const Text(
+                    'Clear All',
+                    style: TextStyle(fontSize: 12, color: Colors.red),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        if (_selectedPlayers.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: SizedBox(
+              height: 32,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _selectedPlayers.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, i) {
+                  final p = _selectedPlayers[i];
+                  return Chip(
+                    label: Text(p['name'] ?? '', style: const TextStyle(fontSize: 12)),
+                    avatar: const Icon(Icons.check_circle, color: _kGreen, size: 16),
+                    backgroundColor: _kGreen.withOpacity(0.08),
+                    onDeleted: () => _togglePlayerSelection(p),
+                    deleteIcon: const Icon(Icons.close, size: 14),
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                  );
+                },
+              ),
+            ),
+          ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: showingSearch
+              ? _buildPlayerSearchResults()
+              : GridView.builder(
+            padding: const EdgeInsets.all(12),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              childAspectRatio: 0.78,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+            ),
+            // Full top-100 seed list (predefined_data.dart) rather than a
+            // 10-player slice — Ronaldo and Messi stay first since that's
+            // how they're ordered in the seed list itself.
+            itemCount: famousPlayers.length,
+            itemBuilder: (context, index) {
+              final player = famousPlayers[index];
+              final id = player['id'] as String;
+              final name = player['name'] as String;
+              final isSelected = _isPlayerSelected(id);
+              return _OnboardingPlayerTile(
+                name: name,
+                team: player['teamName'] as String,
+                // predefined_data.dart's `imageUrl` (the res.cloudinary
+                // links) is search_screen's own fallback set and isn't
+                // used here — onboarding resolves every player's headshot
+                // itself, uniformly, via ESPN + TheSportsDB below.
+                isSelected: isSelected,
+                onTap: () async {
+                  // By the time the user taps a visible tile, the same
+                  // lookup has usually already completed for its avatar
+                  // (both go through the same memoized resolver), so this
+                  // normally resolves instantly from cache rather than
+                  // making a fresh request.
+                  final image = await _PlayerImageResolver.resolve(name) ?? '';
+                  _togglePlayerSelection({
+                    'id': id,
+                    'name': name,
+                    'image': image,
+                    'team': player['teamName'] as String,
+                  });
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPlayerSearchResults() {
+    if (_isSearchingPlayers) {
+      return const Center(child: CircularProgressIndicator(color: _kGreen));
+    }
+    final results = _playerSearchResults.players;
+    if (results.isEmpty) {
+      return Center(
+        child: Text(
+          'No players found for "$_playerSearchQuery"',
+          style: TextStyle(color: Colors.grey.shade500),
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      itemCount: results.length,
+      itemBuilder: (context, index) {
+        final player = results[index];
+        final isSelected = _isPlayerSelected(player.id);
+        return Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          decoration: BoxDecoration(
+            color: isSelected ? _kGreen.withOpacity(0.06) : Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isSelected ? _kGreen : Colors.grey.shade200,
+              width: isSelected ? 2 : 1,
+            ),
+          ),
+          child: ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            leading: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: CachedNetworkImage(
+                imageUrl: player.displayImageUrl,
+                width: 40,
+                height: 40,
+                fit: BoxFit.cover,
+                placeholder: (context, url) => Container(width: 40, height: 40, color: Colors.grey.shade200),
+                errorWidget: (context, url, error) => Container(
+                  width: 40,
+                  height: 40,
+                  color: _kGreen.withOpacity(0.1),
+                  child: Center(child: Text(player.initials, style: const TextStyle(color: _kGreen, fontWeight: FontWeight.w700))),
+                ),
+              ),
+            ),
+            title: Text(player.displayName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+            subtitle: Text(player.subtitle, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+            trailing: Icon(
+              isSelected ? Icons.check_circle : Icons.circle_outlined,
+              color: isSelected ? _kGreen : Colors.grey.shade400,
+            ),
+            onTap: () => _togglePlayerSelection({
+              'id': player.id,
+              'name': player.displayName,
+              'image': player.displayImageUrl,
+              'team': player.teamName ?? '',
+            }),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildLeagueSelectionStep() {
     final allLeaguesForDisplay = [
       ...AppConstants.priorityLeagues,
       ...AppConstants.majorClubCompetitions,
     ];
 
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              Text(
+                '${_selectedLeagueCodes.length}/$maxSelectionsPerCategory leagues selected',
+                style: const TextStyle(
+                  color: _kGreen,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+              const Spacer(),
+              if (_selectedLeagueCodes.isNotEmpty)
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _selectedLeagueCodes.clear();
+                    });
+                  },
+                  child: const Text(
+                    'Clear All',
+                    style: TextStyle(fontSize: 12, color: Colors.red),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Expanded(child: _buildLeagueList(allLeaguesForDisplay)),
+      ],
+    );
+  }
+
+  Widget _buildLeagueList(List<Map<String, String>> allLeaguesForDisplay) {
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       itemCount: allLeaguesForDisplay.length,
 
       itemBuilder: (context, index) {
@@ -737,14 +1082,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
             decoration: BoxDecoration(
               color: isSelected
-                  ? AppTheme.primaryBlue.withOpacity(0.08)
+                  ? _kGreen.withOpacity(0.08)
                   : Colors.grey.shade50,
 
               borderRadius: BorderRadius.circular(16),
 
               border: Border.all(
                 color: isSelected
-                    ? AppTheme.primaryBlue
+                    ? _kGreen
                     : Colors.grey.shade200,
                 width: isSelected ? 2 : 1,
               ),
@@ -802,7 +1147,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: AppTheme.primaryBlue.withOpacity(0.1),
+                        color: _kGreen.withOpacity(0.1),
                       ),
 
                       child: Center(
@@ -851,7 +1196,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       : Icons.circle_outlined,
 
                   color: isSelected
-                      ? AppTheme.primaryBlue
+                      ? _kGreen
                       : Colors.grey.shade400,
                 ),
               ],
@@ -860,5 +1205,210 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         );
       },
     );
+  }
+}
+
+// ── Onboarding Player Tile ─────────────────────────────────────────────────
+
+class _OnboardingPlayerTile extends StatelessWidget {
+  final String name;
+  final String team;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _OnboardingPlayerTile({
+    required this.name,
+    required this.team,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        decoration: BoxDecoration(
+          color: isSelected ? _kGreen.withOpacity(0.08) : Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? _kGreen : Colors.grey.shade200,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _buildAvatar(),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Text(
+                name,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _kGreen),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Text(
+                team,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w400, color: Colors.grey),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (isSelected)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Icon(Icons.check_circle, color: _kGreen, size: 16),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Onboarding never uses predefined_data.dart's static `imageUrl` (that's
+  /// search_screen's own fallback set) — every player here, including the
+  /// famous top 10, gets its headshot resolved the same way, at runtime,
+  /// via [_PlayerImageResolver] (ESPN + TheSportsDB jointly).
+  Widget _buildAvatar() {
+    return FutureBuilder<String?>(
+      future: _PlayerImageResolver.resolve(name),
+      builder: (context, snapshot) {
+        final resolved = snapshot.data;
+        if (resolved != null && resolved.isNotEmpty) {
+          return _avatarFromUrl(resolved);
+        }
+        if (snapshot.connectionState != ConnectionState.done) {
+          return _avatarPlaceholder(loading: true);
+        }
+        return _avatarInitials();
+      },
+    );
+  }
+
+  Widget _avatarFromUrl(String url) {
+    return CachedNetworkImage(
+      imageUrl: url,
+      width: 55,
+      height: 55,
+      imageBuilder: (context, imageProvider) {
+        return Container(
+          width: 55,
+          height: 55,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            image: DecorationImage(image: imageProvider, fit: BoxFit.cover),
+          ),
+        );
+      },
+      placeholder: (context, url) => _avatarPlaceholder(loading: true),
+      errorWidget: (context, url, error) => _avatarInitials(),
+    );
+  }
+
+  Widget _avatarPlaceholder({required bool loading}) {
+    return Container(
+      width: 55,
+      height: 55,
+      decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.grey.shade200),
+      child: loading
+          ? const Center(
+        child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+      )
+          : null,
+    );
+  }
+
+  Widget _avatarInitials() {
+    return Container(
+      width: 55,
+      height: 55,
+      decoration: BoxDecoration(shape: BoxShape.circle, color: _kGreen.withOpacity(0.1)),
+      child: Center(
+        child: Text(
+          name.isNotEmpty ? name.substring(0, 1).toUpperCase() : '?',
+          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: _kGreen),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Runtime player headshot resolver (ESPN + TheSportsDB, jointly) ────────
+//
+// Most of the top-100 seed list in predefined_data.dart doesn't ship with a
+// verified static CDN headshot (only the original curated 10 do). Rather
+// than guess a URL, this resolves one lazily by name through
+// TheSportsDB's free-tier player search, then prefers ESPN's own headshot
+// CDN when TheSportsDB gives us a cross-referenced `idESPN` — the same
+// ESPN-primary / TheSportsDB-fallback convention SportsDbService already
+// uses for lineup headshots elsewhere in the app. Every name is looked up
+// at most once per app session; failures are cached too, so a miss doesn't
+// get retried on every rebuild/scroll.
+class _PlayerImageResolver {
+  static final Map<String, Future<String?>> _cache = {};
+
+  // TheSportsDB's free public key ('123') is capped around 30 requests per
+  // minute. Building 100 grid tiles (even just via normal scrolling) can
+  // fire off far more lookups than that in a burst, so anything past
+  // roughly the 30th distinct player was silently getting rate-limited and
+  // falling back to initials — not because those players weren't found,
+  // but because the request never really got a clean response. Chaining
+  // every lookup through this single queue, ~2.2s apart, keeps us safely
+  // under that budget so headshots resolve all the way to the end of the
+  // list (just progressively, while scrolling, rather than all at once).
+  static Future<void> _queue = Future.value();
+  static const Duration _requestSpacing = Duration(milliseconds: 2200);
+
+  static Future<String?> resolve(String playerName) {
+    return _cache.putIfAbsent(playerName, () => _enqueue(playerName));
+  }
+
+  static Future<String?> _enqueue(String playerName) {
+    final completer = Completer<String?>();
+    _queue = _queue.then((_) async {
+      final result = await _lookup(playerName);
+      if (!completer.isCompleted) completer.complete(result);
+      await Future.delayed(_requestSpacing);
+    });
+    return completer.future;
+  }
+
+  static Future<String?> _lookup(String playerName) async {
+    try {
+      var result = await SportsDbService().searchPlayerByName(playerName);
+      // A handful of single/mononym-style names (e.g. "Zubimendi",
+      // "Grimaldo") match better on the surname alone than the full
+      // display name — cheap second attempt, still inside the same
+      // throttled slot so it doesn't add to the burst.
+      if (result == null) {
+        final parts = playerName.trim().split(RegExp(r'\s+'));
+        if (parts.length > 1) {
+          result = await SportsDbService().searchPlayerByName(parts.last);
+        }
+      }
+      if (result == null) return null;
+
+      final espnId = (result['idESPN'] as String?)?.trim() ?? '';
+      if (espnId.isNotEmpty) {
+        return 'https://a.espncdn.com/combiner/i?img=/i/headshots/soccer/players/full/$espnId.png&w=180&h=180&cb=1';
+      }
+
+      final cutout = (result['strCutout'] as String?)?.trim() ?? '';
+      if (cutout.isNotEmpty) return cutout;
+
+      final thumb = (result['strThumb'] as String?)?.trim() ?? '';
+      if (thumb.isNotEmpty) return thumb;
+    } catch (e) {
+      debugPrint('[PlayerImageResolver] Lookup failed for "$playerName": $e');
+    }
+    return null;
   }
 }

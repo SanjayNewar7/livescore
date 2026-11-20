@@ -177,4 +177,77 @@ class TeamPageData {
     squad: const [],
     analytics: TeamAnalytics.empty,
   );
+
+  /// Builds a matches-only page (empty squad/analytics) so the UI can
+  /// render the Matches tab immediately, before squad/analytics load.
+  factory TeamPageData.fromMatches(TeamMatchesData m) => TeamPageData(
+    leagueCode: m.leagueCode,
+    standingInfo: m.standingInfo,
+    recentMatches: m.recentMatches,
+    upcoming: m.upcoming,
+    squad: const [],
+    analytics: TeamAnalytics.empty,
+    headCoach: m.headCoach,
+  );
+
+  TeamPageData copyWith({
+    String? leagueCode,
+    TeamStandingInfo? standingInfo,
+    List<TeamRecentMatch>? recentMatches,
+    List<TeamUpcomingFixture>? upcoming,
+    List<TeamSquadPlayer>? squad,
+    TeamAnalytics? analytics,
+    String? headCoach,
+  }) {
+    return TeamPageData(
+      leagueCode: leagueCode ?? this.leagueCode,
+      standingInfo: standingInfo ?? this.standingInfo,
+      recentMatches: recentMatches ?? this.recentMatches,
+      upcoming: upcoming ?? this.upcoming,
+      squad: squad ?? this.squad,
+      analytics: analytics ?? this.analytics,
+      headCoach: headCoach ?? this.headCoach,
+    );
+  }
+}
+
+/// Result of "stage 1" fetching — schedule + standing, no squad/analytics.
+/// Lets the Matches tab render as soon as this is available, instead of
+/// waiting on the (slower) roster fetch + analytics calculation.
+class TeamMatchesData {
+  /// League code to display/store on the merged [TeamPageData] (for
+  /// national teams this is the World-Cup-resolved code, e.g. 'fifa.world').
+  final String leagueCode;
+
+  /// The league code exactly as it was resolved before any World-Cup
+  /// remapping. Pass this back into stage 2 (`getTeamSquadAndAnalytics`)
+  /// so it can reproduce the same club/national routing and fallback
+  /// logic that stage 1 used.
+  final String queryLeagueCode;
+
+  final TeamStandingInfo standingInfo;
+  final List<TeamRecentMatch> recentMatches;
+  final List<TeamUpcomingFixture> upcoming;
+  final String? headCoach;
+
+  const TeamMatchesData({
+    required this.leagueCode,
+    required this.queryLeagueCode,
+    required this.standingInfo,
+    required this.recentMatches,
+    required this.upcoming,
+    this.headCoach,
+  });
+}
+
+/// Result of "stage 2" fetching — squad roster (with headshots) and the
+/// analytics computed from it plus the stage-1 matches.
+class TeamSquadAnalyticsData {
+  final List<TeamSquadPlayer> squad;
+  final TeamAnalytics analytics;
+
+  const TeamSquadAnalyticsData({
+    required this.squad,
+    required this.analytics,
+  });
 }

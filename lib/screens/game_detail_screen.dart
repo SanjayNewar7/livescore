@@ -1,9 +1,15 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:livescore/models/game_model.dart';
+import 'package:livescore/models/team_page_data.dart';
 import 'package:livescore/models/standing_model.dart';
+import 'package:livescore/screens/players_screen.dart';
 import 'package:livescore/services/sport_service.dart';
+import 'package:livescore/services/sportsdb_service.dart';
+import 'package:livescore/services/notification_service.dart';
+import 'package:livescore/services/preferences_service.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/utils/helpers.dart';
 import 'package:livescore/utils/theme.dart';
@@ -12,27 +18,44 @@ import '../models/team_model.dart';
 import 'package:livescore/widgets/football_pitch_lineup.dart';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
+// Matches the app-wide theme: primary = Green, secondary = Blue (see home_screen.dart _C).
 class _C {
-  static const bg        = Color(0xFFF0F4FF);
-  static const surface   = Color(0xFFFFFFFF);
-  static const card      = Color(0xFFFFFFFF);
-  static const border    = Color(0xFFDDE3F0);
-  static const text      = Color(0xFF0D1B3E);
-  static const muted     = Color(0xFF6B7A96);
+  static const bg = Color(0xFFF2F7F4);
+  static const surface = Color(0xFFFFFFFF);
+  static const card = Color(0xFFFFFFFF);
+  static const border = Color(0xFFDCE7E0);
+  static const text = Color(0xFF0D1B3E);
+  static const muted = Color(0xFF6B7A96);
   static const textWhite = Color(0xFFFFFFFF);
-  static const blue      = Color(0xFF1A56DB);
-  static const blueSoft  = Color(0xFFEEF4FF);
-  static const blueLight = Color(0xFF4A7FE5);
-  static const liveRed   = Color(0xFFDC2626);
-  static const liveGlow  = Color(0x22DC2626);
-  static const green     = Color(0xFF16A34A);
-  static const yellow    = Color(0xFFCA8A04);
-  static const red       = Color(0xFFDC2626);
-  static const pitchGreen  = Color(0xFF166534);
-  static const pitchLight  = Color(0xFF15803D);
-  static const pitchLine   = Color(0x88FFFFFF);
-  static const homeAccent  = Color(0xFF1A56DB);
-  static const awayAccent  = Color(0xFFEA580C);
+  // Primary — Green (brand / active states / CTAs). Kept the `blue` token name
+  // so every existing call-site automatically picks up the new brand color.
+  static const blue = Color(0xFF16A34A);
+  static const blueSoft = Color(0xFFE6F7EC);
+  static const blueLight = Color(0xFF34B85F);
+  // Secondary — true Blue, used for the "home team" accent and any spot that
+  // needs to sit next to the green primary without competing with it.
+  static const secondary = Color(0xFF1A62C8);
+  static const secondarySoft = Color(0xFFE8F0FC);
+  static const liveRed = Color(0xFFDC2626);
+  static const liveRedBg = Color(0x1ADC2626);
+  static const liveGlow = Color(0x22DC2626);
+  static const green = Color(0xFF16A34A);
+  static const yellow = Color(0xFFCA8A04);
+  static const red = Color(0xFFDC2626);
+  static const pitchGreen = Color(0xFF166534);
+  static const pitchLight = Color(0xFF15803D);
+  static const pitchLine = Color(0x88FFFFFF);
+  static const homeAccent = Color(0xFF1A62C8);
+  static const awayAccent = Color(0xFFEA580C);
+  static const purple = Color(0xFF7C3AED);
+  static const pink = Color(0xFFEC4899);
+  static const orange = Color(0xFFF97316);
+  static const teal = Color(0xFF14B8A6);
+  static const indigo = Color(0xFF4F46E5);
+  static const darkSurface = Color(0xFF12141C);
+  static const gold = Color(0xFFD4AF37);
+  static const silver = Color(0xFF9CA3AF);
+  static const bronze = Color(0xFFCD7F32);
 }
 
 // ─── Lineup data models ───────────────────────────────────────────────────────
@@ -74,22 +97,95 @@ class MatchLineup {
   });
 }
 
-class H2HResult {
-  final String date;
-  final String homeTeam;
-  final String awayTeam;
-  final String homeScore;
-  final String awayScore;
-  final String result;
+// ─── Analytics Models ─────────────────────────────────────────────────────────
+class TeamAnalyticsData {
+  final double possession;
+  final int totalPasses;
+  final int accuratePasses;
+  final int totalShots;
+  final int shotsOnTarget;
+  final int totalCrosses;
+  final int accurateCrosses;
+  final int yellowCards;
+  final int redCards;
+  final int saves;
+  final int offsides;
+  final int fouls;
+  final int corners;
+  final int goals;
+  final double passingAccuracy;
+  final double shotAccuracy;
+  final double crossAccuracy;
 
-  const H2HResult({
-    required this.date,
-    required this.homeTeam,
-    required this.awayTeam,
-    required this.homeScore,
-    required this.awayScore,
-    required this.result,
+  TeamAnalyticsData({
+    this.possession = 0,
+    this.totalPasses = 0,
+    this.accuratePasses = 0,
+    this.totalShots = 0,
+    this.shotsOnTarget = 0,
+    this.totalCrosses = 0,
+    this.accurateCrosses = 0,
+    this.yellowCards = 0,
+    this.redCards = 0,
+    this.saves = 0,
+    this.offsides = 0,
+    this.fouls = 0,
+    this.corners = 0,
+    this.goals = 0,
+    this.passingAccuracy = 0,
+    this.shotAccuracy = 0,
+    this.crossAccuracy = 0,
   });
+
+  /// [actualGoals], when provided, overrides whatever (if anything) was
+  /// parsed out of the boxscore `statistics` array. ESPN's soccer boxscore
+  /// stats list generally does NOT include a "goals" entry — goals live on
+  /// the match score / goal-scorers list instead — so relying on the stats
+  /// map alone means this always parses to 0, even when goals were scored.
+  /// Callers should pass the team's actual score in as [actualGoals] so the
+  /// Analytics tab reflects the real match result.
+  factory TeamAnalyticsData.fromStats(Map<String, String> stats,
+      {int? actualGoals}) {
+    final possession =
+        double.tryParse(stats['possessionPct']?.replaceAll('%', '') ?? '0') ??
+            0;
+    final totalPasses = int.tryParse(stats['passes'] ?? '0') ?? 0;
+    final accuratePasses =
+        int.tryParse(stats['passingAccuracy']?.replaceAll('%', '') ?? '0') ?? 0;
+    final totalShots = int.tryParse(stats['totalShots'] ?? '0') ?? 0;
+    final shotsOnTarget = int.tryParse(stats['shotsOnTarget'] ?? '0') ?? 0;
+    final totalCrosses = int.tryParse(stats['crosses'] ?? '0') ?? 0;
+    final accurateCrosses = int.tryParse(stats['accurateCrosses'] ?? '0') ?? 0;
+    final yellowCards = int.tryParse(stats['yellowCards'] ?? '0') ?? 0;
+    final redCards = int.tryParse(stats['redCards'] ?? '0') ?? 0;
+    final saves = int.tryParse(stats['saves'] ?? '0') ?? 0;
+    final offsides = int.tryParse(stats['offsides'] ?? '0') ?? 0;
+    final fouls = int.tryParse(stats['fouls'] ?? '0') ?? 0;
+    final corners = int.tryParse(stats['corners'] ?? '0') ?? 0;
+    final statsGoals = int.tryParse(stats['goals'] ?? '0') ?? 0;
+    final goals = actualGoals ?? statsGoals;
+
+    return TeamAnalyticsData(
+      possession: possession,
+      totalPasses: totalPasses,
+      accuratePasses: accuratePasses,
+      totalShots: totalShots,
+      shotsOnTarget: shotsOnTarget,
+      totalCrosses: totalCrosses,
+      accurateCrosses: accurateCrosses,
+      yellowCards: yellowCards,
+      redCards: redCards,
+      saves: saves,
+      offsides: offsides,
+      fouls: fouls,
+      corners: corners,
+      goals: goals,
+      passingAccuracy: totalPasses > 0 ? accuratePasses / totalPasses * 100 : 0,
+      shotAccuracy: totalShots > 0 ? shotsOnTarget / totalShots * 100 : 0,
+      crossAccuracy:
+          totalCrosses > 0 ? accurateCrosses / totalCrosses * 100 : 0,
+    );
+  }
 }
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
@@ -107,16 +203,21 @@ class _GameDetailScreenState extends State<GameDetailScreen>
   late Future<GameDetail> _detailFuture;
   late Future<List<Standing>> _standingsFuture;
   late Future<MatchLineup?> _lineupFuture;
-  late Future<List<H2HResult>> _h2hFuture;
+  late Future<Map<String, TeamAnalyticsData>> _analyticsFuture;
 
   final SportService _sport = SportService();
-
+  final SportsDbService _sportsDb = SportsDbService();
   Timer? _clockTimer;
+  Timer? _analyticsTimer;
   int _liveTick = 0;
   Duration _countdown = Duration.zero;
 
-  bool get _isLive     => widget.game.status == 'STATUS_LIVE';
-  bool get _isDone     => widget.game.status == 'STATUS_FINAL';
+  // Cache for SportsDB headshots
+  Map<String, String> _sportsDbHeadshots = {};
+
+  bool get _isLive =>
+      widget.game.status == 'STATUS_LIVE' || widget.game.isActuallyLive;
+  bool get _isDone => widget.game.status == 'STATUS_FINAL';
   bool get _isUpcoming => !_isLive && !_isDone;
 
   @override
@@ -124,6 +225,14 @@ class _GameDetailScreenState extends State<GameDetailScreen>
     super.initState();
     _tabController = TabController(length: 6, vsync: this);
     _refresh();
+
+    if (_isUpcoming) {
+      try {
+        final kickoff = DateTime.parse(widget.game.date);
+        final diff = kickoff.difference(DateTime.now());
+        _countdown = diff.isNegative ? Duration.zero : diff;
+      } catch (_) {}
+    }
 
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
@@ -138,19 +247,154 @@ class _GameDetailScreenState extends State<GameDetailScreen>
         }
       });
     });
+
+    _analyticsTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      if (!mounted || !_isLive) return;
+      _analyticsFuture = _fetchAnalytics();
+      setState(() {});
+    });
   }
 
   void _refresh() {
-    _detailFuture    = _sport.getGameDetail(widget.game.id);
+    _detailFuture = _sport.getGameDetail(widget.game.id);
     _standingsFuture = _fetchStandings();
-    _lineupFuture    = _fetchLineup();
-    _h2hFuture       = _fetchH2H();
+    _lineupFuture = _fetchLineupWithHeadshots();
+    _analyticsFuture = _fetchAnalytics();
+  }
+
+  /// Fetch lineup with SportsDB headshot enrichment
+  Future<MatchLineup?> _fetchLineupWithHeadshots() async {
+    try {
+      // First get the lineup from ESPN
+      final lineup = await _sport.getMatchLineup(widget.game.id);
+      if (lineup == null) return null;
+
+      // Get SportsDB headshots for both teams
+      final headshots = await _sportsDb.getLineupHeadshots(
+        homeEspnTeamId: widget.game.homeTeam.id,
+        awayEspnTeamId: widget.game.awayTeam.id,
+      );
+
+      // Cache the headshots
+      _sportsDbHeadshots = headshots;
+      print('[GameDetail] SportsDB headshots loaded: ${headshots.length}');
+
+      // Enrich home players with SportsDB headshots
+      final enrichedHomePlayers = lineup.homePlayers.map((player) {
+        final sdbHeadshot = headshots[player.id] ?? '';
+        if (sdbHeadshot.isNotEmpty &&
+            (player.headshot.isEmpty || player.headshot.contains('combiner'))) {
+          return LineupPlayer(
+            id: player.id,
+            name: player.name,
+            shortName: player.shortName,
+            number: player.number,
+            position: player.position,
+            isStarter: player.isStarter,
+            isHome: player.isHome,
+            rating: player.rating,
+            headshot: sdbHeadshot,
+          );
+        }
+        return player;
+      }).toList();
+
+      // Enrich away players with SportsDB headshots
+      final enrichedAwayPlayers = lineup.awayPlayers.map((player) {
+        final sdbHeadshot = headshots[player.id] ?? '';
+        if (sdbHeadshot.isNotEmpty &&
+            (player.headshot.isEmpty || player.headshot.contains('combiner'))) {
+          return LineupPlayer(
+            id: player.id,
+            name: player.name,
+            shortName: player.shortName,
+            number: player.number,
+            position: player.position,
+            isStarter: player.isStarter,
+            isHome: player.isHome,
+            rating: player.rating,
+            headshot: sdbHeadshot,
+          );
+        }
+        return player;
+      }).toList();
+
+      print(
+          '[GameDetail] Enriched ${enrichedHomePlayers.where((p) => p.headshot.isNotEmpty).length} home players');
+      print(
+          '[GameDetail] Enriched ${enrichedAwayPlayers.where((p) => p.headshot.isNotEmpty).length} away players');
+
+      return MatchLineup(
+        homeFormation: lineup.homeFormation,
+        awayFormation: lineup.awayFormation,
+        homePlayers: enrichedHomePlayers,
+        awayPlayers: enrichedAwayPlayers,
+      );
+    } catch (e) {
+      print('[GameDetail] Lineup fetch error: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, TeamAnalyticsData>> _fetchAnalytics() async {
+    try {
+      final detail = await _sport.getGameDetail(widget.game.id);
+      final teams = detail.boxScore['teams'] as List? ?? [];
+
+      Map<String, String> awayStats = {};
+      Map<String, String> homeStats = {};
+
+      for (final team in teams) {
+        if (team is! Map) continue;
+        final teamName =
+            (team['team'] as Map?)?['displayName']?.toString() ?? '';
+        final stats = _parseStatsForAnalytics(team['statistics']);
+
+        if (teamName == widget.game.awayTeam.displayName ||
+            teamName == widget.game.awayTeam.name) {
+          awayStats = stats;
+        } else if (teamName == widget.game.homeTeam.displayName ||
+            teamName == widget.game.homeTeam.name) {
+          homeStats = stats;
+        }
+      }
+
+      return {
+        'away': TeamAnalyticsData.fromStats(
+          awayStats,
+          actualGoals: int.tryParse(widget.game.awayScore) ?? 0,
+        ),
+        'home': TeamAnalyticsData.fromStats(
+          homeStats,
+          actualGoals: int.tryParse(widget.game.homeScore) ?? 0,
+        ),
+      };
+    } catch (e) {
+      print('Error fetching analytics: $e');
+      return {
+        'away': TeamAnalyticsData(),
+        'home': TeamAnalyticsData(),
+      };
+    }
+  }
+
+  Map<String, String> _parseStatsForAnalytics(dynamic rawList) {
+    final Map<String, String> out = {};
+    if (rawList is! List) return out;
+    for (final s in rawList) {
+      if (s is! Map) continue;
+      final name = s['name']?.toString();
+      final val =
+          s['displayValue']?.toString() ?? s['value']?.toString() ?? '0';
+      if (name != null && name.isNotEmpty) out[name] = val;
+    }
+    return out;
   }
 
   Future<List<Standing>> _fetchStandings() async {
-    // Find league code by matching leagueName or leagueFlag
     final leagueEntry = AppConstants.allLeagues.firstWhere(
-          (l) => l['name'] == widget.game.leagueName ||
+      (l) =>
+          l['name'] == widget.game.leagueName ||
           l['flag'] == widget.game.leagueFlag,
       orElse: () => {'code': 'eng.1'},
     );
@@ -158,25 +402,11 @@ class _GameDetailScreenState extends State<GameDetailScreen>
     return _sport.getStandings(forceRefresh: false);
   }
 
-  Future<MatchLineup?> _fetchLineup() async {
-    try { return await _sport.getMatchLineup(widget.game.id); }
-    catch (_) { return null; }
-  }
-
-  Future<List<H2HResult>> _fetchH2H() async {
-    try {
-      return await _sport.getH2H(
-        widget.game.awayTeam.id,
-        widget.game.homeTeam.id,
-        widget.game.id,
-      );
-    } catch (_) { return []; }
-  }
-
   @override
   void dispose() {
     _tabController.dispose();
     _clockTimer?.cancel();
+    _analyticsTimer?.cancel();
     super.dispose();
   }
 
@@ -186,6 +416,183 @@ class _GameDetailScreenState extends State<GameDetailScreen>
       if (c.length == 6) return Color(int.parse('FF$c', radix: 16));
     } catch (_) {}
     return _C.blue;
+  }
+
+  Future<void> _showTeamAlertsDialog() async {
+    final notifications = NotificationService();
+    var selected = widget.game.homeTeam;
+    final choice = await showDialog<TeamInfo>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, update) {
+          final followed = notifications.isTeamFollowed(selected.id);
+          Widget teamOption(TeamInfo team) => InkWell(
+                onTap: () => update(() => selected = team),
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: selected.id == team.id ? _C.blueSoft : _C.bg,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: selected.id == team.id ? _C.green : _C.border),
+                  ),
+                  child: Row(children: [
+                    Image.network(team.logo,
+                        width: 28,
+                        height: 28,
+                        errorBuilder: (_, __, ___) =>
+                            const Icon(Icons.shield_outlined, size: 28)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                        child: Text(team.displayName,
+                            style: const TextStyle(
+                                fontFamily: 'SportFont',
+                                fontWeight: FontWeight.w700))),
+                    Icon(
+                        selected.id == team.id
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_off,
+                        color: selected.id == team.id ? _C.green : _C.muted),
+                  ]),
+                ),
+              );
+          return Dialog(
+            insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                        width: 52,
+                        height: 52,
+                        decoration: BoxDecoration(
+                            color: _C.blueSoft,
+                            borderRadius: BorderRadius.circular(16)),
+                        child: const Icon(Icons.notifications_active_rounded,
+                            color: _C.green, size: 28)),
+                    const SizedBox(height: 18),
+                    const Text('Team notifications',
+                        style: TextStyle(
+                            fontFamily: 'SportFont',
+                            fontSize: 21,
+                            fontWeight: FontWeight.w800,
+                            color: _C.text)),
+                    const SizedBox(height: 6),
+                    const Text('Choose the team you want updates for.',
+                        style: TextStyle(
+                            fontFamily: 'SportFont', color: _C.muted)),
+                    const SizedBox(height: 18),
+                    teamOption(widget.game.homeTeam),
+                    const SizedBox(height: 8),
+                    teamOption(widget.game.awayTeam),
+                    const SizedBox(height: 18),
+                    const Text('Team news  •  15 minutes before kickoff',
+                        style: TextStyle(
+                            fontFamily: 'SportFont',
+                            fontSize: 12,
+                            color: _C.muted)),
+                    const SizedBox(height: 4),
+                    const Text('Kickoff  •  Final result',
+                        style: TextStyle(
+                            fontFamily: 'SportFont',
+                            fontSize: 12,
+                            color: _C.muted)),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: () =>
+                              Navigator.pop(dialogContext, selected),
+                          style: FilledButton.styleFrom(
+                              backgroundColor: _C.green,
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 14)),
+                          child: Text(
+                              followed
+                                  ? 'Turn off notifications'
+                                  : 'Turn on notifications',
+                              style: const TextStyle(fontFamily: 'SportFont')),
+                        )),
+                    Center(
+                        child: TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Maybe later',
+                      style: TextStyle(fontFamily: 'SportFont', color: _C.green)),
+                    )),
+                    const Center(
+                        child: Text('Change this anytime in Settings.',
+                            style: TextStyle(
+                                fontFamily: 'SportFont',
+                                fontSize: 12,
+                                color: _C.muted))),
+                  ]),
+            ),
+          );
+        },
+      ),
+    );
+    if (choice == null || !mounted) return;
+    if (notifications.isTeamFollowed(choice.id)) {
+      await notifications.unfollowTeam(choice.id);
+      if (mounted) setState(() {});
+      return;
+    }
+    if (!await notifications.requestDevicePermission()) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Enable notifications in phone settings to follow this team.'),
+        ));
+      return;
+    }
+    final prefs = PreferencesService().preferences;
+    if (!prefs.notificationsEnabled) {
+      await PreferencesService()
+          .savePreferences(prefs.copyWith(notificationsEnabled: true));
+    }
+    final other = choice.id == widget.game.homeTeam.id
+        ? widget.game.awayTeam
+        : widget.game.homeTeam;
+    final league = AppConstants.allLeagues.firstWhere(
+      (item) => item['name'] == widget.game.leagueName,
+      orElse: () => {'code': 'eng.1'},
+    )['code']!;
+    await notifications.followTeam(
+      teamId: choice.id,
+      teamName: choice.displayName,
+      leagueCode: league,
+      fixtures: [
+        TeamUpcomingFixture(
+          opponentId: other.id,
+          opponentName: other.displayName,
+          opponentLogo: other.logo,
+          opponentAbbr: other.abbreviation,
+          competition: widget.game.leagueName,
+          leagueFlag: widget.game.leagueFlag,
+          date: widget.game.date,
+          isHome: choice.id == widget.game.homeTeam.id,
+        )
+      ],
+    );
+    if (mounted) setState(() {});
+  }
+
+  Color _darken(Color c, [double amt = 0.28]) {
+    final hsl = HSLColor.fromColor(c);
+    return hsl
+        .withLightness((hsl.lightness * (1 - amt)).clamp(0.0, 1.0))
+        .toColor();
+  }
+
+  Color _lighten(Color c, [double amt = 0.18]) {
+    final hsl = HSLColor.fromColor(c);
+    return hsl.withLightness((hsl.lightness + amt).clamp(0.0, 1.0)).toColor();
   }
 
   @override
@@ -202,14 +609,28 @@ class _GameDetailScreenState extends State<GameDetailScreen>
             pinned: true,
             elevation: 0,
             backgroundColor: _C.surface,
+            // ─── Changed back button to plain IconButton ──────────────────
             leading: IconButton(
-              icon: const Icon(Icons.arrow_back_ios_rounded, color: _C.text, size: 20),
+              icon: const Icon(Icons.arrow_back_ios_new, size: 18),
               onPressed: () => Navigator.pop(context),
             ),
             actions: [
-              IconButton(
-                icon: const Icon(Icons.refresh_rounded, color: _C.muted, size: 20),
-                onPressed: () => setState(_refresh),
+              _GlassIconButton(
+                icon: NotificationService()
+                            .isTeamFollowed(widget.game.homeTeam.id) ||
+                        NotificationService()
+                            .isTeamFollowed(widget.game.awayTeam.id)
+                    ? Icons.notifications_active_rounded
+                    : Icons.notifications_none_rounded,
+                onTap: _showTeamAlertsDialog,
+              ),
+              const SizedBox(width: 12),
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: _GlassIconButton(
+                  icon: Icons.refresh_rounded,
+                  onTap: () => setState(_refresh),
+                ),
               ),
             ],
             title: Row(
@@ -219,44 +640,89 @@ class _GameDetailScreenState extends State<GameDetailScreen>
                   borderRadius: BorderRadius.circular(4),
                   child: Image.network(
                     'https://a.espncdn.com/i/leaguelogos/soccer/500/${_leagueLogoId()}.png',
-                    width: 20, height: 20,
-                    errorBuilder: (_, __, ___) =>
-                        Icon(Icons.emoji_events_rounded, size: 18, color: _C.muted),
+                    width: 20,
+                    height: 20,
+                    errorBuilder: (_, __, ___) => Icon(
+                        Icons.emoji_events_rounded,
+                        size: 18,
+                        color: _C.muted),
                   ),
                 ),
                 const SizedBox(width: 6),
                 Text(
                   widget.game.leagueName,
-                  style: const TextStyle(color: _C.muted, fontSize: 13, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                      color: _C.muted,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600),
                 ),
               ],
             ),
             flexibleSpace: FlexibleSpaceBar(
-              background: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.centerLeft,
-                    end: Alignment.centerRight,
-                    colors: [
-                      awayColor.withOpacity(0.25),
-                      _C.surface,
-                      homeColor.withOpacity(0.25),
-                    ],
-                  ),
-                ),
-                child: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 50, 16, 0),
-                    child: _HeroScore(
-                      game: widget.game,
-                      isLive: _isLive,
-                      isDone: _isDone,
-                      isUpcoming: _isUpcoming,
-                      liveTick: _liveTick,
-                      countdown: _countdown,
+              background: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          _darken(awayColor, 0.32).withOpacity(0.92),
+                          awayColor.withOpacity(0.46),
+                          _C.surface,
+                          homeColor.withOpacity(0.46),
+                          _darken(homeColor, 0.32).withOpacity(0.92),
+                        ],
+                        stops: const [0.0, 0.22, 0.5, 0.78, 1.0],
+                      ),
                     ),
                   ),
-                ),
+                  Align(
+                    alignment: const Alignment(0, 0.35),
+                    child: Container(
+                      width: 260,
+                      height: 140,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: RadialGradient(
+                          colors: [
+                            _C.surface.withOpacity(0.9),
+                            _C.surface.withOpacity(0.0),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withOpacity(0.05),
+                          Colors.transparent
+                        ],
+                        stops: const [0.0, 0.3],
+                      ),
+                    ),
+                  ),
+                  SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 50, 16, 0),
+                      child: _HeroScore(
+                        game: widget.game,
+                        isLive: _isLive,
+                        isDone: _isDone,
+                        isUpcoming: _isUpcoming,
+                        liveTick: _liveTick,
+                        countdown: _countdown,
+                        awayColor: awayColor,
+                        homeColor: homeColor,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -264,27 +730,84 @@ class _GameDetailScreenState extends State<GameDetailScreen>
         body: Column(
           children: [
             Container(
-              color: _C.surface,
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+              decoration: BoxDecoration(
+                color: _C.surface,
+                border: const Border(
+                  bottom: BorderSide(color: _C.border, width: 1),
+                ),
+              ),
               child: TabBar(
                 controller: _tabController,
                 isScrollable: true,
                 tabAlignment: TabAlignment.start,
-                indicator: const BoxDecoration(
-                  border: Border(bottom: BorderSide(color: _C.blue, width: 2.5)),
+                splashBorderRadius: BorderRadius.circular(24),
+                indicator: BoxDecoration(
+                  color: _C.blue,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _C.blue.withOpacity(0.28),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
                 ),
                 indicatorSize: TabBarIndicatorSize.tab,
-                labelColor: _C.blue,
+                indicatorPadding: const EdgeInsets.symmetric(vertical: 2),
+                labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+                padding: EdgeInsets.zero,
+                labelColor: Colors.white,
                 unselectedLabelColor: _C.muted,
-                labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 0.4),
-                unselectedLabelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                dividerColor: _C.border,
+                labelStyle: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.3,
+                ),
+                unselectedLabelStyle: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.3,
+                ),
+                dividerColor: Colors.transparent,
+                overlayColor: MaterialStateProperty.all(Colors.transparent),
                 tabs: const [
-                  Tab(text: 'MATCH'),
-                  Tab(text: 'STATS'),
-                  Tab(text: 'LINEUP'),
-                  Tab(text: 'TIMELINE'),
-                  Tab(text: 'STANDINGS'),
-                  Tab(text: 'H2H'),
+                  Tab(
+                      height: 36,
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 14),
+                        child: Text('MATCH'),
+                      )),
+                  Tab(
+                      height: 36,
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 14),
+                        child: Text('STATS'),
+                      )),
+                  Tab(
+                      height: 36,
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 14),
+                        child: Text('LINEUP'),
+                      )),
+                  Tab(
+                      height: 36,
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 14),
+                        child: Text('ANALYTICS'),
+                      )),
+                  Tab(
+                      height: 36,
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 14),
+                        child: Text('TIMELINE'),
+                      )),
+                  Tab(
+                      height: 36,
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 14),
+                        child: Text('STANDINGS'),
+                      )),
                 ],
               ),
             ),
@@ -293,18 +816,38 @@ class _GameDetailScreenState extends State<GameDetailScreen>
                 future: _detailFuture,
                 builder: (ctx, snap) {
                   if (snap.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator(color: _C.blue));
+                    return const Center(
+                        child: CircularProgressIndicator(color: _C.blue));
                   }
                   final detail = snap.data;
                   return TabBarView(
                     controller: _tabController,
                     children: [
                       _MatchTab(game: widget.game, detail: detail),
-                      _StatsTab(game: widget.game, detail: detail, isUpcoming: _isUpcoming, countdown: _countdown, liveTick: _liveTick),
-                      _LineupTab(lineupFuture: _lineupFuture, game: widget.game, isUpcoming: _isUpcoming),
+                      _StatsTab(
+                        game: widget.game,
+                        detail: detail,
+                        isUpcoming: _isUpcoming,
+                        countdown: _countdown,
+                        liveTick: _liveTick,
+                      ),
+                      _LineupTab(
+                        lineupFuture: _lineupFuture,
+                        game: widget.game,
+                        isUpcoming: _isUpcoming,
+                        countdown: _countdown,
+                      ),
+                      _AnalyticsTab(
+                        analyticsFuture: _analyticsFuture,
+                        game: widget.game,
+                        isLive: _isLive,
+                        isUpcoming: _isUpcoming,
+                        awayColor: awayColor,
+                        homeColor: homeColor,
+                      ),
                       _TimelineTab(game: widget.game, detail: detail),
-                      _StandingsTab(future: _standingsFuture, game: widget.game),
-                      _H2HTab(future: _h2hFuture, game: widget.game),
+                      _StandingsTab(
+                          future: _standingsFuture, game: widget.game),
                     ],
                   );
                 },
@@ -318,15 +861,61 @@ class _GameDetailScreenState extends State<GameDetailScreen>
 
   String _leagueLogoId() {
     const map = {
-      'Premier League': '23', 'La Liga': '15', 'Serie A': '12',
-      'Bundesliga': '10', 'Ligue 1': '9', 'Champions League': '2',
-      'Europa League': '5', 'Conference League': '682', 'MLS': '19',
-      'Brasileirão': '85', 'Liga MX': '26', 'Liga Profesional': '27',
-      'Eredivisie': '11', 'Primeira Liga': '24', 'Nations League': '15157',
-      'FIFA World Cup': '4', 'Copa América': '26', 'UEFA Euro': '21',
+      'Premier League': '23',
+      'La Liga': '15',
+      'Serie A': '12',
+      'Bundesliga': '10',
+      'Ligue 1': '9',
+      'Champions League': '2',
+      'Europa League': '5',
+      'Conference League': '682',
+      'MLS': '19',
+      'Brasileirão': '85',
+      'Liga MX': '26',
+      'Liga Profesional': '27',
+      'Eredivisie': '11',
+      'Primeira Liga': '24',
+      'Nations League': '15157',
+      'FIFA World Cup': '4',
+      'Copa América': '26',
+      'UEFA Euro': '21',
       'International Friendly': '55',
     };
     return map[widget.game.leagueName] ?? '1';
+  }
+}
+
+// ─── Glass Icon Button ────────────────────────────────────────────────────────
+class _GlassIconButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  const _GlassIconButton({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: _C.surface.withOpacity(0.65),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white.withOpacity(0.4)),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.06),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2))
+            ],
+          ),
+          child: Icon(icon, color: _C.text, size: 20),
+        ),
+      ),
+    );
   }
 }
 
@@ -336,10 +925,18 @@ class _HeroScore extends StatelessWidget {
   final bool isLive, isDone, isUpcoming;
   final int liveTick;
   final Duration countdown;
+  final Color awayColor;
+  final Color homeColor;
 
   const _HeroScore({
-    required this.game, required this.isLive, required this.isDone,
-    required this.isUpcoming, required this.liveTick, required this.countdown,
+    required this.game,
+    required this.isLive,
+    required this.isDone,
+    required this.isUpcoming,
+    required this.liveTick,
+    required this.countdown,
+    required this.awayColor,
+    required this.homeColor,
   });
 
   @override
@@ -347,10 +944,19 @@ class _HeroScore extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Expanded(child: _TeamHero(team: game.awayTeam, isHome: false)),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+        Expanded(
+            child: _TeamHero(
+                team: game.awayTeam, isHome: false, accent: awayColor)),
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: _C.surface.withOpacity(0.55),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white.withOpacity(0.5)),
+          ),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               if (isLive || isDone) ...[
@@ -360,22 +966,34 @@ class _HeroScore extends StatelessWidget {
                     _ScoreDigit(game.awayScore),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Text('–', style: TextStyle(color: _C.muted, fontSize: 28, fontWeight: FontWeight.w300)),
+                      child: Text('–',
+                          style: TextStyle(
+                              color: _C.muted,
+                              fontSize: 28,
+                              fontWeight: FontWeight.w300)),
                     ),
                     _ScoreDigit(game.homeScore),
                   ],
                 ),
                 const SizedBox(height: 6),
                 if (isLive)
-                  _LivePill(clock: game.clock, period: game.period, tick: liveTick)
+                  _LivePill(
+                      clock: game.clock, period: game.period, tick: liveTick)
                 else
                   _Pill('FT', _C.muted, _C.blueSoft),
               ] else ...[
-                const Text('VS', style: TextStyle(color: _C.muted, fontSize: 20, fontWeight: FontWeight.w700)),
+                const Text('VS',
+                    style: TextStyle(
+                        color: _C.muted,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700)),
                 const SizedBox(height: 4),
                 Text(
                   Helpers.formatGameTime(game.date),
-                  style: const TextStyle(color: _C.blue, fontSize: 11, fontWeight: FontWeight.w700),
+                  style: const TextStyle(
+                      color: _C.blue,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700),
                 ),
                 if (countdown.inSeconds > 0) ...[
                   const SizedBox(height: 4),
@@ -385,7 +1003,9 @@ class _HeroScore extends StatelessWidget {
             ],
           ),
         ),
-        Expanded(child: _TeamHero(team: game.homeTeam, isHome: true)),
+        Expanded(
+            child: _TeamHero(
+                team: game.homeTeam, isHome: true, accent: homeColor)),
       ],
     );
   }
@@ -404,11 +1024,13 @@ class _CountdownPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
       decoration: BoxDecoration(
-        color: _C.blueSoft, borderRadius: BorderRadius.circular(20),
+        color: _C.blueSoft,
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: _C.blue.withOpacity(0.3)),
       ),
       child: Text('Starts in $label',
-          style: const TextStyle(color: _C.blue, fontSize: 10, fontWeight: FontWeight.w700)),
+          style: const TextStyle(
+              color: _C.blue, fontSize: 10, fontWeight: FontWeight.w700)),
     );
   }
 }
@@ -421,7 +1043,12 @@ class _ScoreDigit extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       value.isEmpty ? '0' : value,
-      style: const TextStyle(color: _C.text, fontSize: 44, fontWeight: FontWeight.w900, height: 1, letterSpacing: -1),
+      style: const TextStyle(
+          color: _C.text,
+          fontSize: 44,
+          fontWeight: FontWeight.w900,
+          height: 1,
+          letterSpacing: -1),
     );
   }
 }
@@ -429,7 +1056,9 @@ class _ScoreDigit extends StatelessWidget {
 class _TeamHero extends StatelessWidget {
   final TeamInfo team;
   final bool isHome;
-  const _TeamHero({required this.team, required this.isHome});
+  final Color accent;
+  const _TeamHero(
+      {required this.team, required this.isHome, this.accent = _C.blue});
 
   @override
   Widget build(BuildContext context) {
@@ -437,32 +1066,53 @@ class _TeamHero extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Container(
-          width: 60, height: 60,
-          padding: const EdgeInsets.all(8),
+          width: 62,
+          height: 62,
+          padding: const EdgeInsets.all(9),
           decoration: BoxDecoration(
-            color: _C.surface, borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: _C.border),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 8, offset: const Offset(0, 2))],
+            color: _C.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: accent.withOpacity(0.35), width: 1.4),
+            boxShadow: [
+              BoxShadow(
+                  color: accent.withOpacity(0.18),
+                  blurRadius: 14,
+                  offset: const Offset(0, 4)),
+            ],
           ),
           child: Image.network(
-            team.logo, fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => const Icon(Icons.sports_soccer, color: _C.muted, size: 28),
+            team.logo,
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) =>
+                const Icon(Icons.sports_soccer, color: _C.muted, size: 28),
           ),
         ),
         const SizedBox(height: 8),
         Text(
           team.abbreviation.isNotEmpty ? team.abbreviation : team.name,
-          style: const TextStyle(color: _C.text, fontSize: 13, fontWeight: FontWeight.w700),
-          textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+              color: _C.text, fontSize: 13, fontWeight: FontWeight.w700),
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
-        if ((team.displayName.isNotEmpty && team.displayName != team.abbreviation) ||
+        if ((team.displayName.isNotEmpty &&
+                team.displayName != team.abbreviation) ||
             (team.name.isNotEmpty && team.name != team.abbreviation))
           Text(
             team.displayName.isNotEmpty ? team.displayName : team.name,
-            style: const TextStyle(color: _C.muted, fontSize: 9, fontWeight: FontWeight.w500, height: 1.3),
-            textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+                color: _C.muted,
+                fontSize: 9,
+                fontWeight: FontWeight.w500,
+                height: 1.3),
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
           ),
-        Text(team.record, style: const TextStyle(color: _C.muted, fontSize: 10), textAlign: TextAlign.center),
+        Text(team.record,
+            style: const TextStyle(color: _C.muted, fontSize: 10),
+            textAlign: TextAlign.center),
       ],
     );
   }
@@ -471,7 +1121,8 @@ class _TeamHero extends StatelessWidget {
 class _LivePill extends StatelessWidget {
   final String clock, period;
   final int tick;
-  const _LivePill({required this.clock, required this.period, required this.tick});
+  const _LivePill(
+      {required this.clock, required this.period, required this.tick});
 
   @override
   Widget build(BuildContext context) {
@@ -484,7 +1135,8 @@ class _LivePill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: _C.liveGlow, borderRadius: BorderRadius.circular(20),
+        color: _C.liveGlow,
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: _C.liveRed.withOpacity(0.5)),
       ),
       child: Row(
@@ -493,11 +1145,18 @@ class _LivePill extends StatelessWidget {
           AnimatedOpacity(
             opacity: dot ? 1.0 : 0.2,
             duration: const Duration(milliseconds: 400),
-            child: Container(width: 6, height: 6,
-                decoration: const BoxDecoration(color: _C.liveRed, shape: BoxShape.circle)),
+            child: Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                    color: _C.liveRed, shape: BoxShape.circle)),
           ),
           const SizedBox(width: 5),
-          Text(label, style: const TextStyle(color: _C.liveRed, fontSize: 12, fontWeight: FontWeight.w800)),
+          Text(label,
+              style: const TextStyle(
+                  color: _C.liveRed,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800)),
         ],
       ),
     );
@@ -505,21 +1164,25 @@ class _LivePill extends StatelessWidget {
 }
 
 class _Pill extends StatelessWidget {
-  final String label; final Color fg, bg;
+  final String label;
+  final Color fg, bg;
   const _Pill(this.label, this.fg, this.bg);
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-      child: Text(label, style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w700)),
+      decoration:
+          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+      child: Text(label,
+          style:
+              TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w700)),
     );
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 1 — MATCH
+//  TAB 1 — MATCH (unchanged)
 // ═══════════════════════════════════════════════════════════════════════════════
 class _MatchTab extends StatelessWidget {
   final Game game;
@@ -533,40 +1196,65 @@ class _MatchTab extends StatelessWidget {
       children: [
         _card(Row(
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: Image.network(
-                'https://a.espncdn.com/i/leaguelogos/soccer/500/${_leagueLogoId(game.leagueName)}.png',
-                width: 40, height: 40,
-                errorBuilder: (_, __, ___) => Icon(Icons.emoji_events_rounded, size: 30, color: _C.muted),
+            Container(
+              width: 46,
+              height: 46,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: _C.blueSoft,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: Image.network(
+                  'https://a.espncdn.com/i/leaguelogos/soccer/500/${_leagueLogoId(game.leagueName)}.png',
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Icon(
+                      Icons.emoji_events_rounded,
+                      size: 22,
+                      color: _C.blue),
+                ),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(game.leagueName,
-                    style: const TextStyle(color: _C.text, fontSize: 15, fontWeight: FontWeight.w700)),
-                Text(
-                  game.isNationalTeamGame
-                      ? 'International • ${_matchRound(detail)}'
-                      : 'Club Football • ${_matchRound(detail)}',
-                  style: const TextStyle(color: _C.muted, fontSize: 11),
-                ),
-              ]),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(game.leagueName,
+                        style: const TextStyle(
+                            color: _C.text,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 2),
+                    Text(
+                      game.isNationalTeamGame
+                          ? 'International • ${_matchRound(detail)}'
+                          : 'Club Football • ${_matchRound(detail)}',
+                      style: const TextStyle(
+                          color: _C.muted,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w500),
+                    ),
+                  ]),
             ),
           ],
         )),
         const SizedBox(height: 12),
         _card(Column(children: [
-          _InfoRow(Icons.calendar_today_rounded, 'Date', Helpers.formatGameTime(game.date, showBothTimezones: true)),
+          _InfoRow(Icons.calendar_today_rounded, 'Date',
+              Helpers.formatGameTime(game.date, showBothTimezones: true)),
           _divider(),
-          _InfoRow(Icons.location_on_rounded, 'Location',
+          _InfoRow(
+              Icons.location_on_rounded,
+              'Location',
               game.venue.fullName.isNotEmpty
                   ? '${game.venue.fullName}${game.venue.locationDisplay.isNotEmpty ? ", ${game.venue.locationDisplay}" : ""}'
                   : 'TBD'),
           if (game.venue.capacity > 0) ...[
             _divider(),
-            _InfoRow(Icons.people_rounded, 'Capacity', _fmtNum(game.venue.capacity)),
+            _InfoRow(
+                Icons.people_rounded, 'Capacity', _fmtNum(game.venue.capacity)),
           ],
           _divider(),
           _InfoRow(Icons.home_rounded, 'Home/Away',
@@ -575,7 +1263,8 @@ class _MatchTab extends StatelessWidget {
           _InfoRow(Icons.sports_rounded, 'Status', _statusLabel(game.status)),
           if (detail != null && _matchRound(detail).isNotEmpty) ...[
             _divider(),
-            _InfoRow(Icons.format_list_numbered_rounded, 'Round', _matchRound(detail)),
+            _InfoRow(Icons.format_list_numbered_rounded, 'Round',
+                _matchRound(detail)),
           ],
         ])),
         const SizedBox(height: 14),
@@ -601,31 +1290,35 @@ class _MatchTab extends StatelessWidget {
     if (d == null) return '';
     try {
       final note = d.boxScore['notes'];
-      if (note is List && note.isNotEmpty) return note.first['headline']?.toString() ?? '';
+      if (note is List && note.isNotEmpty)
+        return note.first['headline']?.toString() ?? '';
     } catch (_) {}
     return '';
   }
 
-  // REQ 1: No emojis — use Flutter Icons only
   String _statusLabel(String s) {
     if (s == 'STATUS_LIVE') return 'Live';
     if (s == 'STATUS_FINAL') return 'Full Time';
     return 'Upcoming';
   }
 
-  Widget _statusIcon(String s) {
-    if (s == 'STATUS_LIVE') return const Icon(Icons.circle, color: _C.liveRed, size: 10);
-    if (s == 'STATUS_FINAL') return const Icon(Icons.check_circle_rounded, color: _C.green, size: 14);
-    return const Icon(Icons.schedule_rounded, color: _C.blue, size: 14);
-  }
-
   String _leagueLogoId(String name) {
     const map = {
-      'Premier League': '23', 'La Liga': '15', 'Serie A': '12',
-      'Bundesliga': '10', 'Ligue 1': '9', 'Champions League': '2',
-      'Europa League': '5', 'Conference League': '682', 'MLS': '19',
-      'Brasileirão': '85', 'Copa América': '26', 'UEFA Euro': '21',
-      'Nations League': '15157', 'FIFA World Cup': '4', 'International Friendly': '55',
+      'Premier League': '23',
+      'La Liga': '15',
+      'Serie A': '12',
+      'Bundesliga': '10',
+      'Ligue 1': '9',
+      'Champions League': '2',
+      'Europa League': '5',
+      'Conference League': '682',
+      'MLS': '19',
+      'Brasileirão': '85',
+      'Copa América': '26',
+      'UEFA Euro': '21',
+      'Nations League': '15157',
+      'FIFA World Cup': '4',
+      'International Friendly': '55',
     };
     return map[name] ?? '1';
   }
@@ -635,30 +1328,67 @@ class _MatchTab extends StatelessWidget {
 
 extension _GameExt on Game {
   bool get isNationalTeamGame {
-    final internationalCodes = ['fifa.world', 'fifa.worldq', 'uefa.euro', 'uefa.nations',
-      'conmebol.america', 'concacaf.gold', 'afc.cup', 'caf.nations', 'fifa.friendly', 'ofc.nations'];
-    return internationalCodes.any((c) => leagueName.toLowerCase().contains(c.toLowerCase()) ||
-        leagueName.contains('National') || leagueName.contains('International') ||
-        leagueName.contains('World Cup') || leagueName.contains('Euro') ||
-        leagueName.contains('Nations') || leagueName.contains('Copa') ||
+    final internationalCodes = [
+      'fifa.world',
+      'fifa.worldq',
+      'uefa.euro',
+      'uefa.nations',
+      'conmebol.america',
+      'concacaf.gold',
+      'afc.cup',
+      'caf.nations',
+      'fifa.friendly',
+      'ofc.nations'
+    ];
+    return internationalCodes.any((c) =>
+        leagueName.toLowerCase().contains(c.toLowerCase()) ||
+        leagueName.contains('National') ||
+        leagueName.contains('International') ||
+        leagueName.contains('World Cup') ||
+        leagueName.contains('Euro') ||
+        leagueName.contains('Nations') ||
+        leagueName.contains('Copa') ||
         leagueName.contains('Friendly'));
   }
 }
 
 class _InfoRow extends StatelessWidget {
-  final IconData icon; final String label, value;
+  final IconData icon;
+  final String label, value;
   const _InfoRow(this.icon, this.label, this.value);
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(icon, color: _C.blue, size: 16),
-          const SizedBox(width: 10),
-          SizedBox(width: 80, child: Text(label, style: const TextStyle(color: _C.muted, fontSize: 12, fontWeight: FontWeight.w500))),
-          Expanded(child: Text(value, style: const TextStyle(color: _C.text, fontSize: 13, fontWeight: FontWeight.w600), maxLines: 2)),
+          Container(
+            width: 30,
+            height: 30,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _C.blueSoft,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(icon, color: _C.blue, size: 15),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+              width: 78,
+              child: Text(label,
+                  style: const TextStyle(
+                      color: _C.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500))),
+          Expanded(
+              child: Text(value,
+                  style: const TextStyle(
+                      color: _C.text,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700),
+                  maxLines: 2)),
         ],
       ),
     );
@@ -675,16 +1405,36 @@ class _HalfTimeTable extends StatelessWidget {
     final awayH2 = game.awayLineScores.length > 1 ? game.awayLineScores[1] : 0;
     final homeH1 = game.homeLineScores.isNotEmpty ? game.homeLineScores[0] : 0;
     final homeH2 = game.homeLineScores.length > 1 ? game.homeLineScores[1] : 0;
-    final awayET = game.awayLineScores.length > 2 ? game.awayLineScores[2] : null;
-    final homeET = game.homeLineScores.length > 2 ? game.homeLineScores[2] : null;
+    final awayET =
+        game.awayLineScores.length > 2 ? game.awayLineScores[2] : null;
+    final homeET =
+        game.homeLineScores.length > 2 ? game.homeLineScores[2] : null;
     final cols = <String>['', '1ST', '2ND', if (awayET != null) 'ET', 'FT'];
 
     return Table(
-      columnWidths: const {0: FlexColumnWidth(3), 1: FlexColumnWidth(1), 2: FlexColumnWidth(1), 3: FlexColumnWidth(1), 4: FlexColumnWidth(1)},
+      columnWidths: const {
+        0: FlexColumnWidth(3),
+        1: FlexColumnWidth(1),
+        2: FlexColumnWidth(1),
+        3: FlexColumnWidth(1),
+        4: FlexColumnWidth(1)
+      },
       children: [
         _tRow(cols, isHeader: true),
-        _tRow([game.awayTeam.abbreviation, '$awayH1', '$awayH2', if (awayET != null) '$awayET', game.awayScore]),
-        _tRow([game.homeTeam.abbreviation, '$homeH1', '$homeH2', if (homeET != null) '$homeET', game.homeScore]),
+        _tRow([
+          game.awayTeam.abbreviation,
+          '$awayH1',
+          '$awayH2',
+          if (awayET != null) '$awayET',
+          game.awayScore
+        ]),
+        _tRow([
+          game.homeTeam.abbreviation,
+          '$homeH1',
+          '$homeH2',
+          if (homeET != null) '$homeET',
+          game.homeScore
+        ]),
       ],
     );
   }
@@ -692,19 +1442,29 @@ class _HalfTimeTable extends StatelessWidget {
   TableRow _tRow(List<String> vals, {bool isHeader = false}) {
     return TableRow(
       decoration: isHeader
-          ? const BoxDecoration(border: Border(bottom: BorderSide(color: _C.border)))
+          ? BoxDecoration(
+              color: _C.bg.withOpacity(0.6),
+              border: const Border(bottom: BorderSide(color: _C.border)),
+            )
           : null,
       children: vals.map((v) {
         final isFirst = v == vals.first;
-        final isLast  = v == vals.last;
+        final isLast = v == vals.last;
         return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 4),
-          child: Text(v,
+          padding:
+              EdgeInsets.symmetric(vertical: isHeader ? 8 : 10, horizontal: 4),
+          child: Text(
+            v,
             textAlign: isFirst ? TextAlign.left : TextAlign.center,
             style: TextStyle(
-              color: isHeader ? _C.muted : (isLast && !isFirst ? _C.blue : _C.text),
+              color: isHeader
+                  ? _C.muted
+                  : (isLast && !isFirst ? _C.blue : _C.text),
               fontSize: isHeader ? 10 : 13,
-              fontWeight: isHeader ? FontWeight.w600 : (isLast ? FontWeight.w800 : FontWeight.w600),
+              fontWeight: isHeader
+                  ? FontWeight.w700
+                  : (isLast ? FontWeight.w800 : FontWeight.w600),
+              letterSpacing: isHeader ? 0.4 : 0,
             ),
           ),
         );
@@ -719,14 +1479,17 @@ class _GoalScorerList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final all = [...game.goalScorers]..sort((a, b) => a.minute.compareTo(b.minute));
+    final all = [...game.goalScorers]
+      ..sort((a, b) => a.minute.compareTo(b.minute));
     return Column(
       children: all.map((g) {
-        // REQ 1: Use Icon instead of emoji ball
         final ballIcon = Container(
-          width: 18, height: 18,
+          width: 18,
+          height: 18,
           decoration: BoxDecoration(
-            color: g.isOwnGoal ? _C.red.withOpacity(0.12) : _C.green.withOpacity(0.10),
+            color: g.isOwnGoal
+                ? _C.red.withOpacity(0.12)
+                : _C.green.withOpacity(0.10),
             shape: BoxShape.circle,
           ),
           child: Icon(Icons.sports_soccer_rounded,
@@ -739,42 +1502,67 @@ class _GoalScorerList extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                child: !g.isHomeTeam ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(mainAxisSize: MainAxisSize.min, children: [
-                    ballIcon, const SizedBox(width: 5),
-                    Flexible(child: Text('${g.playerName}$penLabel',
-                        style: const TextStyle(color: _C.text, fontSize: 12, fontWeight: FontWeight.w600))),
-                  ]),
-                  if (g.assistPlayerName?.isNotEmpty == true)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 23),
-                      child: Text('Ast: ${g.assistPlayerName}',
-                          style: const TextStyle(color: _C.muted, fontSize: 10)),
-                    ),
-                ]) : const SizedBox(),
+                child: !g.isHomeTeam
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                            Row(mainAxisSize: MainAxisSize.min, children: [
+                              ballIcon,
+                              const SizedBox(width: 5),
+                              Flexible(
+                                  child: Text('${g.playerName}$penLabel',
+                                      style: const TextStyle(
+                                          color: _C.text,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600))),
+                            ]),
+                            if (g.assistPlayerName?.isNotEmpty == true)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 23),
+                                child: Text('Ast: ${g.assistPlayerName}',
+                                    style: const TextStyle(
+                                        color: _C.muted, fontSize: 10)),
+                              ),
+                          ])
+                    : const SizedBox(),
               ),
               Container(
                 width: 44,
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 decoration: BoxDecoration(
-                    color: _C.green.withOpacity(0.10), borderRadius: BorderRadius.circular(20)),
-                child: Text(g.minuteDisplay, textAlign: TextAlign.center,
-                    style: const TextStyle(color: _C.green, fontSize: 10, fontWeight: FontWeight.w700)),
+                    color: _C.green.withOpacity(0.10),
+                    borderRadius: BorderRadius.circular(20)),
+                child: Text(g.minuteDisplay,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        color: _C.green,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700)),
               ),
               Expanded(
-                child: g.isHomeTeam ? Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                  Row(mainAxisSize: MainAxisSize.min, children: [
-                    Flexible(child: Text('${g.playerName}$penLabel',
-                        style: const TextStyle(color: _C.text, fontSize: 12, fontWeight: FontWeight.w600))),
-                    const SizedBox(width: 5), ballIcon,
-                  ]),
-                  if (g.assistPlayerName?.isNotEmpty == true)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 23),
-                      child: Text('Ast: ${g.assistPlayerName}',
-                          style: const TextStyle(color: _C.muted, fontSize: 10)),
-                    ),
-                ]) : const SizedBox(),
+                child: g.isHomeTeam
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                            Row(mainAxisSize: MainAxisSize.min, children: [
+                              Flexible(
+                                  child: Text('${g.playerName}$penLabel',
+                                      style: const TextStyle(
+                                          color: _C.text,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600))),
+                              const SizedBox(width: 5),
+                              ballIcon,
+                            ]),
+                            if (g.assistPlayerName?.isNotEmpty == true)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 23),
+                                child: Text('Ast: ${g.assistPlayerName}',
+                                    style: const TextStyle(
+                                        color: _C.muted, fontSize: 10)),
+                              ),
+                          ])
+                    : const SizedBox(),
               ),
             ],
           ),
@@ -794,16 +1582,20 @@ class _VenueCard extends StatelessWidget {
       children: [
         Container(
           padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(color: _C.blueSoft, borderRadius: BorderRadius.circular(10)),
+          decoration: BoxDecoration(
+              color: _C.blueSoft, borderRadius: BorderRadius.circular(10)),
           child: const Icon(Icons.stadium_rounded, color: _C.blue, size: 22),
         ),
         const SizedBox(width: 12),
         Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(venue.fullName,
-                style: const TextStyle(color: _C.text, fontWeight: FontWeight.w700, fontSize: 14)),
+                style: const TextStyle(
+                    color: _C.text, fontWeight: FontWeight.w700, fontSize: 14)),
             if (venue.locationDisplay.isNotEmpty)
-              Text(venue.locationDisplay, style: const TextStyle(color: _C.muted, fontSize: 12)),
+              Text(venue.locationDisplay,
+                  style: const TextStyle(color: _C.muted, fontSize: 12)),
             if (venue.capacity > 0)
               Text('Capacity: ${_fmtNum(venue.capacity)}',
                   style: const TextStyle(color: _C.muted, fontSize: 11)),
@@ -815,7 +1607,7 @@ class _VenueCard extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 2 — STATS  (REQ 2: Top 10 stats + See More)
+//  TAB 2 — STATS (unchanged)
 // ═══════════════════════════════════════════════════════════════════════════════
 class _StatsTab extends StatefulWidget {
   final Game game;
@@ -825,8 +1617,11 @@ class _StatsTab extends StatefulWidget {
   final int liveTick;
 
   const _StatsTab({
-    required this.game, required this.detail,
-    required this.isUpcoming, required this.countdown, required this.liveTick,
+    required this.game,
+    required this.detail,
+    required this.isUpcoming,
+    required this.countdown,
+    required this.liveTick,
   });
 
   @override
@@ -836,42 +1631,55 @@ class _StatsTab extends StatefulWidget {
 class _StatsTabState extends State<_StatsTab> {
   bool _showAll = false;
 
-  // REQ 2: Exactly these 10 stats shown first, all in CAPS
   static const List<String> _primaryKeys = [
     'possessionPct',
-    'totalShots',
-    'shotsOnTarget',
-    'saves',
-    'yellowCards',
-    'redCards',
     'passes',
     'passingAccuracy',
+    'totalShots',
+    'shotsOnTarget',
+    'crosses',
+    'accurateCrosses',
+    'fouls',
+    'offsides',
+    'yellowCards',
+    'redCards',
+  ];
+
+  static const List<String> _extraKeys = [
+    'saves',
+    'corners',
+    'goals',
+    'assists',
+    'penalties',
+    'blockedShots',
+    'clearances',
+    'aerialDuels',
+    'interceptions',
     'tackles',
-    'effectiveTackles',
   ];
 
   static const Map<String, String> _labels = {
-    'possessionPct':    'POSSESSION',
-    'totalShots':       'TOTAL SHOTS',
-    'shotsOnTarget':    'SHOTS ON TARGET',
-    'saves':            'SAVES',
-    'yellowCards':      'YELLOW CARDS',
-    'redCards':         'RED CARDS',
-    'passes':           'TOTAL PASSES',
-    'passingAccuracy':  'ACCURATE PASSES',
-    'tackles':          'TOTAL TACKLES',
-    'effectiveTackles': 'EFFECTIVE TACKLES',
-    // extras still shown under See More:
-    'goals':            'GOALS',
-    'assists':          'ASSISTS',
-    'passesAttempted':  'PASSES ATTEMPTED',
-    'fouls':            'FOULS',
-    'offsides':         'OFFSIDES',
-    'corners':          'CORNERS',
-    'penalties':        'PENALTIES',
-    'blockedShots':     'BLOCKED SHOTS',
-    'clearances':       'CLEARANCES',
-    'aerialDuels':      'AERIAL DUELS WON',
+    'possessionPct': 'POSSESSION',
+    'passes': 'TOTAL PASSES',
+    'passingAccuracy': 'ACCURATE PASSES',
+    'totalShots': 'TOTAL SHOTS',
+    'shotsOnTarget': 'SHOTS ON TARGET',
+    'crosses': 'TOTAL CROSSES',
+    'accurateCrosses': 'ACCURATE CROSSES',
+    'fouls': 'FOULS',
+    'offsides': 'OFFSIDES',
+    'yellowCards': 'YELLOW CARDS',
+    'redCards': 'RED CARDS',
+    'saves': 'SAVES',
+    'corners': 'CORNERS',
+    'goals': 'GOALS',
+    'assists': 'ASSISTS',
+    'penalties': 'PENALTIES',
+    'blockedShots': 'BLOCKED SHOTS',
+    'clearances': 'CLEARANCES',
+    'aerialDuels': 'AERIAL DUELS WON',
+    'interceptions': 'INTERCEPTIONS',
+    'tackles': 'TACKLES',
   };
 
   @override
@@ -880,14 +1688,21 @@ class _StatsTabState extends State<_StatsTab> {
     if (widget.detail == null) return _emptyStats('Stats not yet available');
 
     final teams = (widget.detail!.boxScore['teams'] as List?)
-        ?.whereType<Map<String, dynamic>>().toList() ?? [];
+            ?.whereType<Map<String, dynamic>>()
+            .toList() ??
+        [];
     if (teams.isEmpty) return _emptyStats('Stats not available for this match');
 
     Map<String, dynamic>? awayData, homeData;
     for (final t in teams) {
-      final dn = (t['team'] as Map<String, dynamic>?)?['displayName']?.toString() ?? '';
-      if (dn == widget.game.awayTeam.displayName || dn == widget.game.awayTeam.name) awayData = t;
-      else if (dn == widget.game.homeTeam.displayName || dn == widget.game.homeTeam.name) homeData = t;
+      final dn =
+          (t['team'] as Map<String, dynamic>?)?['displayName']?.toString() ??
+              '';
+      if (dn == widget.game.awayTeam.displayName ||
+          dn == widget.game.awayTeam.name)
+        awayData = t;
+      else if (dn == widget.game.homeTeam.displayName ||
+          dn == widget.game.homeTeam.name) homeData = t;
     }
     if (awayData == null && teams.isNotEmpty) awayData = teams[0];
     if (homeData == null && teams.length > 1) homeData = teams[1];
@@ -895,38 +1710,66 @@ class _StatsTabState extends State<_StatsTab> {
     final awayStats = _parseStats(awayData?['statistics']);
     final homeStats = _parseStats(homeData?['statistics']);
 
-    // Build ordered list: primary first, then rest
     final allAvailableKeys = <String>{...awayStats.keys, ...homeStats.keys};
-    final primaryAvailable  = _primaryKeys.where(allAvailableKeys.contains).toList();
-    final extraKeys = allAvailableKeys.where((k) => !_primaryKeys.contains(k)).toList();
+    final primaryAvailable =
+        _primaryKeys.where(allAvailableKeys.contains).toList();
+    final extraKeysAvailable =
+        _extraKeys.where(allAvailableKeys.contains).toList();
+    final otherKeys = allAvailableKeys
+        .where((k) => !_primaryKeys.contains(k) && !_extraKeys.contains(k))
+        .toList();
 
-    final displayedKeys = _showAll ? [...primaryAvailable, ...extraKeys] : primaryAvailable;
+    final displayedKeys = _showAll
+        ? [...primaryAvailable, ...extraKeysAvailable, ...otherKeys]
+        : primaryAvailable;
 
-    if (displayedKeys.isEmpty) return _emptyStats('No stats available for this match');
+    if (displayedKeys.isEmpty)
+      return _emptyStats('No stats available for this match');
 
     return ListView(
       padding: const EdgeInsets.all(14),
       children: [
         _card(Row(children: [
-          _TeamStatHeader(team: widget.game.awayTeam, align: CrossAxisAlignment.start),
+          _TeamStatHeader(
+              team: widget.game.awayTeam, align: CrossAxisAlignment.start),
           const Spacer(),
-          const Text('STATS', style: TextStyle(color: _C.muted, fontSize: 11, fontWeight: FontWeight.w700)),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: _C.blueSoft,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Text('MATCH STATS',
+                style: TextStyle(
+                    color: _C.blue,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5)),
+          ),
           const Spacer(),
-          _TeamStatHeader(team: widget.game.homeTeam, align: CrossAxisAlignment.end),
+          _TeamStatHeader(
+              team: widget.game.homeTeam, align: CrossAxisAlignment.end),
         ])),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         _card(Column(
           children: [
-            ...displayedKeys.map((key) => _StatBarRow(
-              label: _labels[key] ?? _camelToTitle(key),
-              awayValue: awayStats[key] ?? '0',
-              homeValue: homeStats[key] ?? '0',
-              awayColor: _C.awayAccent,
-              homeColor: _C.homeAccent,
-              isPossession: key == 'possessionPct',
-            )),
-            // See More / See Less button
-            if (extraKeys.isNotEmpty) ...[
+            ...displayedKeys.map((key) {
+              final isPercent = key == 'possessionPct' ||
+                  key == 'passingAccuracy' ||
+                  key == 'shotAccuracy' ||
+                  key == 'crossAccuracy';
+
+              return _StatBarRow(
+                label: _labels[key] ?? _camelToTitle(key),
+                awayValue: awayStats[key] ?? '0',
+                homeValue: homeStats[key] ?? '0',
+                awayColor: _C.awayAccent,
+                homeColor: _C.homeAccent,
+                isPossession: key == 'possessionPct',
+                isPercentage: isPercent,
+              );
+            }),
+            if (extraKeysAvailable.isNotEmpty || otherKeys.isNotEmpty) ...[
               const SizedBox(height: 6),
               const Divider(color: _C.border, height: 1),
               const SizedBox(height: 4),
@@ -939,13 +1782,21 @@ class _StatsTabState extends State<_StatsTab> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
-                        _showAll ? 'SEE LESS' : 'SEE MORE (${extraKeys.length} more stats)',
-                        style: const TextStyle(color: _C.blue, fontSize: 12, fontWeight: FontWeight.w700),
+                        _showAll
+                            ? 'SEE LESS'
+                            : 'SEE MORE (${extraKeysAvailable.length + otherKeys.length} more stats)',
+                        style: const TextStyle(
+                            color: _C.blue,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(width: 4),
                       Icon(
-                        _showAll ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
-                        color: _C.blue, size: 18,
+                        _showAll
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                        color: _C.blue,
+                        size: 18,
                       ),
                     ],
                   ),
@@ -959,9 +1810,11 @@ class _StatsTabState extends State<_StatsTab> {
   }
 
   Widget _buildUpcomingCountdown(BuildContext context) {
-    final h    = widget.countdown.inHours;
-    final m    = widget.countdown.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final s    = widget.countdown.inSeconds.remainder(60).toString().padLeft(2, '0');
+    final h = widget.countdown.inHours;
+    final m =
+        widget.countdown.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s =
+        widget.countdown.inSeconds.remainder(60).toString().padLeft(2, '0');
     final days = widget.countdown.inDays;
 
     return SingleChildScrollView(
@@ -971,29 +1824,42 @@ class _StatsTabState extends State<_StatsTab> {
           const SizedBox(height: 20),
           _card(Column(
             children: [
-              const Text('MATCH STARTS IN', style: TextStyle(color: _C.muted, fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 1)),
+              const Text('MATCH STARTS IN',
+                  style: TextStyle(
+                      color: _C.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1)),
               const SizedBox(height: 20),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   if (days > 0) ...[
                     _CountdownUnit('$days', 'DAYS'),
-                    _CountdownColon(),
+                    const _CountdownColon(),
                   ],
-                  _CountdownUnit('${h.remainder(24).toString().padLeft(2, '0')}', 'HRS'),
-                  _CountdownColon(),
+                  _CountdownUnit(
+                      '${h.remainder(24).toString().padLeft(2, '0')}', 'HRS'),
+                  const _CountdownColon(),
                   _CountdownUnit(m, 'MIN'),
-                  _CountdownColon(),
+                  const _CountdownColon(),
                   _CountdownUnit(s, 'SEC'),
                 ],
               ),
               const SizedBox(height: 16),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(color: _C.blueSoft, borderRadius: BorderRadius.circular(20)),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                    color: _C.blueSoft,
+                    borderRadius: BorderRadius.circular(20)),
                 child: Text(
-                  Helpers.formatGameTime(widget.game.date, showBothTimezones: true),
-                  style: const TextStyle(color: _C.blue, fontSize: 12, fontWeight: FontWeight.w600),
+                  Helpers.formatGameTime(widget.game.date,
+                      showBothTimezones: true),
+                  style: const TextStyle(
+                      color: _C.blue,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600),
                 ),
               ),
             ],
@@ -1022,24 +1888,28 @@ class _StatsTabState extends State<_StatsTab> {
     for (final s in rawList) {
       if (s is! Map) continue;
       final name = s['name']?.toString();
-      final val  = s['displayValue']?.toString() ?? s['value']?.toString() ?? '0';
+      final val =
+          s['displayValue']?.toString() ?? s['value']?.toString() ?? '0';
       if (name != null && name.isNotEmpty) out[name] = val;
     }
     return out;
   }
 
-  String _camelToTitle(String s) =>
-      s.replaceAllMapped(RegExp(r'[A-Z]'), (m) => ' ${m.group(0)}').trim().toUpperCase();
+  String _camelToTitle(String s) => s
+      .replaceAllMapped(RegExp(r'[A-Z]'), (m) => ' ${m.group(0)}')
+      .trim()
+      .toUpperCase();
 
   Widget _emptyStats(String msg) => Center(
-    child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-      const Icon(Icons.bar_chart_rounded, color: _C.muted, size: 52),
-      const SizedBox(height: 12),
-      Text(msg, style: const TextStyle(color: _C.muted, fontSize: 14)),
-    ]),
-  );
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Icon(Icons.bar_chart_rounded, color: _C.muted, size: 52),
+          const SizedBox(height: 12),
+          Text(msg, style: const TextStyle(color: _C.muted, fontSize: 14)),
+        ]),
+      );
 }
 
+// ─── Countdown Unit ──────────────────────────────────────────────────────────
 class _CountdownUnit extends StatelessWidget {
   final String value, label;
   const _CountdownUnit(this.value, this.label);
@@ -1050,23 +1920,38 @@ class _CountdownUnit extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 4),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: _C.blueSoft, borderRadius: BorderRadius.circular(10),
+        color: _C.blueSoft,
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: _C.blue.withOpacity(0.2)),
       ),
       child: Column(children: [
-        Text(value, style: const TextStyle(color: _C.blue, fontSize: 30, fontWeight: FontWeight.w900, fontFeatures: [FontFeature.tabularFigures()])),
-        Text(label, style: const TextStyle(color: _C.muted, fontSize: 9, fontWeight: FontWeight.w700)),
+        Text(value,
+            style: const TextStyle(
+                color: _C.blue,
+                fontSize: 30,
+                fontWeight: FontWeight.w900,
+                fontFeatures: [FontFeature.tabularFigures()])),
+        Text(label,
+            style: const TextStyle(
+                color: _C.muted, fontSize: 9, fontWeight: FontWeight.w700)),
       ]),
     );
   }
 }
 
+// ─── Countdown Colon ──────────────────────────────────────────────────────────
 class _CountdownColon extends StatelessWidget {
+  const _CountdownColon();
+
   @override
-  Widget build(BuildContext context) =>
-      const Padding(padding: EdgeInsets.only(bottom: 14), child: Text(':', style: TextStyle(color: _C.blue, fontSize: 28, fontWeight: FontWeight.w700)));
+  Widget build(BuildContext context) => const Padding(
+      padding: EdgeInsets.only(bottom: 14),
+      child: Text(':',
+          style: TextStyle(
+              color: _C.blue, fontSize: 28, fontWeight: FontWeight.w700)));
 }
 
+// ─── Team Stat Header ─────────────────────────────────────────────────────────
 class _TeamStatHeader extends StatelessWidget {
   final TeamInfo team;
   final CrossAxisAlignment align;
@@ -1075,74 +1960,133 @@ class _TeamStatHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(crossAxisAlignment: align, children: [
-      Image.network(team.logo, width: 34, height: 34,
-          errorBuilder: (_, __, ___) => const Icon(Icons.sports_soccer, color: _C.muted, size: 24)),
+      Image.network(
+        team.logo,
+        width: 34,
+        height: 34,
+        errorBuilder: (_, __, ___) =>
+            const Icon(Icons.sports_soccer, color: _C.muted, size: 24),
+      ),
       const SizedBox(height: 4),
-      Text(team.abbreviation, style: const TextStyle(color: _C.text, fontSize: 12, fontWeight: FontWeight.w700)),
+      Text(team.abbreviation,
+          style: const TextStyle(
+              color: _C.text, fontSize: 12, fontWeight: FontWeight.w700)),
     ]);
   }
 }
 
+// ─── Stat Bar Row ─────────────────────────────────────────────────────────────
 class _StatBarRow extends StatelessWidget {
   final String label, awayValue, homeValue;
   final Color awayColor, homeColor;
   final bool isPossession;
+  final bool isPercentage;
 
   const _StatBarRow({
-    required this.label, required this.awayValue, required this.homeValue,
-    required this.awayColor, required this.homeColor, required this.isPossession,
+    required this.label,
+    required this.awayValue,
+    required this.homeValue,
+    required this.awayColor,
+    required this.homeColor,
+    this.isPossession = false,
+    this.isPercentage = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final aNum  = _toNum(awayValue);
-    final hNum  = _toNum(homeValue);
+    // See _readableAccent: a team's real color can be white/near-white,
+    // which would make the value text and progress-bar fill below
+    // invisible.
+    final awayColor = _readableAccent(this.awayColor);
+    final homeColor = _readableAccent(this.homeColor);
+    final aNum = _toNum(awayValue);
+    final hNum = _toNum(homeValue);
     final total = aNum + hNum;
     final aFrac = total > 0 ? aNum / total : 0.5;
+
+    final awayDisplay =
+        isPossession || isPercentage ? '$awayValue%' : awayValue;
+    final homeDisplay =
+        isPossession || isPercentage ? '$homeValue%' : homeValue;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
       child: Column(children: [
         Row(children: [
-          SizedBox(width: 44, child: Text(
-            isPossession ? '$awayValue%' : awayValue,
-            style: TextStyle(color: awayColor, fontSize: 14, fontWeight: FontWeight.w800),
-          )),
-          Expanded(child: Text(label,
+          SizedBox(
+            width: 50,
+            child: Text(
+              awayDisplay,
+              style: TextStyle(
+                  color: awayColor, fontSize: 14, fontWeight: FontWeight.w800),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              label,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: _C.muted, fontSize: 11, fontWeight: FontWeight.w600))),
-          SizedBox(width: 44, child: Text(
-            isPossession ? '$homeValue%' : homeValue,
-            style: TextStyle(color: homeColor, fontSize: 14, fontWeight: FontWeight.w800),
-            textAlign: TextAlign.right,
-          )),
+              style: const TextStyle(
+                  color: _C.muted, fontSize: 11, fontWeight: FontWeight.w600),
+            ),
+          ),
+          SizedBox(
+            width: 50,
+            child: Text(
+              homeDisplay,
+              style: TextStyle(
+                  color: homeColor, fontSize: 14, fontWeight: FontWeight.w800),
+              textAlign: TextAlign.right,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ]),
-        const SizedBox(height: 5),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: Row(children: [
-            Expanded(flex: (aFrac * 100).round().clamp(5, 95),
-                child: Container(height: 5, color: awayColor)),
-            Expanded(flex: ((1 - aFrac) * 100).round().clamp(5, 95),
-                child: Container(height: 5, color: homeColor)),
-          ]),
+        const SizedBox(height: 6),
+        Container(
+          height: 6,
+          decoration: BoxDecoration(
+            color: _C.bg,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: Row(children: [
+              Expanded(
+                flex: (aFrac * 100).round().clamp(5, 95),
+                child: Container(height: 6, color: awayColor),
+              ),
+              const SizedBox(width: 2),
+              Expanded(
+                flex: ((1 - aFrac) * 100).round().clamp(5, 95),
+                child: Container(height: 6, color: homeColor),
+              ),
+            ]),
+          ),
         ),
       ]),
     );
   }
 
-  double _toNum(String v) => double.tryParse(v.replaceAll('%', '').replaceAll(',', '')) ?? 0;
+  double _toNum(String v) =>
+      double.tryParse(v.replaceAll('%', '').replaceAll(',', '')) ?? 0;
 }
 
-
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 3 — LINEUP  (uses FootballPitch from football_pitch_lineup.dart)
+//  TAB 3 — LINEUP (with SportsDB headshots)
 // ═══════════════════════════════════════════════════════════════════════════════
 class _LineupTab extends StatelessWidget {
   final Future<MatchLineup?> lineupFuture;
   final Game game;
   final bool isUpcoming;
-  const _LineupTab({required this.lineupFuture, required this.game, required this.isUpcoming});
+  final Duration countdown;
+  const _LineupTab({
+    required this.lineupFuture,
+    required this.game,
+    required this.isUpcoming,
+    this.countdown = Duration.zero,
+  });
+
+  static const _lineupAnnounceWindow = Duration(minutes: 15);
 
   @override
   Widget build(BuildContext context) {
@@ -1153,10 +2097,25 @@ class _LineupTab extends StatelessWidget {
           return const Center(child: CircularProgressIndicator(color: _C.blue));
         }
         final lineup = snap.data;
-        if (lineup == null || (lineup.homePlayers.isEmpty && lineup.awayPlayers.isEmpty)) {
-          return _NoDataWidget(
+        if (lineup == null ||
+            (lineup.homePlayers.isEmpty && lineup.awayPlayers.isEmpty)) {
+          if (isUpcoming && countdown > _lineupAnnounceWindow) {
+            return const _NoDataWidget(
+              icon: Icons.schedule_rounded,
+              message:
+                  'Lineup not available yet\nit will be available 10–15 min before the match starts',
+            );
+          }
+          if (isUpcoming) {
+            return const _NoDataWidget(
+              icon: Icons.people_alt_rounded,
+              message:
+                  'Lineups are being finalized\ncheck back in a few minutes',
+            );
+          }
+          return const _NoDataWidget(
             icon: Icons.people_alt_rounded,
-            message: 'Lineup not yet announced',
+            message: 'Lineup not available for this match',
           );
         }
         return _LineupView(lineup: lineup, game: game, isUpcoming: isUpcoming);
@@ -1169,7 +2128,8 @@ class _LineupView extends StatefulWidget {
   final MatchLineup lineup;
   final Game game;
   final bool isUpcoming;
-  const _LineupView({required this.lineup, required this.game, required this.isUpcoming});
+  const _LineupView(
+      {required this.lineup, required this.game, required this.isUpcoming});
 
   @override
   State<_LineupView> createState() => _LineupViewState();
@@ -1177,7 +2137,6 @@ class _LineupView extends StatefulWidget {
 
 class _LineupViewState extends State<_LineupView> {
   bool _showStarters = true;
-  // Formation can be changed interactively; initialised from API data.
   late String _homeFormation;
   late String _awayFormation;
 
@@ -1192,30 +2151,31 @@ class _LineupViewState extends State<_LineupView> {
         : '4-3-3';
   }
 
-  // Convert our MatchLineup → FootballPitch TeamLineup models
   TeamLineup _toTeamLineup({required bool isHome}) {
-    final players = isHome ? widget.lineup.homePlayers : widget.lineup.awayPlayers;
-    final team    = isHome ? widget.game.homeTeam : widget.game.awayTeam;
+    final players =
+        isHome ? widget.lineup.homePlayers : widget.lineup.awayPlayers;
+    final team = isHome ? widget.game.homeTeam : widget.game.awayTeam;
     final formation = isHome ? _homeFormation : _awayFormation;
-    final color   = isHome ? _C.homeAccent : _C.awayAccent;
+    final color = isHome ? _C.homeAccent : _C.awayAccent;
 
     PitchPlayer toPitch(LineupPlayer p) => PitchPlayer(
-      id: p.id,
-      name: p.name,
-      shortName: p.shortName,
-      number: p.number,
-      position: p.position,
-      imageUrl: p.headshot.isNotEmpty ? p.headshot : null,
-      isStarter: p.isStarter,
-      isHome: isHome,
-      rating: p.rating,
-    );
+          id: p.id,
+          name: p.name,
+          shortName: p.shortName,
+          number: p.number,
+          position: p.position,
+          imageUrl: p.headshot.isNotEmpty ? p.headshot : null,
+          isStarter: p.isStarter,
+          isHome: isHome,
+          rating: p.rating,
+        );
 
     return TeamLineup(
       teamName: team.displayName.isNotEmpty ? team.displayName : team.name,
       teamLogo: team.logo,
       formation: formation,
-      starters: players.where((p) => p.isStarter).take(11).map(toPitch).toList(),
+      starters:
+          players.where((p) => p.isStarter).take(11).map(toPitch).toList(),
       substitutes: players.where((p) => !p.isStarter).map(toPitch).toList(),
       primaryColor: color,
     );
@@ -1229,7 +2189,6 @@ class _LineupViewState extends State<_LineupView> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
       children: [
-        // ── Header row: away formation | toggle | home formation ─────────────
         Row(children: [
           _FormationHeader(
             team: widget.game.awayTeam,
@@ -1249,11 +2208,13 @@ class _LineupViewState extends State<_LineupView> {
           ),
         ]),
         const SizedBox(height: 12),
-
         if (_showStarters) ...[
-          // ── Away formation selector ───────────────────────────────────────
           Row(children: [
-            const Text('AWAY', style: TextStyle(color: _C.muted, fontSize: 10, fontWeight: FontWeight.w700)),
+            const Text('AWAY',
+                style: TextStyle(
+                    color: _C.muted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700)),
             const SizedBox(width: 6),
             Expanded(
               child: FormationSelector(
@@ -1264,19 +2225,21 @@ class _LineupViewState extends State<_LineupView> {
             ),
           ]),
           const SizedBox(height: 4),
-
-          // ── Football pitch ────────────────────────────────────────────────
           FootballPitch(
             homeTeam: homeLineup,
             awayTeam: awayLineup,
-            showRatings: !widget.isUpcoming,
+            // Player ratings aren't reliably available from ESPN/SportsDB for
+            // these leagues, so we never surface a rating badge here.
+            showRatings: false,
             onPlayerTap: (player) => _showPlayerSheet(context, player),
           ),
-
-          // ── Home formation selector ───────────────────────────────────────
           const SizedBox(height: 4),
           Row(children: [
-            const Text('HOME', style: TextStyle(color: _C.muted, fontSize: 10, fontWeight: FontWeight.w700)),
+            const Text('HOME',
+                style: TextStyle(
+                    color: _C.muted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700)),
             const SizedBox(width: 6),
             Expanded(
               child: FormationSelector(
@@ -1286,24 +2249,7 @@ class _LineupViewState extends State<_LineupView> {
               ),
             ),
           ]),
-
-          // ── Rating note for upcoming ──────────────────────────────────────
-          if (widget.isUpcoming) ...[
-            const SizedBox(height: 10),
-            _card(Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: const [
-                Icon(Icons.info_outline_rounded, color: _C.blue, size: 14),
-                SizedBox(width: 6),
-                Text(
-                  'Player ratings appear after the match',
-                  style: TextStyle(color: _C.muted, fontSize: 12),
-                ),
-              ],
-            )),
-          ],
         ] else ...[
-          // ── Substitutes section ───────────────────────────────────────────
           SubstitutesSection(homeTeam: homeLineup, awayTeam: awayLineup),
         ],
       ],
@@ -1311,22 +2257,25 @@ class _LineupViewState extends State<_LineupView> {
   }
 
   void _showPlayerSheet(BuildContext context, PitchPlayer player) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _PlayerBottomSheet(player: player),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PlayerScreen(
+          player: player,
+          game: widget.game,
+          teamInfo: player.isHome ? widget.game.homeTeam : widget.game.awayTeam,
+        ),
+      ),
     );
   }
 }
 
-// ─── Player bottom sheet on tap ────────────────────────────────────────────────
 class _PlayerBottomSheet extends StatelessWidget {
   final PitchPlayer player;
   const _PlayerBottomSheet({required this.player});
 
   @override
   Widget build(BuildContext context) {
-    final rColor = player.rating != null ? _ratingColor(player.rating!) : _C.blue;
     return Container(
       decoration: const BoxDecoration(
         color: _C.surface,
@@ -1335,37 +2284,39 @@ class _PlayerBottomSheet extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         Container(
-          width: 40, height: 4,
-          decoration: BoxDecoration(color: _C.border, borderRadius: BorderRadius.circular(2)),
+          width: 40,
+          height: 4,
+          decoration: BoxDecoration(
+              color: _C.border, borderRadius: BorderRadius.circular(2)),
         ),
         const SizedBox(height: 16),
-        // Avatar
         Container(
-          width: 72, height: 72,
+          width: 72,
+          height: 72,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(color: rColor, width: 3),
-            boxShadow: [BoxShadow(color: rColor.withOpacity(0.3), blurRadius: 12)],
+            border: Border.all(color: _C.blue, width: 3),
+            boxShadow: [
+              BoxShadow(color: _C.blue.withOpacity(0.3), blurRadius: 12)
+            ],
           ),
           child: ClipOval(
             child: (player.imageUrl != null && player.imageUrl!.isNotEmpty)
-                ? Image.network(player.imageUrl!, fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _initials())
+                ? Image.network(player.imageUrl!,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => _initials())
                 : _initials(),
           ),
         ),
         const SizedBox(height: 12),
         Text(player.name,
-            style: const TextStyle(color: _C.text, fontSize: 18, fontWeight: FontWeight.w800)),
+            style: const TextStyle(
+                color: _C.text, fontSize: 18, fontWeight: FontWeight.w800)),
         const SizedBox(height: 4),
         Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           _Pill('#${player.number}', _C.muted, _C.blueSoft),
           const SizedBox(width: 6),
           _Pill(player.position, _C.blue, _C.blueSoft),
-          if (player.rating != null) ...[
-            const SizedBox(width: 6),
-            _Pill(player.rating!.toStringAsFixed(1), Colors.white, rColor),
-          ],
         ]),
       ]),
     );
@@ -1378,60 +2329,64 @@ class _PlayerBottomSheet extends StatelessWidget {
         : (player.name.isNotEmpty ? player.name[0].toUpperCase() : '?');
     return Container(
       color: _C.blueSoft,
-      child: Center(child: Text(txt, style: const TextStyle(color: _C.blue, fontSize: 24, fontWeight: FontWeight.w900))),
+      child: Center(
+          child: Text(txt,
+              style: const TextStyle(
+                  color: _C.blue, fontSize: 24, fontWeight: FontWeight.w900))),
     );
-  }
-
-  Color _ratingColor(double r) {
-    if (r >= 8) return _C.green;
-    if (r >= 6.5) return _C.blue;
-    if (r >= 5) return _C.yellow;
-    return _C.red;
   }
 }
 
-// ─── Formation header chip (shows team logo + name + formation badge) ──────────
 class _FormationHeader extends StatelessWidget {
   final TeamInfo team;
   final String formation;
   final Color color;
-  const _FormationHeader({required this.team, required this.formation, required this.color});
+  const _FormationHeader(
+      {required this.team, required this.formation, required this.color});
 
   @override
   Widget build(BuildContext context) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: [
-      Row(mainAxisSize: MainAxisSize.min, children: [
-        Image.network(team.logo, width: 20, height: 20,
-            errorBuilder: (_, __, ___) => Icon(Icons.sports_soccer, color: color, size: 18)),
-        const SizedBox(width: 4),
-        Text(
-          team.abbreviation.isNotEmpty ? team.abbreviation : team.name,
-          style: const TextStyle(color: _C.text, fontSize: 12, fontWeight: FontWeight.w700),
-          maxLines: 1, overflow: TextOverflow.ellipsis,
-        ),
-      ]),
-      const SizedBox(height: 4),
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.10),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: color.withOpacity(0.4)),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.grid_view_rounded, size: 10, color: color),
-          const SizedBox(width: 3),
-          Text(
-            formation.isEmpty ? '–' : formation,
-            style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700),
+    return Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            Image.network(team.logo,
+                width: 20,
+                height: 20,
+                errorBuilder: (_, __, ___) =>
+                    Icon(Icons.sports_soccer, color: color, size: 18)),
+            const SizedBox(width: 4),
+            Text(
+              team.abbreviation.isNotEmpty ? team.abbreviation : team.name,
+              style: const TextStyle(
+                  color: _C.text, fontSize: 12, fontWeight: FontWeight.w700),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ]),
+          const SizedBox(height: 4),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: color.withOpacity(0.4)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.grid_view_rounded, size: 10, color: color),
+              const SizedBox(width: 3),
+              Text(
+                formation.isEmpty ? '–' : formation,
+                style: TextStyle(
+                    color: color, fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+            ]),
           ),
-        ]),
-      ),
-    ]);
+        ]);
   }
 }
 
-// ─── Starters/Subs toggle ──────────────────────────────────────────────────────
 class _ToggleChip extends StatelessWidget {
   final bool selected;
   final Function(bool) onTab;
@@ -1476,7 +2431,7 @@ class _ToggleChip extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 4 — TIMELINE  (REQ 4: centered events, kickoff/HT/FT with Flutter icons)
+//  TAB 4 — TIMELINE (unchanged)
 // ═══════════════════════════════════════════════════════════════════════════════
 class _TimelineTab extends StatelessWidget {
   final Game game;
@@ -1487,21 +2442,76 @@ class _TimelineTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final events = _buildEvents();
     if (events.isEmpty) {
-      return _NoDataWidget(icon: Icons.timeline_rounded, message: 'Timeline not yet available');
+      return _NoDataWidget(
+          icon: Icons.timeline_rounded, message: 'Timeline not yet available');
     }
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
       children: [
-        // Column headers
-        Row(children: [
-          Expanded(child: Center(child: Text(game.awayTeam.abbreviation,
-              style: const TextStyle(color: _C.awayAccent, fontSize: 12, fontWeight: FontWeight.w700)))),
-          const SizedBox(width: 56),
-          Expanded(child: Center(child: Text(game.homeTeam.abbreviation,
-              style: const TextStyle(color: _C.homeAccent, fontSize: 12, fontWeight: FontWeight.w700)))),
-        ]),
-        const SizedBox(height: 8),
-        ...events.map((e) => _TimelineRow(event: e, game: game)),
+        _card(Column(
+          children: [
+            Row(children: [
+              Expanded(
+                child:
+                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: Image.network(game.awayTeam.logo,
+                        width: 18,
+                        height: 18,
+                        errorBuilder: (_, __, ___) =>
+                            const SizedBox(width: 18, height: 18)),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(game.awayTeam.abbreviation,
+                      style: const TextStyle(
+                          color: _C.awayAccent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800)),
+                ]),
+              ),
+              const SizedBox(width: 56),
+              Expanded(
+                child:
+                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Text(game.homeTeam.abbreviation,
+                      style: const TextStyle(
+                          color: _C.homeAccent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800)),
+                  const SizedBox(width: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: Image.network(game.homeTeam.logo,
+                        width: 18,
+                        height: 18,
+                        errorBuilder: (_, __, ___) =>
+                            const SizedBox(width: 18, height: 18)),
+                  ),
+                ]),
+              ),
+            ]),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 10),
+              child: Divider(color: _C.border, height: 1),
+            ),
+            Stack(
+              children: [
+                Positioned.fill(
+                  child: Center(
+                    child:
+                        Container(width: 2, color: _C.border.withOpacity(0.8)),
+                  ),
+                ),
+                Column(
+                  children: events
+                      .map((e) => _TimelineRow(event: e, game: game))
+                      .toList(),
+                ),
+              ],
+            ),
+          ],
+        )),
       ],
     );
   }
@@ -1509,15 +2519,21 @@ class _TimelineTab extends StatelessWidget {
   List<_TLEvent> _buildEvents() {
     final List<_TLEvent> events = [];
 
-    // REQ 4: Kickoff as centered event with Flutter icon
-    events.add(_TLEvent(minute: 0, type: _TLType.kickoff, label: 'KICK OFF', sub: null, isHome: null));
+    events.add(_TLEvent(
+        minute: 0,
+        type: _TLType.kickoff,
+        label: 'KICK OFF',
+        sub: null,
+        isHome: null));
 
     for (final g in game.goalScorers) {
       events.add(_TLEvent(
         minute: g.minute,
         type: g.isOwnGoal ? _TLType.ownGoal : _TLType.goal,
         label: '${g.playerName}${g.isPenalty ? ' (pen)' : ''}',
-        sub: (g.assistPlayerName?.isNotEmpty == true) ? 'Ast: ${g.assistPlayerName}' : null,
+        sub: (g.assistPlayerName?.isNotEmpty == true)
+            ? 'Ast: ${g.assistPlayerName}'
+            : null,
         isHome: g.isHomeTeam,
       ));
     }
@@ -1536,45 +2552,86 @@ class _TimelineTab extends StatelessWidget {
           ));
         } else if (p.isSubstitution) {
           events.add(_TLEvent(
-            minute: min, type: _TLType.substitution,
+            minute: min,
+            type: _TLType.substitution,
             label: p.text.length > 45 ? '${p.text.substring(0, 43)}…' : p.text,
-            sub: null, isHome: null,
+            sub: null,
+            isHome: null,
           ));
-        } else if (p.type.toLowerCase().contains('corner') || p.text.toLowerCase().contains('corner kick')) {
-          events.add(_TLEvent(minute: min, type: _TLType.corner, label: 'Corner', sub: null, isHome: null));
-        } else if (p.type.toLowerCase().contains('foul') || p.text.toLowerCase().contains('foul by')) {
-          events.add(_TLEvent(minute: min, type: _TLType.foul, label: _extractFoulFrom(p.text), sub: null, isHome: null));
-        } else if (p.type.toLowerCase().contains('freekick') || p.text.toLowerCase().contains('free kick')) {
-          events.add(_TLEvent(minute: min, type: _TLType.freekick, label: 'Free Kick', sub: null, isHome: null));
-        } else if (p.type.toLowerCase().contains('penalty') || p.text.toLowerCase().contains('penalty')) {
+        } else if (p.type.toLowerCase().contains('corner') ||
+            p.text.toLowerCase().contains('corner kick')) {
+          events.add(_TLEvent(
+              minute: min,
+              type: _TLType.corner,
+              label: 'Corner',
+              sub: null,
+              isHome: null));
+        } else if (p.type.toLowerCase().contains('foul') ||
+            p.text.toLowerCase().contains('foul by')) {
+          events.add(_TLEvent(
+              minute: min,
+              type: _TLType.foul,
+              label: _extractFoulFrom(p.text),
+              sub: null,
+              isHome: null));
+        } else if (p.type.toLowerCase().contains('freekick') ||
+            p.text.toLowerCase().contains('free kick')) {
+          events.add(_TLEvent(
+              minute: min,
+              type: _TLType.freekick,
+              label: 'Free Kick',
+              sub: null,
+              isHome: null));
+        } else if (p.type.toLowerCase().contains('penalty') ||
+            p.text.toLowerCase().contains('penalty')) {
           if (!p.isGoal) {
-            events.add(_TLEvent(minute: min, type: _TLType.penalty, label: 'Penalty', sub: p.text.length <= 50 ? p.text : null, isHome: null));
+            events.add(_TLEvent(
+                minute: min,
+                type: _TLType.penalty,
+                label: 'Penalty',
+                sub: p.text.length <= 50 ? p.text : null,
+                isHome: null));
           }
-        } else if (p.type.toLowerCase().contains('offsid') || p.text.toLowerCase().contains('offside')) {
-          events.add(_TLEvent(minute: min, type: _TLType.offside, label: 'Offside', sub: null, isHome: null));
+        } else if (p.type.toLowerCase().contains('offsid') ||
+            p.text.toLowerCase().contains('offside')) {
+          events.add(_TLEvent(
+              minute: min,
+              type: _TLType.offside,
+              label: 'Offside',
+              sub: null,
+              isHome: null));
         }
       }
     }
 
-    // REQ 4: Half Time as centered milestone with score
     if (game.awayLineScores.isNotEmpty) {
       final ah = game.awayLineScores[0];
       final hh = game.homeLineScores.isNotEmpty ? game.homeLineScores[0] : 0;
       events.add(_TLEvent(
-        minute: 45, type: _TLType.halfTime,
-        label: 'HALF TIME', sub: '$ah – $hh', isHome: null,
+        minute: 45,
+        type: _TLType.halfTime,
+        label: 'HALF TIME',
+        sub: '$ah – $hh',
+        isHome: null,
       ));
     }
 
-    // REQ 4: Full Time as centered milestone with final score
     if (game.status == 'STATUS_FINAL') {
       events.add(_TLEvent(
-        minute: 90, type: _TLType.fullTime,
-        label: 'FULL TIME', sub: '${game.awayScore} – ${game.homeScore}',
+        minute: 90,
+        type: _TLType.fullTime,
+        label: 'FULL TIME',
+        sub: '${game.awayScore} – ${game.homeScore}',
         isHome: null,
       ));
-    } else if (game.status == 'STATUS_LIVE' && (game.period == '3' || game.clock.contains('+'))) {
-      events.add(_TLEvent(minute: 90, type: _TLType.extraTime, label: 'EXTRA TIME', sub: null, isHome: null));
+    } else if (game.status == 'STATUS_LIVE' &&
+        (game.period == '3' || game.clock.contains('+'))) {
+      events.add(_TLEvent(
+          minute: 90,
+          type: _TLType.extraTime,
+          label: 'EXTRA TIME',
+          sub: null,
+          isHome: null));
     }
 
     events.sort((a, b) => a.minute.compareTo(b.minute));
@@ -1587,19 +2644,34 @@ class _TimelineTab extends StatelessWidget {
   }
 
   String _extractPlayerFromText(String t) {
-    final m = RegExp(r'(?:on|to|by)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', caseSensitive: false).firstMatch(t);
+    final m = RegExp(r'(?:on|to|by)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+            caseSensitive: false)
+        .firstMatch(t);
     return m?.group(1) ?? t.split(' ').take(3).join(' ');
   }
 
   String _extractFoulFrom(String t) {
-    final m = RegExp(r'foul by\s+(.+?)(?:\s+on|\.|$)', caseSensitive: false).firstMatch(t);
+    final m = RegExp(r'foul by\s+(.+?)(?:\s+on|\.|$)', caseSensitive: false)
+        .firstMatch(t);
     return m != null ? 'Foul by ${m.group(1)}' : 'Foul';
   }
 }
 
 enum _TLType {
-  kickoff, goal, ownGoal, yellowCard, redCard, substitution,
-  halfTime, fullTime, extraTime, corner, foul, freekick, penalty, offside,
+  kickoff,
+  goal,
+  ownGoal,
+  yellowCard,
+  redCard,
+  substitution,
+  halfTime,
+  fullTime,
+  extraTime,
+  corner,
+  foul,
+  freekick,
+  penalty,
+  offside,
 }
 
 class _TLEvent {
@@ -1608,11 +2680,14 @@ class _TLEvent {
   final String label;
   final String? sub;
   final bool? isHome;
-  const _TLEvent({required this.minute, required this.type, required this.label, required this.sub, required this.isHome});
+  const _TLEvent(
+      {required this.minute,
+      required this.type,
+      required this.label,
+      required this.sub,
+      required this.isHome});
 }
 
-// REQ 4: Redesigned timeline row — centered milestones with a continuous vertical
-// line, left/right player events that stay properly aligned on screen.
 class _TimelineRow extends StatelessWidget {
   final _TLEvent event;
   final Game game;
@@ -1621,79 +2696,115 @@ class _TimelineRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isMilestone = event.isHome == null;
-    final isHome      = event.isHome == true;
-    final evColor     = _eventColor(event.type);
-    final iconW       = _eventIconWidget(event.type, evColor);
+    final isHome = event.isHome == true;
+    final evColor = _eventColor(event.type);
+    final iconW = _eventIconWidget(event.type, evColor);
 
     if (isMilestone) {
-      // REQ 4: Milestone row — centered with horizontal dividers on each side
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: IntrinsicHeight(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Expanded(child: Container(height: 1, color: evColor.withOpacity(0.3))),
+              Expanded(
+                  child: Container(height: 1, color: evColor.withOpacity(0.3))),
               const SizedBox(width: 6),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 decoration: BoxDecoration(
-                  color: evColor.withOpacity(0.10),
+                  color: _C.surface,
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: evColor.withOpacity(0.5)),
+                  boxShadow: [
+                    BoxShadow(
+                        color: evColor.withOpacity(0.12),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2))
+                  ],
                 ),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   iconW,
                   const SizedBox(width: 6),
-                  Column(crossAxisAlignment: CrossAxisAlignment.center, children: [
-                    Text(event.label,
-                        style: TextStyle(color: evColor, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
-                    if (event.sub != null) ...[
-                      const SizedBox(height: 1),
-                      Text(event.sub!,
-                          style: TextStyle(color: evColor, fontSize: 12, fontWeight: FontWeight.w900)),
-                    ],
-                  ]),
+                  Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text(event.label,
+                            style: TextStyle(
+                                color: evColor,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.5)),
+                        if (event.sub != null) ...[
+                          const SizedBox(height: 1),
+                          Text(event.sub!,
+                              style: TextStyle(
+                                  color: evColor,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w900)),
+                        ],
+                      ]),
                 ]),
               ),
               const SizedBox(width: 6),
-              Expanded(child: Container(height: 1, color: evColor.withOpacity(0.3))),
+              Expanded(
+                  child: Container(height: 1, color: evColor.withOpacity(0.3))),
             ],
           ),
         ),
       );
     }
 
-    // REQ 4: Left/right player events — minute badge always in center column,
-    // player info fills the correct side, no off-center drift.
     final minBadge = Container(
       width: 44,
       padding: const EdgeInsets.symmetric(vertical: 4),
       decoration: BoxDecoration(
-          color: evColor.withOpacity(0.10), borderRadius: BorderRadius.circular(20)),
+        color: _C.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: evColor.withOpacity(0.35), width: 1),
+      ),
       child: Text("${event.minute}'",
           textAlign: TextAlign.center,
-          style: TextStyle(color: evColor, fontSize: 10, fontWeight: FontWeight.w800)),
+          style: TextStyle(
+              color: evColor, fontSize: 10, fontWeight: FontWeight.w800)),
     );
 
     final playerBlock = Column(
-      crossAxisAlignment: isHome ? CrossAxisAlignment.start : CrossAxisAlignment.end,
+      crossAxisAlignment:
+          isHome ? CrossAxisAlignment.start : CrossAxisAlignment.end,
       mainAxisSize: MainAxisSize.min,
       children: [
         Row(
           mainAxisSize: MainAxisSize.min,
           children: isHome
-              ? [iconW, const SizedBox(width: 5),
-            Flexible(child: Text(event.label,
-                style: const TextStyle(color: _C.text, fontSize: 12, fontWeight: FontWeight.w600)))]
-              : [Flexible(child: Text(event.label,
-              style: const TextStyle(color: _C.text, fontSize: 12, fontWeight: FontWeight.w600))),
-            const SizedBox(width: 5), iconW],
+              ? [
+                  iconW,
+                  const SizedBox(width: 5),
+                  Flexible(
+                      child: Text(event.label,
+                          style: const TextStyle(
+                              color: _C.text,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600)))
+                ]
+              : [
+                  Flexible(
+                      child: Text(event.label,
+                          style: const TextStyle(
+                              color: _C.text,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600))),
+                  const SizedBox(width: 5),
+                  iconW
+                ],
         ),
         if (event.sub != null)
           Padding(
-            padding: EdgeInsets.only(left: isHome ? 27 : 0, right: isHome ? 0 : 27),
-            child: Text(event.sub!, style: const TextStyle(color: _C.muted, fontSize: 10)),
+            padding:
+                EdgeInsets.only(left: isHome ? 27 : 0, right: isHome ? 0 : 27),
+            child: Text(event.sub!,
+                style: const TextStyle(color: _C.muted, fontSize: 10)),
           ),
       ],
     );
@@ -1703,71 +2814,112 @@ class _TimelineRow extends StatelessWidget {
       child: Row(
         children: isHome
             ? [
-          // Home: left side empty, center min, right side player
-          const Expanded(child: SizedBox()),
-          minBadge,
-          const SizedBox(width: 8),
-          Expanded(child: playerBlock),
-        ]
+                const Expanded(child: SizedBox()),
+                minBadge,
+                const SizedBox(width: 8),
+                Expanded(child: playerBlock),
+              ]
             : [
-          // Away: left side player, center min, right side empty
-          Expanded(child: playerBlock),
-          const SizedBox(width: 8),
-          minBadge,
-          const Expanded(child: SizedBox()),
-        ],
+                Expanded(child: playerBlock),
+                const SizedBox(width: 8),
+                minBadge,
+                const Expanded(child: SizedBox()),
+              ],
       ),
     );
   }
 
   Color _eventColor(_TLType t) {
     switch (t) {
-      case _TLType.goal:         return _C.green;
-      case _TLType.ownGoal:      return _C.red;
-      case _TLType.yellowCard:   return _C.yellow;
-      case _TLType.redCard:      return _C.red;
-      case _TLType.substitution: return _C.blue;
-      case _TLType.halfTime:     return _C.blue;
-      case _TLType.fullTime:     return _C.text;
-      case _TLType.extraTime:    return _C.blue;
-      case _TLType.corner:       return _C.muted;
-      case _TLType.foul:         return _C.yellow;
-      case _TLType.freekick:     return _C.muted;
-      case _TLType.penalty:      return _C.awayAccent;
-      case _TLType.offside:      return _C.muted;
-      case _TLType.kickoff:      return _C.green;
+      case _TLType.goal:
+        return _C.green;
+      case _TLType.ownGoal:
+        return _C.red;
+      case _TLType.yellowCard:
+        return _C.yellow;
+      case _TLType.redCard:
+        return _C.red;
+      case _TLType.substitution:
+        return _C.blue;
+      case _TLType.halfTime:
+        return _C.blue;
+      case _TLType.fullTime:
+        return _C.text;
+      case _TLType.extraTime:
+        return _C.blue;
+      case _TLType.corner:
+        return _C.muted;
+      case _TLType.foul:
+        return _C.yellow;
+      case _TLType.freekick:
+        return _C.muted;
+      case _TLType.penalty:
+        return _C.awayAccent;
+      case _TLType.offside:
+        return _C.muted;
+      case _TLType.kickoff:
+        return _C.green;
     }
   }
 
   Widget _eventIconWidget(_TLType t, Color color) {
     IconData icon;
     switch (t) {
-    // REQ 1: No emoji — use Flutter official icons for all events
-      case _TLType.goal:         icon = Icons.sports_soccer_rounded; break;
-      case _TLType.ownGoal:      icon = Icons.sports_soccer_rounded; break;
-      case _TLType.yellowCard:   icon = Icons.rectangle_rounded; break;
-      case _TLType.redCard:      icon = Icons.rectangle_rounded; break;
-      case _TLType.substitution: icon = Icons.swap_horiz_rounded; break;
-      case _TLType.halfTime:     icon = Icons.pause_circle_filled_rounded; break;
-      case _TLType.fullTime:     icon = Icons.sports_score_rounded; break;
-      case _TLType.extraTime:    icon = Icons.more_time_rounded; break;
-      case _TLType.corner:       icon = Icons.flag_outlined; break;
-      case _TLType.foul:         icon = Icons.warning_amber_rounded; break;
-      case _TLType.freekick:     icon = Icons.sports_rounded; break;
-      case _TLType.penalty:      icon = Icons.radio_button_checked_rounded; break;
-      case _TLType.offside:      icon = Icons.block_rounded; break;
-      case _TLType.kickoff:      icon = Icons.play_circle_filled_rounded; break;
+      case _TLType.goal:
+        icon = Icons.sports_soccer_rounded;
+        break;
+      case _TLType.ownGoal:
+        icon = Icons.sports_soccer_rounded;
+        break;
+      case _TLType.yellowCard:
+        icon = Icons.rectangle_rounded;
+        break;
+      case _TLType.redCard:
+        icon = Icons.rectangle_rounded;
+        break;
+      case _TLType.substitution:
+        icon = Icons.swap_horiz_rounded;
+        break;
+      case _TLType.halfTime:
+        icon = Icons.pause_circle_filled_rounded;
+        break;
+      case _TLType.fullTime:
+        icon = Icons.sports_score_rounded;
+        break;
+      case _TLType.extraTime:
+        icon = Icons.more_time_rounded;
+        break;
+      case _TLType.corner:
+        icon = Icons.flag_outlined;
+        break;
+      case _TLType.foul:
+        icon = Icons.warning_amber_rounded;
+        break;
+      case _TLType.freekick:
+        icon = Icons.sports_rounded;
+        break;
+      case _TLType.penalty:
+        icon = Icons.radio_button_checked_rounded;
+        break;
+      case _TLType.offside:
+        icon = Icons.block_rounded;
+        break;
+      case _TLType.kickoff:
+        icon = Icons.play_circle_filled_rounded;
+        break;
     }
     return Container(
-      width: 22, height: 22,
-      decoration: BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+      width: 22,
+      height: 22,
+      decoration:
+          BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
       child: Icon(icon, size: 13, color: color),
     );
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 5 — STANDINGS  (REQ 5: Full league table for that game's league)
+//  TAB 5 — STANDINGS (unchanged)
 // ═══════════════════════════════════════════════════════════════════════════════
 class _StandingsTab extends StatelessWidget {
   final Future<List<Standing>> future;
@@ -1784,43 +2936,59 @@ class _StandingsTab extends StatelessWidget {
         }
         final list = snap.data ?? [];
         if (list.isEmpty) {
-          return _NoDataWidget(icon: Icons.format_list_numbered_rounded, message: 'Standings not available for this competition');
+          return _NoDataWidget(
+              icon: Icons.format_list_numbered_rounded,
+              message: 'Standings not available for this competition');
         }
 
         return ListView(
           padding: const EdgeInsets.all(14),
           children: [
-            // League header
             _card(Row(children: [
               Container(
                 padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: _C.blueSoft, borderRadius: BorderRadius.circular(10)),
-                child: const Icon(Icons.emoji_events_rounded, color: _C.blue, size: 22),
+                decoration: BoxDecoration(
+                    color: _C.blueSoft,
+                    borderRadius: BorderRadius.circular(10)),
+                child: const Icon(Icons.emoji_events_rounded,
+                    color: _C.blue, size: 22),
               ),
               const SizedBox(width: 10),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(game.leagueName, style: const TextStyle(color: _C.text, fontSize: 15, fontWeight: FontWeight.w700)),
-                Text('${list.length} clubs', style: const TextStyle(color: _C.muted, fontSize: 11)),
-              ])),
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text(game.leagueName,
+                        style: const TextStyle(
+                            color: _C.text,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700)),
+                    Text('${list.length} clubs',
+                        style: const TextStyle(color: _C.muted, fontSize: 11)),
+                  ])),
             ])),
             const SizedBox(height: 12),
-            // Both teams at a glance
             _card(Row(children: [
-              _MiniTeamTag(team: game.awayTeam, color: _C.awayAccent, standing: _findStanding(list, game.awayTeam.id)),
+              _MiniTeamTag(
+                  team: game.awayTeam,
+                  color: _C.awayAccent,
+                  standing: _findStanding(list, game.awayTeam.id)),
               const Spacer(),
               const Text('vs', style: TextStyle(color: _C.muted, fontSize: 11)),
               const Spacer(),
-              _MiniTeamTag(team: game.homeTeam, color: _C.homeAccent, standing: _findStanding(list, game.homeTeam.id)),
+              _MiniTeamTag(
+                  team: game.homeTeam,
+                  color: _C.homeAccent,
+                  standing: _findStanding(list, game.homeTeam.id)),
             ])),
             const SizedBox(height: 12),
-            // Full standings table
             _card(Column(children: [
               _StandingsHeader(),
               ...list.map((s) => _StandingsRow(
-                standing: s,
-                isAway: s.team.id == game.awayTeam.id,
-                isHome: s.team.id == game.homeTeam.id,
-              )),
+                    standing: s,
+                    isAway: s.team.id == game.awayTeam.id,
+                    isHome: s.team.id == game.homeTeam.id,
+                  )),
             ])),
           ],
         );
@@ -1829,25 +2997,35 @@ class _StandingsTab extends StatelessWidget {
   }
 
   Standing? _findStanding(List<Standing> list, String teamId) {
-    try { return list.firstWhere((s) => s.team.id == teamId); }
-    catch (_) { return null; }
+    try {
+      return list.firstWhere((s) => s.team.id == teamId);
+    } catch (_) {
+      return null;
+    }
   }
 }
 
 class _MiniTeamTag extends StatelessWidget {
-  final TeamInfo team; final Color color; final Standing? standing;
+  final TeamInfo team;
+  final Color color;
+  final Standing? standing;
   const _MiniTeamTag({required this.team, required this.color, this.standing});
 
   @override
   Widget build(BuildContext context) {
     final rank = standing?.rank;
-    final pts  = standing?.stats['points'] ?? standing?.stats['pts'];
+    final pts = standing?.stats['points'] ?? standing?.stats['pts'];
     return Column(children: [
       Row(mainAxisSize: MainAxisSize.min, children: [
-        Image.network(team.logo, width: 22, height: 22,
-            errorBuilder: (_, __, ___) => Text(team.abbreviation, style: const TextStyle(fontSize: 10))),
+        Image.network(team.logo,
+            width: 22,
+            height: 22,
+            errorBuilder: (_, __, ___) =>
+                Text(team.abbreviation, style: const TextStyle(fontSize: 10))),
         const SizedBox(width: 6),
-        Text(team.abbreviation, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w700)),
+        Text(team.abbreviation,
+            style: TextStyle(
+                color: color, fontSize: 13, fontWeight: FontWeight.w700)),
       ]),
       if (rank != null)
         Text('Rank #$rank${pts != null ? " • $pts pts" : ""}',
@@ -1861,30 +3039,34 @@ class _StandingsHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: _C.border))),
+      decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: _C.border))),
       child: Row(children: [
         const SizedBox(width: 22, child: Text('#', style: _hS)),
         const SizedBox(width: 8),
         const Expanded(child: Text('CLUB', style: _hS)),
-        ...['P','W','D','L','GD','Pts'].map((h) =>
-            SizedBox(width: 28, child: Text(h, style: _hS, textAlign: TextAlign.center))),
+        ...['P', 'W', 'D', 'L', 'GD', 'Pts'].map((h) => SizedBox(
+            width: 28,
+            child: Text(h, style: _hS, textAlign: TextAlign.center))),
       ]),
     );
   }
 
-  static const _hS = TextStyle(color: _C.muted, fontSize: 10, fontWeight: FontWeight.w700);
+  static const _hS =
+      TextStyle(color: _C.muted, fontSize: 10, fontWeight: FontWeight.w700);
 }
 
 class _StandingsRow extends StatelessWidget {
   final Standing standing;
   final bool isAway, isHome;
-  const _StandingsRow({required this.standing, required this.isAway, required this.isHome});
+  const _StandingsRow(
+      {required this.standing, required this.isAway, required this.isHome});
 
   @override
   Widget build(BuildContext context) {
-    final highlight   = isAway || isHome;
-    final s           = standing.stats;
-    final gd          = _gd(s);
+    final highlight = isAway || isHome;
+    final s = standing.stats;
+    final gd = _gd(s);
     final accentColor = isAway ? _C.awayAccent : _C.homeAccent;
 
     return Container(
@@ -1897,18 +3079,32 @@ class _StandingsRow extends StatelessWidget {
         borderRadius: highlight ? BorderRadius.circular(8) : null,
       ),
       child: Row(children: [
-        SizedBox(width: 22, child: Text('${standing.rank}',
-            style: TextStyle(color: standing.rank <= 4 ? _C.green : _C.muted, fontSize: 12, fontWeight: FontWeight.w700))),
+        SizedBox(
+            width: 22,
+            child: Text('${standing.rank}',
+                style: TextStyle(
+                    color: standing.rank <= 4 ? _C.green : _C.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700))),
         const SizedBox(width: 8),
-        Expanded(child: Row(children: [
-          Image.network(standing.team.logo, width: 18, height: 18,
+        Expanded(
+            child: Row(children: [
+          Image.network(standing.team.logo,
+              width: 18,
+              height: 18,
               errorBuilder: (_, __, ___) => const SizedBox(width: 18)),
           const SizedBox(width: 6),
-          Expanded(child: Text(
-            standing.team.abbreviation.isNotEmpty ? standing.team.abbreviation : standing.team.name,
-            style: TextStyle(color: highlight ? accentColor : _C.text, fontSize: 12,
+          Expanded(
+              child: Text(
+            standing.team.abbreviation.isNotEmpty
+                ? standing.team.abbreviation
+                : standing.team.name,
+            style: TextStyle(
+                color: highlight ? accentColor : _C.text,
+                fontSize: 12,
                 fontWeight: highlight ? FontWeight.w700 : FontWeight.w500),
-            maxLines: 1, overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           )),
         ])),
         ...[
@@ -1924,217 +3120,1214 @@ class _StandingsRow extends StatelessWidget {
   }
 
   Widget _cell(String val, {Color? color, bool bold = false}) {
-    return SizedBox(width: 28, child: Text(val,
-        textAlign: TextAlign.center,
-        style: TextStyle(color: color ?? _C.text, fontSize: 12,
-            fontWeight: bold ? FontWeight.w800 : FontWeight.w500)));
+    return SizedBox(
+        width: 28,
+        child: Text(val,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                color: color ?? _C.text,
+                fontSize: 12,
+                fontWeight: bold ? FontWeight.w800 : FontWeight.w500)));
   }
 
   String _gd(Map<String, String> s) {
     final gf = int.tryParse(s['pointsFor'] ?? s['goalsFor'] ?? '0') ?? 0;
-    final ga = int.tryParse(s['pointsAgainst'] ?? s['goalsAgainst'] ?? '0') ?? 0;
-    final d  = gf - ga;
+    final ga =
+        int.tryParse(s['pointsAgainst'] ?? s['goalsAgainst'] ?? '0') ?? 0;
+    final d = gf - ga;
     return d >= 0 ? '+$d' : '$d';
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TAB 6 — H2H  (REQ 6: Head-to-head collision details)
+//  TAB 6 — ANALYTICS (unchanged)
 // ═══════════════════════════════════════════════════════════════════════════════
-class _H2HTab extends StatelessWidget {
-  final Future<List<H2HResult>> future;
+class _AnalyticsTab extends StatelessWidget {
+  final Future<Map<String, TeamAnalyticsData>> analyticsFuture;
   final Game game;
-  const _H2HTab({required this.future, required this.game});
+  final bool isLive;
+  final bool isUpcoming;
+  final Color awayColor;
+  final Color homeColor;
+
+  const _AnalyticsTab({
+    required this.analyticsFuture,
+    required this.game,
+    required this.isLive,
+    required this.isUpcoming,
+    required this.awayColor,
+    required this.homeColor,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<H2HResult>>(
-      future: future,
+    if (isUpcoming) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: _C.blueSoft,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.analytics_outlined,
+                size: 48,
+                color: _C.blue,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Analytics will be available',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: _C.text,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Live statistics will appear once the match starts',
+              style: TextStyle(
+                fontSize: 13,
+                color: _C.muted,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return FutureBuilder<Map<String, TeamAnalyticsData>>(
+      future: analyticsFuture,
       builder: (ctx, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator(color: _C.blue));
-        }
-        final list = snap.data ?? [];
-        if (list.isEmpty) {
-          return _NoDataWidget(icon: Icons.compare_arrows_rounded, message: 'No head-to-head history found');
+          return const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircularProgressIndicator(
+                  color: _C.blue,
+                  strokeWidth: 2.5,
+                ),
+                SizedBox(height: 16),
+                Text(
+                  'Loading analytics...',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: _C.muted,
+                  ),
+                ),
+              ],
+            ),
+          );
         }
 
-        int awayWins = 0, homeWins = 0, draws = 0;
-        int awayGoals = 0, homeGoals = 0;
-        for (final r in list) {
-          final aG = int.tryParse(r.awayScore) ?? 0;
-          final hG = int.tryParse(r.homeScore) ?? 0;
-          final awayIsAwayNow = r.awayTeam == game.awayTeam.abbreviation || r.awayTeam == game.awayTeam.id;
-          awayGoals += awayIsAwayNow ? aG : hG;
-          homeGoals += awayIsAwayNow ? hG : aG;
-
-          if (r.result == 'draw') draws++;
-          else if ((r.result == 'home_win' && (r.homeTeam == game.homeTeam.id || r.homeTeam == game.homeTeam.abbreviation)) ||
-              (r.result == 'away_win' && (r.awayTeam == game.homeTeam.id || r.awayTeam == game.homeTeam.abbreviation))) {
-            homeWins++;
-          } else {
-            awayWins++;
-          }
+        final data = snap.data;
+        if (data == null) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: _C.blueSoft,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.analytics_outlined,
+                    size: 48,
+                    color: _C.blue,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  isLive
+                      ? 'Gathering analytics data...'
+                      : 'Analytics not available',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: _C.text,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  isLive
+                      ? 'Please wait while we collect the stats'
+                      : 'No stats available for this match',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: _C.muted,
+                  ),
+                ),
+              ],
+            ),
+          );
         }
+
+        final awayData = data['away'] ?? TeamAnalyticsData();
+        final homeData = data['home'] ?? TeamAnalyticsData();
+
+        final awayAnalytics = _calculateTeamAnalytics(awayData);
+        final homeAnalytics = _calculateTeamAnalytics(homeData);
 
         return ListView(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           children: [
-            _card(_H2HSummary(
-              awayTeam: game.awayTeam, homeTeam: game.homeTeam,
-              awayWins: awayWins, draws: draws, homeWins: homeWins,
-              awayGoals: awayGoals, homeGoals: homeGoals,
-            )),
+            _TeamPerformanceCard(
+              teamName: game.awayTeam.abbreviation,
+              teamFullName: game.awayTeam.displayName,
+              teamLogo: game.awayTeam.logo,
+              analytics: awayAnalytics,
+              color: awayColor,
+              isHome: false,
+            ),
             const SizedBox(height: 14),
-            _SectionTitle('LAST ${list.length} MEETING${list.length == 1 ? "" : "S"}'),
-            const SizedBox(height: 8),
-            ...list.map((r) => _H2HRow(result: r, game: game)),
+            _TeamPerformanceCard(
+              teamName: game.homeTeam.abbreviation,
+              teamFullName: game.homeTeam.displayName,
+              teamLogo: game.homeTeam.logo,
+              analytics: homeAnalytics,
+              color: homeColor,
+              isHome: true,
+            ),
+            const SizedBox(height: 14),
+            _ComparisonCard(
+              title: 'ATTACKING PRODUCTION',
+              children: [
+                _ComparisonRow(
+                  label: 'GOALS',
+                  awayValue: awayData.goals.toString(),
+                  homeValue: homeData.goals.toString(),
+                  awayColor: awayColor,
+                  homeColor: homeColor,
+                  icon: Icons.sports_soccer_rounded,
+                ),
+                _ComparisonRow(
+                  label: 'TOTAL SHOTS',
+                  awayValue: awayData.totalShots.toString(),
+                  homeValue: homeData.totalShots.toString(),
+                  awayColor: awayColor,
+                  homeColor: homeColor,
+                  icon: Icons.shutter_speed_rounded,
+                ),
+                _ComparisonRow(
+                  label: 'SHOTS ON TARGET',
+                  awayValue:
+                      '${awayData.shotsOnTarget} (${awayData.shotAccuracy.toStringAsFixed(0)}%)',
+                  homeValue:
+                      '${homeData.shotsOnTarget} (${homeData.shotAccuracy.toStringAsFixed(0)}%)',
+                  awayColor: awayColor,
+                  homeColor: homeColor,
+                  icon: Icons.my_location,
+                ),
+                _ComparisonRow(
+                  label: 'SHOT CONVERSION',
+                  awayValue: awayData.totalShots > 0
+                      ? '${(awayData.goals / awayData.totalShots * 100).toStringAsFixed(0)}%'
+                      : '0%',
+                  homeValue: homeData.totalShots > 0
+                      ? '${(homeData.goals / homeData.totalShots * 100).toStringAsFixed(0)}%'
+                      : '0%',
+                  awayColor: awayColor,
+                  homeColor: homeColor,
+                  icon: Icons.timeline_rounded,
+                  isLast: true,
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            _ComparisonCard(
+              title: 'DEFENSIVE & DISCIPLINE',
+              children: [
+                _ComparisonRow(
+                  label: 'SAVES',
+                  awayValue: awayData.saves.toString(),
+                  homeValue: homeData.saves.toString(),
+                  awayColor: awayColor,
+                  homeColor: homeColor,
+                  icon: Icons.shield_rounded,
+                ),
+                _ComparisonRow(
+                  label: 'OFFSIDES',
+                  awayValue: awayData.offsides.toString(),
+                  homeValue: homeData.offsides.toString(),
+                  awayColor: awayColor,
+                  homeColor: homeColor,
+                  icon: Icons.flag_rounded,
+                ),
+                _ComparisonRow(
+                  label: 'FOULS',
+                  awayValue: awayData.fouls.toString(),
+                  homeValue: homeData.fouls.toString(),
+                  awayColor: awayColor,
+                  homeColor: homeColor,
+                  icon: Icons.warning_amber_rounded,
+                ),
+                _CardComparisonRow(
+                  awayYellow: awayData.yellowCards,
+                  awayRed: awayData.redCards,
+                  homeYellow: homeData.yellowCards,
+                  homeRed: homeData.redCards,
+                  awayColor: awayColor,
+                  homeColor: homeColor,
+                  awayName: game.awayTeam.abbreviation,
+                  homeName: game.homeTeam.abbreviation,
+                  isLast: true,
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            _ComparisonCard(
+              title: 'TACTICAL DOMINANCE',
+              children: [
+                _TacticalRow(
+                  label: 'POSSESSION',
+                  awayValue: awayData.possession,
+                  homeValue: homeData.possession,
+                  awayColor: awayColor,
+                  homeColor: homeColor,
+                  suffix: '%',
+                ),
+                _TacticalRow(
+                  label: 'PASS ACCURACY',
+                  awayValue: awayData.passingAccuracy,
+                  homeValue: homeData.passingAccuracy,
+                  awayColor: awayColor,
+                  homeColor: homeColor,
+                  suffix: '%',
+                ),
+                _TacticalRow(
+                  label: 'SHOT ACCURACY',
+                  awayValue: awayData.shotAccuracy,
+                  homeValue: homeData.shotAccuracy,
+                  awayColor: awayColor,
+                  homeColor: homeColor,
+                  suffix: '%',
+                  isLast: true,
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
           ],
         );
       },
     );
   }
+
+  Map<String, double> _calculateTeamAnalytics(TeamAnalyticsData data) {
+    double attackScore = 0;
+    double goalsScore = (data.goals * 17.5).clamp(0.0, 52.5);
+    double shotsScore = (data.totalShots * 1.5).clamp(0.0, 30.0);
+    double shotsOnTargetScore = (data.shotsOnTarget * 3.0).clamp(0.0, 30.0);
+    double conversionRate =
+        data.totalShots > 0 ? (data.goals / data.totalShots * 100) : 0.0;
+    double conversionScore = (conversionRate / 100 * 22.5).clamp(0.0, 22.5);
+    double shotEfficiency = data.totalShots > 0
+        ? (data.shotsOnTarget / data.totalShots * 100)
+        : 0.0;
+    double efficiencyScore = (shotEfficiency / 100 * 15).clamp(0.0, 15.0);
+
+    attackScore = (goalsScore +
+            shotsScore +
+            shotsOnTargetScore +
+            conversionScore +
+            efficiencyScore)
+        .clamp(0.0, 100.0);
+
+    double defenseScore = 0;
+    double savesScore = (data.saves * 4.0).clamp(0.0, 40.0);
+    double cleanSheetScore = data.saves >= 5 ? 20.0 : 0;
+    double foulsScore = ((1 - (data.fouls / 30.0)) * 30).clamp(0.0, 30.0);
+    defenseScore =
+        (savesScore + cleanSheetScore + foulsScore).clamp(0.0, 100.0);
+
+    double possessionScore = data.possession.clamp(0.0, 100.0);
+    double midfieldScore =
+        ((data.passingAccuracy * 0.6) + (data.possession * 0.4))
+            .clamp(0.0, 100.0);
+
+    double disciplineScore = 0;
+    double yellowScore =
+        ((1 - (data.yellowCards / 10.0)) * 60).clamp(0.0, 60.0);
+    double redScore = ((1 - (data.redCards / 3.0)) * 40).clamp(0.0, 40.0);
+    disciplineScore = (yellowScore + redScore).clamp(0.0, 100.0);
+
+    return {
+      'Attack': attackScore,
+      'Defense': defenseScore,
+      'Possess.': possessionScore,
+      'Midfield': midfieldScore,
+      'Discipline': disciplineScore,
+    };
+  }
 }
 
-class _H2HSummary extends StatelessWidget {
-  final TeamInfo awayTeam, homeTeam;
-  final int awayWins, draws, homeWins, awayGoals, homeGoals;
-  const _H2HSummary({
-    required this.awayTeam, required this.homeTeam,
-    required this.awayWins, required this.draws, required this.homeWins,
-    required this.awayGoals, required this.homeGoals,
+// ─── Team Performance Card ────────────────────────────────────────────────────
+class _TeamPerformanceCard extends StatelessWidget {
+  final String teamName;
+  final String teamFullName;
+  final String teamLogo;
+  final Map<String, double> analytics;
+  final Color color;
+  final bool isHome;
+
+  const _TeamPerformanceCard({
+    required this.teamName,
+    required this.teamFullName,
+    required this.teamLogo,
+    required this.analytics,
+    required this.color,
+    required this.isHome,
   });
 
   @override
   Widget build(BuildContext context) {
-    final total = awayWins + draws + homeWins;
-    final aF = total > 0 ? awayWins / total : 0.33;
-    final dF = total > 0 ? draws / total : 0.34;
-    final hF = total > 0 ? homeWins / total : 0.33;
-
-    return Column(children: [
-      Row(children: [
-        _H2HTeamStat(team: awayTeam, wins: awayWins, goals: awayGoals, color: _C.awayAccent),
-        Expanded(child: Column(children: [
-          Text('$draws', style: const TextStyle(color: _C.muted, fontSize: 24, fontWeight: FontWeight.w900)),
-          const Text('DRAWS', style: TextStyle(color: _C.muted, fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
-        ])),
-        _H2HTeamStat(team: homeTeam, wins: homeWins, goals: homeGoals, color: _C.homeAccent),
-      ]),
-      const SizedBox(height: 14),
-      ClipRRect(
-        borderRadius: BorderRadius.circular(6),
-        child: Row(children: [
-          if (awayWins > 0) Expanded(flex: (aF * 100).round(), child: Container(height: 8, color: _C.awayAccent)),
-          if (draws > 0)    Expanded(flex: (dF * 100).round(), child: Container(height: 8, color: _C.muted.withOpacity(0.4))),
-          if (homeWins > 0) Expanded(flex: (hF * 100).round(), child: Container(height: 8, color: _C.homeAccent)),
-          if (total == 0)   Expanded(child: Container(height: 8, color: _C.border)),
-        ]),
-      ),
-      const SizedBox(height: 4),
-      Row(children: [
-        Text('$awayGoals goals scored', style: const TextStyle(color: _C.muted, fontSize: 10)),
-        const Spacer(),
-        Text('$homeGoals goals scored', style: const TextStyle(color: _C.muted, fontSize: 10)),
-      ]),
-    ]);
-  }
-}
-
-class _H2HTeamStat extends StatelessWidget {
-  final TeamInfo team; final int wins, goals; final Color color;
-  const _H2HTeamStat({required this.team, required this.wins, required this.goals, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(children: [
-      Image.network(team.logo, width: 38, height: 38,
-          errorBuilder: (_, __, ___) => const Icon(Icons.sports_soccer, color: _C.muted, size: 28)),
-      const SizedBox(height: 4),
-      Text('$wins', style: TextStyle(color: color, fontSize: 24, fontWeight: FontWeight.w900)),
-      const Text('WINS', style: TextStyle(color: _C.muted, fontSize: 9, fontWeight: FontWeight.w700)),
-    ]);
-  }
-}
-
-class _H2HRow extends StatelessWidget {
-  final H2HResult result; final Game game;
-  const _H2HRow({required this.result, required this.game});
-
-  @override
-  Widget build(BuildContext context) {
-    final isHomWin  = result.result == 'home_win';
-    final isAwayWin = result.result == 'away_win';
-    final dot = result.result == 'draw' ? _C.muted : isHomWin ? _C.homeAccent : _C.awayAccent;
-
-    String dateStr = '';
-    try {
-      final d = DateTime.parse(result.date);
-      dateStr = '${d.day}/${d.month}/${d.year}';
-    } catch (_) { dateStr = result.date; }
-
+    // Shadows the raw team color with a readable one for the rest of this
+    // method — this card sits on a white surface, and a team's actual
+    // brand color (Real Madrid, etc.) can be white/near-white, which would
+    // otherwise render every line/text/badge below as invisible.
+    final color = _readableAccent(this.color);
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
       decoration: BoxDecoration(
-        color: _C.surface, borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _C.border),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 4, offset: const Offset(0, 1))],
+        color: _C.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: color.withOpacity(0.2),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(0.10),
+            blurRadius: 16,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  color.withOpacity(0.10),
+                  _shadeLighten(color, 0.25).withOpacity(0.05)
+                ],
+              ),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(16),
+                topRight: Radius.circular(16),
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: color.withOpacity(0.1),
+                ),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: _C.surface,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: color.withOpacity(0.2),
+                    ),
+                  ),
+                  child: Image.network(
+                    teamLogo,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => Icon(
+                      Icons.sports_soccer,
+                      color: color,
+                      size: 20,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        teamFullName.isNotEmpty ? teamFullName : teamName,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: color,
+                          letterSpacing: 0.3,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: color.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          isHome ? 'HOME TEAM' : 'AWAY TEAM',
+                          style: TextStyle(
+                            fontSize: 8,
+                            fontWeight: FontWeight.w800,
+                            color: color,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [color, _shadeDarken(color, 0.18)],
+                    ),
+                    borderRadius: BorderRadius.circular(10),
+                    boxShadow: [
+                      BoxShadow(
+                          color: color.withOpacity(0.35),
+                          blurRadius: 10,
+                          offset: const Offset(0, 3)),
+                    ],
+                  ),
+                  child: Text(
+                    '${_calculateOverallRating(analytics).toStringAsFixed(0)}',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: SizedBox(
+              width: 200,
+              height: 200,
+              child: CustomPaint(
+                painter: _SingleRadarPainter(
+                  stats: analytics,
+                  color: color,
+                  isDarkMode: false,
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              alignment: WrapAlignment.center,
+              children: analytics.entries.map((entry) {
+                return Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: color.withOpacity(0.15),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${entry.key}: ',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: _C.muted,
+                        ),
+                      ),
+                      Text(
+                        '${entry.value.toInt()}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: color,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  double _calculateOverallRating(Map<String, double> stats) {
+    final values = stats.values.toList();
+    if (values.isEmpty) return 0;
+    return values.reduce((a, b) => a + b) / values.length;
+  }
+}
+
+// ─── Single Radar Painter ─────────────────────────────────────────────────────
+class _SingleRadarPainter extends CustomPainter {
+  final Map<String, double> stats;
+  final Color color;
+  final bool isDarkMode;
+
+  _SingleRadarPainter({
+    required this.stats,
+    required this.color,
+    required this.isDarkMode,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = math.min(size.width, size.height) / 2.6;
+    final keys = stats.keys.toList();
+    final int sides = keys.length;
+    final double angle = (2 * math.pi) / sides;
+
+    final gridPaint = Paint()
+      ..color = isDarkMode
+          ? Colors.white.withOpacity(0.08)
+          : Colors.black.withOpacity(0.06)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+
+    for (final level in [0.33, 0.66, 1.0]) {
+      final path = Path();
+      for (int i = 0; i < sides; i++) {
+        final a = i * angle - (math.pi / 2);
+        final x = center.dx + radius * level * math.cos(a);
+        final y = center.dy + radius * level * math.sin(a);
+        i == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
+      }
+      path.close();
+      canvas.drawPath(path, gridPaint);
+    }
+
+    for (int i = 0; i < sides; i++) {
+      final a = i * angle - (math.pi / 2);
+      canvas.drawLine(
+        center,
+        Offset(
+            center.dx + radius * math.cos(a), center.dy + radius * math.sin(a)),
+        gridPaint,
+      );
+    }
+
+    final secondary = _shadeLighten(color, 0.22);
+    final dataPath = Path();
+    for (int i = 0; i < sides; i++) {
+      final a = i * angle - (math.pi / 2);
+      final val = (stats[keys[i]] ?? 0).clamp(0.0, 100.0) / 100.0;
+      final x = center.dx + radius * val * math.cos(a);
+      final y = center.dy + radius * val * math.sin(a);
+      i == 0 ? dataPath.moveTo(x, y) : dataPath.lineTo(x, y);
+    }
+    dataPath.close();
+
+    final fillPaint = Paint()
+      ..shader = RadialGradient(
+        colors: [secondary.withOpacity(0.38), color.withOpacity(0.16)],
+      ).createShader(Rect.fromCircle(center: center, radius: radius))
+      ..style = PaintingStyle.fill;
+
+    final strokePaint = Paint()
+      ..shader = LinearGradient(
+        colors: [color, secondary],
+      ).createShader(Rect.fromCircle(center: center, radius: radius))
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawPath(dataPath, fillPaint);
+    canvas.drawPath(dataPath, strokePaint);
+
+    for (int i = 0; i < sides; i++) {
+      final a = i * angle - (math.pi / 2);
+      final val = (stats[keys[i]] ?? 0).clamp(0.0, 100.0) / 100.0;
+      final pt = Offset(center.dx + radius * val * math.cos(a),
+          center.dy + radius * val * math.sin(a));
+      canvas.drawCircle(pt, 5, Paint()..color = Colors.white);
+      canvas.drawCircle(pt, 4, Paint()..color = color);
+      canvas.drawCircle(pt, 1.6, Paint()..color = secondary);
+    }
+
+    final textStyle = TextStyle(
+      color: isDarkMode
+          ? Colors.white.withOpacity(0.6)
+          : Colors.black.withOpacity(0.6),
+      fontSize: 9,
+      fontWeight: FontWeight.bold,
+    );
+
+    for (int i = 0; i < sides; i++) {
+      final a = i * angle - (math.pi / 2);
+      final lx = center.dx + (radius + 30) * math.cos(a);
+      final ly = center.dy + (radius + 28) * math.sin(a);
+
+      final labelPainter = TextPainter(
+        text: TextSpan(text: keys[i].toUpperCase(), style: textStyle),
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+
+      labelPainter.paint(canvas,
+          Offset(lx - labelPainter.width / 2, ly - labelPainter.height / 2));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SingleRadarPainter old) =>
+      old.stats != stats || old.color != color;
+}
+
+// ─── Comparison Card ──────────────────────────────────────────────────────────
+class _ComparisonCard extends StatelessWidget {
+  final String title;
+  final List<Widget> children;
+
+  const _ComparisonCard({
+    required this.title,
+    required this.children,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _C.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _C.border.withOpacity(0.6)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.035),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            const Icon(Icons.calendar_today_rounded, size: 10, color: _C.muted),
-            const SizedBox(width: 4),
-            Text(dateStr, style: const TextStyle(color: _C.muted, fontSize: 10, fontWeight: FontWeight.w500)),
-          ]),
-          const SizedBox(height: 6),
-          Row(children: [
-            Expanded(child: Text(result.awayTeam,
-                style: const TextStyle(color: _C.text, fontSize: 13, fontWeight: FontWeight.w600),
-                maxLines: 1, overflow: TextOverflow.ellipsis)),
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 10),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-              decoration: BoxDecoration(
-                color: dot.withOpacity(0.10), borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: dot.withOpacity(0.35)),
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+            decoration: BoxDecoration(
+              color: _C.bg.withOpacity(0.5),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(16),
+                topRight: Radius.circular(16),
               ),
-              child: Text('${result.awayScore}  –  ${result.homeScore}',
-                  style: TextStyle(color: dot, fontSize: 14, fontWeight: FontWeight.w900)),
+              border: const Border(
+                bottom: BorderSide(color: _C.border, width: 0.5),
+              ),
             ),
-            Expanded(child: Text(result.homeTeam,
-                style: const TextStyle(color: _C.text, fontSize: 13, fontWeight: FontWeight.w600),
-                textAlign: TextAlign.end, maxLines: 1, overflow: TextOverflow.ellipsis)),
-          ]),
-          const SizedBox(height: 4),
-          Center(child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(
-              result.result == 'draw' ? Icons.horizontal_rule_rounded : Icons.emoji_events_rounded,
-              size: 11, color: dot,
+            child: Row(
+              children: [
+                Container(
+                  width: 3,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: _C.blue,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: _C.muted,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 3),
-            Text(
-              result.result == 'draw' ? 'Draw'
-                  : (isHomWin ? '${result.homeTeam} Won' : '${result.awayTeam} Won'),
-              style: TextStyle(color: dot, fontSize: 10, fontWeight: FontWeight.w700),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              children: children,
             ),
-          ])),
+          ),
         ],
       ),
     );
   }
 }
 
+// ─── Comparison Row ───────────────────────────────────────────────────────────
+class _ComparisonRow extends StatelessWidget {
+  final String label;
+  final String awayValue;
+  final String homeValue;
+  final Color awayColor;
+  final Color homeColor;
+  final IconData icon;
+  final bool isLast;
+
+  const _ComparisonRow({
+    required this.label,
+    required this.awayValue,
+    required this.homeValue,
+    required this.awayColor,
+    required this.homeColor,
+    required this.icon,
+    this.isLast = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // See _readableAccent: a team's real color can be white/near-white,
+    // which would make these value pills invisible on this white card.
+    final awayColor = _readableAccent(this.awayColor);
+    final homeColor = _readableAccent(this.homeColor);
+    return Padding(
+      padding: EdgeInsets.only(bottom: isLast ? 0 : 10),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            size: 14,
+            color: _C.muted.withOpacity(0.5),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: _C.text,
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: awayColor.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color: awayColor.withOpacity(0.15),
+              ),
+            ),
+            child: Text(
+              awayValue,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: awayColor,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          const Text(
+            'vs',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: _C.muted,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: homeColor.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color: homeColor.withOpacity(0.15),
+              ),
+            ),
+            child: Text(
+              homeValue,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: homeColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Card Comparison Row ──────────────────────────────────────────────────────
+class _CardComparisonRow extends StatelessWidget {
+  final int awayYellow, awayRed, homeYellow, homeRed;
+  final Color awayColor, homeColor;
+  final String awayName, homeName;
+  final bool isLast;
+
+  const _CardComparisonRow({
+    required this.awayYellow,
+    required this.awayRed,
+    required this.homeYellow,
+    required this.homeRed,
+    required this.awayColor,
+    required this.homeColor,
+    required this.awayName,
+    required this.homeName,
+    this.isLast = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // See _readableAccent: a team's real color can be white/near-white,
+    // which would make the yellow/red card counts below invisible.
+    final awayColor = _readableAccent(this.awayColor);
+    final homeColor = _readableAccent(this.homeColor);
+    return Padding(
+      padding: EdgeInsets.only(bottom: isLast ? 0 : 10),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.credit_card_rounded,
+            size: 14,
+            color: _C.muted,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: const Text(
+              'CARDS',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: _C.text,
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              if (awayYellow > 0 || awayRed > 0) ...[
+                if (awayYellow > 0)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: Colors.amber,
+                            borderRadius: BorderRadius.circular(1),
+                          ),
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          '$awayYellow',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: awayColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(width: 4),
+                if (awayRed > 0)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(1),
+                          ),
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          '$awayRed',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: awayColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ],
+          ),
+          const SizedBox(width: 6),
+          const Text(
+            'vs',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: _C.muted,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Row(
+            children: [
+              if (homeYellow > 0 || homeRed > 0) ...[
+                if (homeYellow > 0)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: Colors.amber,
+                            borderRadius: BorderRadius.circular(1),
+                          ),
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          '$homeYellow',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: homeColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(width: 4),
+                if (homeRed > 0)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(1),
+                          ),
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          '$homeRed',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: homeColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Tactical Row ─────────────────────────────────────────────────────────────
+class _TacticalRow extends StatelessWidget {
+  final String label;
+  final double awayValue;
+  final double homeValue;
+  final Color awayColor;
+  final Color homeColor;
+  final String suffix;
+  final bool isLast;
+
+  const _TacticalRow({
+    required this.label,
+    required this.awayValue,
+    required this.homeValue,
+    required this.awayColor,
+    required this.homeColor,
+    required this.suffix,
+    this.isLast = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // See _readableAccent: a team's real color can be white/near-white,
+    // which would make the value text and progress-bar fill below
+    // invisible.
+    final awayColor = _readableAccent(this.awayColor);
+    final homeColor = _readableAccent(this.homeColor);
+    final total = awayValue + homeValue;
+    final awayFrac = total > 0 ? awayValue / total : 0.5;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: isLast ? 0 : 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: _C.text,
+                ),
+              ),
+              Row(
+                children: [
+                  Text(
+                    '${awayValue.toStringAsFixed(0)}$suffix',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: awayColor,
+                    ),
+                  ),
+                  const Text(
+                    ' / ',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: _C.muted,
+                    ),
+                  ),
+                  Text(
+                    '${homeValue.toStringAsFixed(0)}$suffix',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: homeColor,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: (awayFrac * 100).round().clamp(5, 95),
+                  child: Container(
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: awayColor,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(3),
+                        bottomLeft: Radius.circular(3),
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: ((1 - awayFrac) * 100).round().clamp(5, 95),
+                  child: Container(
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: homeColor,
+                      borderRadius: const BorderRadius.only(
+                        topRight: Radius.circular(3),
+                        bottomRight: Radius.circular(3),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Shared color helpers ─────────────────────────────────────────────────────
+// A team's brand color can be white or near-white (Real Madrid, Espanyol's
+// away kit, etc.) — perfectly fine as a subtle tint, but invisible when
+// used directly as text/line/icon color against this screen's white
+// surfaces (analytics radar chart, stat comparison pills, card-count
+// pills). Rather than guess at a complementary color, fall back to a
+// neutral dark slate — the standard fix for "brand color too light to
+// read" — whenever the color is too light to read on white. Keeps colored
+// (non-white) team colors completely untouched.
+Color _readableAccent(Color color) {
+  if (color.computeLuminance() > 0.75) {
+    return const Color(0xFF374151); // slate-700
+  }
+  return color;
+}
+
+Color _shadeLighten(Color c, [double amt = 0.18]) {
+  final hsl = HSLColor.fromColor(c);
+  return hsl.withLightness((hsl.lightness + amt).clamp(0.0, 1.0)).toColor();
+}
+
+Color _shadeDarken(Color c, [double amt = 0.22]) {
+  final hsl = HSLColor.fromColor(c);
+  return hsl
+      .withLightness((hsl.lightness * (1 - amt)).clamp(0.0, 1.0))
+      .toColor();
+}
+
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 Widget _card(Widget child) {
   return Container(
-    padding: const EdgeInsets.all(14),
+    padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(
-      color: _C.card, borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: _C.border),
-      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2))],
+      color: _C.card,
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: _C.border.withOpacity(0.7)),
+      boxShadow: [
+        BoxShadow(
+            color: Colors.black.withOpacity(0.035),
+            blurRadius: 14,
+            offset: const Offset(0, 4))
+      ],
     ),
     child: child,
   );
@@ -2144,20 +4337,33 @@ Widget _SectionTitle(String t) {
   return Padding(
     padding: const EdgeInsets.only(bottom: 6),
     child: Text(t,
-        style: const TextStyle(color: _C.muted, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
+        style: const TextStyle(
+            color: _C.muted,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.8)),
   );
 }
 
 class _NoDataWidget extends StatelessWidget {
-  final IconData icon; final String message;
+  final IconData icon;
+  final String message;
   const _NoDataWidget({required this.icon, required this.message});
 
   @override
   Widget build(BuildContext context) {
-    return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+    return Center(
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
       Icon(icon, color: _C.muted, size: 52),
       const SizedBox(height: 12),
-      Text(message, style: const TextStyle(color: _C.muted, fontSize: 14)),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: _C.muted, fontSize: 14, height: 1.4),
+        ),
+      ),
     ]));
   }
 }

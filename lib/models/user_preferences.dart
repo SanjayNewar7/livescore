@@ -28,6 +28,14 @@ class UserPreferences {
   @HiveField(7)
   final String lastSelectedLeague;
 
+  /// Up to 4 favorite players, each stored as {id, name, image, team}.
+  /// Kept as a list of string maps (rather than a single id) so the UI can
+  /// render a favorite player without a separate player-by-id lookup —
+  /// mirrors how favoriteTeamIds/favoriteLeagueIds are simple, but players
+  /// don't have a local team-style cache to resolve from an id alone.
+  @HiveField(8)
+  final List<Map<String, String>> favoritePlayers;
+
   UserPreferences({
     this.favoriteTeamIds = const [],
     this.favoriteLeagueIds = const [],
@@ -37,6 +45,7 @@ class UserPreferences {
     this.liveScoreAlerts = true,
     this.newsAlerts = true,
     this.lastSelectedLeague = 'eng.1',
+    this.favoritePlayers = const [],
   });
 
   UserPreferences copyWith({
@@ -48,6 +57,7 @@ class UserPreferences {
     bool? liveScoreAlerts,
     bool? newsAlerts,
     String? lastSelectedLeague,
+    List<Map<String, String>>? favoritePlayers,
   }) {
     return UserPreferences(
       favoriteTeamIds: favoriteTeamIds ?? this.favoriteTeamIds,
@@ -58,6 +68,7 @@ class UserPreferences {
       liveScoreAlerts: liveScoreAlerts ?? this.liveScoreAlerts,
       newsAlerts: newsAlerts ?? this.newsAlerts,
       lastSelectedLeague: lastSelectedLeague ?? this.lastSelectedLeague,
+      favoritePlayers: favoritePlayers ?? this.favoritePlayers,
     );
   }
 }

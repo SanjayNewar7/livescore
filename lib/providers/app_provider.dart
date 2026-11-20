@@ -1,12 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:livescore/services/sport_service.dart';
 import 'package:livescore/services/preferences_service.dart';
+import 'package:livescore/services/notification_service.dart';
 import 'package:livescore/models/game_model.dart';
 import 'package:livescore/models/standing_model.dart';
+import 'package:livescore/models/league_leader_model.dart';
 import 'package:livescore/models/news_model.dart';
 import 'package:livescore/models/team_model.dart';
 import 'package:livescore/models/player_model.dart';
+import 'package:livescore/models/search_model.dart';
 import 'package:livescore/utils/constants.dart';
+import 'package:livescore/utils/predefined_data.dart' as seed;
 
 // ── Football keyword filter ───────────────────────────────────────────────────
 bool _isFootballArticle(NewsArticle a) {
@@ -32,6 +38,97 @@ bool _isFootballArticle(NewsArticle a) {
 class AppProvider extends ChangeNotifier {
   final SportService _sportService = SportService();
   final PreferencesService _prefs = PreferencesService();
+  final NotificationService _notificationService = NotificationService();
+
+  // Local, on-device notification center — favorite-club/player news +
+  // favorite-team full-time results. See services/notification_service.dart.
+  int _unreadNotificationCount = 0;
+  int get unreadNotificationCount => _unreadNotificationCount;
+
+  void _refreshUnreadNotificationCount() {
+    _unreadNotificationCount = _notificationService.unreadCount;
+  }
+
+  /// Scans the currently-loaded news + today's/yesterday's games for
+  /// mentions of favorite clubs/players and favorite-team full-time
+  /// results, and persists any new matches as notifications. Safe to call
+  /// repeatedly — NotificationService de-dupes by content-derived id, so
+  /// this never resets an already-read notification back to unread.
+  Future<void> generateNotifications() async {
+    try {
+      final notificationPrefs = _prefs.preferences;
+      if (!notificationPrefs.notificationsEnabled) {
+        _refreshUnreadNotificationCount();
+        if (_isMounted) notifyListeners();
+        return;
+      }
+      final favoriteNames = favoriteTeamIds.map((id) {
+        final matches = _allTeams.where((t) => t.id == id);
+        if (matches.isEmpty) return null;
+        final team = matches.first;
+        return team.displayName.isNotEmpty ? team.displayName : team.name;
+      }).whereType<String>();
+      final favTeamNames = <String>{
+        ...favoriteNames,
+        ..._notificationService.followedTeamNames,
+      }.toList();
+
+      if (notificationPrefs.newsAlerts) {
+        await _notificationService.generateNewsNotifications(
+          articles: _news,
+          favoriteTeamNames: favTeamNames,
+          favoritePlayers: favoritePlayers,
+        );
+      }
+
+      // Today's games cover most same-day full-time results. A favorite
+      // team's match could also have gone final just before local
+      // midnight, so yesterday's games are fetched here directly through
+      // SportService (which caches internally) rather than reusing
+      // fetchYesterdaysMatches(), which would overwrite the Yesterday
+      // tab's _allGames/_yesterdaysGames state as a side effect.
+      if (notificationPrefs.liveScoreAlerts) {
+        List<Game> yesterdaysGamesForNotifications = _yesterdaysGames;
+        if (yesterdaysGamesForNotifications.isEmpty) {
+          try {
+            yesterdaysGamesForNotifications = await _sportService.getYesterdaysMatches();
+          } catch (e) {
+            print('[Notifications] Could not fetch yesterday\'s games: $e');
+          }
+        }
+        final Map<String, Game> uniqueGames = {
+          for (final g in [..._todaysGames, ...yesterdaysGamesForNotifications]) g.id: g,
+        };
+        await _notificationService.generateMatchResultNotifications(
+          games: uniqueGames.values.toList(),
+          favoriteTeamIds: <String>{
+            ...favoriteTeamIds,
+            ..._notificationService.followedTeamIds,
+          }.toList(),
+        );
+      }
+
+      _refreshUnreadNotificationCount();
+      if (_isMounted) notifyListeners();
+    } catch (e) {
+      print('[Notifications] Error generating notifications: $e');
+    }
+  }
+
+  /// Re-reads the unread count from NotificationService and notifies
+  /// listeners. Call this after returning from a screen (e.g.
+  /// NotificationScreen) that may have marked notifications as read
+  /// directly through NotificationService without going through AppProvider.
+  void refreshUnreadNotificationCount() {
+    _refreshUnreadNotificationCount();
+    notifyListeners();
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    await _notificationService.markAllAsRead();
+    _refreshUnreadNotificationCount();
+    notifyListeners();
+  }
 
   // State variables
   List<Game> _allGames = [];
@@ -58,6 +155,25 @@ class AppProvider extends ChangeNotifier {
   bool _isFetchingNews = false;
   bool _isFetchingTeams = false;
   bool _isMounted = true;
+
+  // ─── SEARCH STATE ────────────────────────────────────────────────────────────
+  bool _isSearching = false;
+  SearchResponse _searchResults = SearchResponse();
+  String _searchQuery = '';
+  // True whenever _searchResults came from the offline predefined dataset
+  // rather than the live API (API rate-limited/down, or query unmatched).
+  // The search screen uses this to show a small "showing suggestions" note.
+  bool _isSearchFallback = false;
+
+  // ─── SEARCH CACHE ────────────────────────────────────────────────────────────
+  final Map<String, SearchResponse> _searchCache = {};
+  static const Duration _searchCacheDuration = Duration(minutes: 5);
+  final Map<String, DateTime> _searchCacheTimestamps = {};
+
+  bool get isSearching => _isSearching;
+  SearchResponse get searchResults => _searchResults;
+  String get searchQuery => _searchQuery;
+  bool get isSearchFallback => _isSearchFallback;
 
   @override
   void dispose() {
@@ -111,6 +227,7 @@ class AppProvider extends ChangeNotifier {
 
   List<String> get favoriteTeamIds => _prefs.preferences.favoriteTeamIds;
   List<String> get favoriteLeagueIds => _prefs.preferences.favoriteLeagueIds;
+  List<Map<String, String>> get favoritePlayers => _prefs.preferences.favoritePlayers;
 
   List<Game> get favoriteTeamGames => _allGames
       .where((g) => favoriteTeamIds.contains(g.awayTeam.id) || favoriteTeamIds.contains(g.homeTeam.id))
@@ -132,7 +249,6 @@ class AppProvider extends ChangeNotifier {
   bool hasReachedThreeDayLimit() {
     if (_paginatedNews.isEmpty) return false;
 
-    // Find the oldest article (by published date)
     NewsArticle? oldest;
     for (final article in _paginatedNews) {
       try {
@@ -186,6 +302,7 @@ class AppProvider extends ChangeNotifier {
         fetchNewsConcurrent(),
         fetchAllTeamsConcurrent(),
       ]);
+      await generateNotifications();
     });
   }
 
@@ -206,8 +323,6 @@ class AppProvider extends ChangeNotifier {
   }
 
   // ─── NEWS: Two-phase loading for better performance ─────────────────────────────────
-  // Phase 1: Load first 25 articles quickly (shows immediately)
-  // Phase 2: Load remaining articles in background (no UI indicator)
 
   Future<void> fetchNewsConcurrent({bool forceRefresh = false, int page = 1}) async {
     if (_isFetchingNews) return;
@@ -237,6 +352,7 @@ class AppProvider extends ChangeNotifier {
           _paginatedNews = allNews;
           _news = List.from(_paginatedNews);
           notifyListeners();
+          generateNotifications();
         },
       );
     } catch (e) {
@@ -246,7 +362,6 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  // Kept for compatibility - no pagination
   Future<void> loadMoreNews() async {
     print('[News] No pagination support - all articles loaded at once');
     _hasMoreNews = false;
@@ -257,7 +372,6 @@ class AppProvider extends ChangeNotifier {
     await fetchNewsConcurrent(forceRefresh: true, page: 1);
   }
 
-  /// Silent background refresh — updates articles at the top
   Future<void> silentRefreshNews() async {
     if (_isFetchingNews) return;
 
@@ -273,6 +387,7 @@ class AppProvider extends ChangeNotifier {
         _paginatedNews = [...newArticles, ..._paginatedNews];
         _news = List.from(_paginatedNews);
         if (_isMounted) notifyListeners();
+        generateNotifications();
       }
     } catch (e) {
       print('[SilentNews] Error: $e');
@@ -506,16 +621,24 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  // Add or verify this method exists in AppProvider class:
-
-  Future<List<Standing>> fetchStandingsDirect(String leagueCode) async {
+  Future<List<Standing>> fetchStandingsDirect(String leagueCode, {String? season}) async {
     try {
       _sportService.setLeague(leagueCode);
-      final standings = await _sportService.getStandings(forceRefresh: true);
+      final standings = await _sportService.getStandings(forceRefresh: true, season: season);
       return standings;
     } catch (e) {
       print('Error fetching standings: $e');
       return [];
+    }
+  }
+
+  Future<LeagueLeaders> fetchLeagueLeaders(String leagueCode, {String? season}) async {
+    try {
+      _sportService.setLeague(leagueCode);
+      return await _sportService.getLeagueLeaders(season: season);
+    } catch (e) {
+      print('Error fetching league leaders: $e');
+      return LeagueLeaders.empty;
     }
   }
 
@@ -552,9 +675,37 @@ class AppProvider extends ChangeNotifier {
       await _prefs.addFavoriteTeam(teamId);
     }
     notifyListeners();
+    generateNotifications();
   }
 
   bool isTeamFavorite(String teamId) => _prefs.isTeamFavorite(teamId);
+
+  // ─── FAVORITE PLAYERS (mirrors toggleFavoriteTeam above) ────────────────
+
+  /// Removes a favorite player by id. Unlike teams, players aren't toggled
+  /// on from here (there's no bare "player id" to add — onboarding's
+  /// picker already has the full {id, name, image, team} map needed by
+  /// PreferencesService.addFavoritePlayer), so this only supports the
+  /// remove side, which is all Settings' delete-tile needs.
+  Future<void> removeFavoritePlayer(String playerId) async {
+    await _prefs.removeFavoritePlayer(playerId);
+    notifyListeners();
+  }
+
+  bool isPlayerFavorite(String playerId) => _prefs.isPlayerFavorite(playerId);
+
+  // ─── FAVORITE LEAGUES (mirrors toggleFavoriteTeam above) ────────────────
+
+  Future<void> toggleFavoriteLeague(String leagueCode) async {
+    if (favoriteLeagueIds.contains(leagueCode)) {
+      await _prefs.removeFavoriteLeague(leagueCode);
+    } else {
+      await _prefs.addFavoriteLeague(leagueCode);
+    }
+    notifyListeners();
+  }
+
+  bool isLeagueFavorite(String leagueCode) => _prefs.isLeagueFavorite(leagueCode);
 
   // ─── SILENT REFRESH FOR TODAY'S GAMES ────────────────────────────────────────
   bool _isLoadingBackground = false;
@@ -581,6 +732,7 @@ class AppProvider extends ChangeNotifier {
         _todaysGames = fresh;
         _allGames = fresh;
         notifyListeners();
+        generateNotifications();
       }
     } catch (e) {
       print('[SilentRefresh] Error: $e');
@@ -609,6 +761,220 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  // ─── SEARCH WITH CACHING ────────────────────────────────────────────────────
+
+  Timer? _searchDebounceTimer;
+
+  Future<void> searchWithDebounce(String query, {Duration delay = const Duration(milliseconds: 500)}) async {
+    _searchDebounceTimer?.cancel();
+    _searchDebounceTimer = Timer(delay, () {
+      search(query);
+    });
+  }
+
+  /// Search with caching to reduce API calls
+  Future<void> search(String query) async {
+    if (query.trim().isEmpty) {
+      _searchQuery = '';
+      _searchResults = SearchResponse();
+      _isSearching = false;
+      _isSearchFallback = false;
+      notifyListeners();
+      return;
+    }
+
+    final cacheKey = query.trim().toLowerCase();
+
+    // ─── Check Cache ──────────────────────────────────────────────────────────
+    if (_searchCache.containsKey(cacheKey)) {
+      final cached = _searchCache[cacheKey]!;
+      final timestamp = _searchCacheTimestamps[cacheKey];
+
+      if (timestamp != null) {
+        final age = DateTime.now().difference(timestamp);
+        if (age < _searchCacheDuration) {
+          print('[AppProvider] ✅ Using cached search result for: $query');
+          _searchQuery = query;
+          _searchResults = cached;
+          _isSearching = false;
+          _isSearchFallback = false;
+          notifyListeners();
+          return;
+        } else {
+          // Cache expired
+          _searchCache.remove(cacheKey);
+          _searchCacheTimestamps.remove(cacheKey);
+          print('[AppProvider] Cache expired for: $query');
+        }
+      }
+    }
+
+    _searchQuery = query;
+    _isSearching = true;
+    notifyListeners();
+
+    try {
+      print('[AppProvider] 🔍 Performing fresh search for: $query');
+      var results = await _sportService.search(query);
+      _isSearchFallback = false;
+
+      // ─── Predefined fallback ──────────────────────────────────────────────
+      // The live search can legitimately come back empty (rate-limited,
+      // API-Football's league/season restrictions, TheSportsDB missing a
+      // player, transient network blip, etc).
+      if (results.isEmpty) {
+        // 1) Try to match the query against our small seed dataset first
+        //    (e.g. user searched "Ronaldo" and it happens to be one of the
+        //    10 predefined famous players).
+        final matched = _predefinedSearchFallback(query);
+        if (matched.isNotEmpty) {
+          print('[AppProvider] ℹ️ Live search empty, using matched predefined data for: $query');
+          results = matched;
+          _isSearchFallback = true;
+        } else {
+          // 2) The query doesn't match anyone in the seed dataset either
+          //    (e.g. "Mohanad Lashin") — rather than leaving the user with
+          //    a dead "no results" screen when the live API is down/rate
+          //    limited, surface generic trending suggestions instead so
+          //    there's still something useful on screen.
+          final trending = _predefinedTrendingSuggestions();
+          if (trending.isNotEmpty) {
+            print('[AppProvider] ℹ️ Live search empty & no seed match, showing trending suggestions for: $query');
+            results = trending;
+            _isSearchFallback = true;
+          }
+        }
+      }
+
+      // ─── Cache Results ──────────────────────────────────────────────────────
+      // Note: fallback results are intentionally NOT cached — they're a
+      // stand-in for a live API that's currently unavailable/rate-limited,
+      // and caching them would keep serving stale suggestions even after
+      // the live API recovers.
+      if (results.isNotEmpty && !_isSearchFallback) {
+        _searchCache[cacheKey] = results;
+        _searchCacheTimestamps[cacheKey] = DateTime.now();
+
+        // Clean old cache entries (keep last 20)
+        if (_searchCache.length > 20) {
+          final keys = _searchCache.keys.toList();
+          // Sort by timestamp (oldest first)
+          keys.sort((a, b) {
+            final t1 = _searchCacheTimestamps[a] ?? DateTime.now();
+            final t2 = _searchCacheTimestamps[b] ?? DateTime.now();
+            return t1.compareTo(t2);
+          });
+          // Remove oldest entries
+          for (int i = 0; i < keys.length - 20; i++) {
+            _searchCache.remove(keys[i]);
+            _searchCacheTimestamps.remove(keys[i]);
+          }
+          print('[AppProvider] 🧹 Cleaned search cache, kept 20 entries');
+        }
+      }
+
+      _searchResults = results;
+      _isSearching = false;
+      notifyListeners();
+    } catch (e) {
+      print('[AppProvider] ❌ Search error: $e');
+      // API call itself threw (network down, etc) — still try to serve
+      // something instead of an empty state.
+      final matched = _predefinedSearchFallback(query);
+      _searchResults = matched.isNotEmpty ? matched : _predefinedTrendingSuggestions();
+      _isSearchFallback = true;
+      _isSearching = false;
+      notifyListeners();
+    }
+  }
+
+  /// Filters the offline predefined players/clubs dataset by [query],
+  /// matching on name, team name, or nationality (players) and name
+  /// (clubs). Used only as a fallback when the live search API fails or
+  /// returns nothing.
+  SearchResponse _predefinedSearchFallback(String query) {
+    final q = query.trim();
+    if (q.isEmpty) return SearchResponse();
+
+    final players = seed.famousPlayers.where((p) {
+      return seed.matchesPredefinedQuery(p['name'] as String, q) ||
+          seed.matchesPredefinedQuery(p['teamName'] as String, q) ||
+          seed.matchesPredefinedQuery(p['nationality'] as String, q);
+    }).map((p) {
+      return SearchResult(
+        id: p['id'] as String,
+        name: p['name'] as String,
+        displayName: p['name'] as String,
+        type: 'player',
+        imageUrl: p['imageUrl'] as String,
+        teamName: p['teamName'] as String,
+        teamId: p['teamId'] as String,
+        position: p['position'] as String,
+        jerseyNumber: p['jersey'] as String,
+        nationality: p['nationality'] as String,
+      );
+    }).toList();
+
+    final clubs = seed.famousClubs.where((c) {
+      return seed.matchesPredefinedQuery(c['name']!, q);
+    }).map((c) {
+      return SearchResult(
+        id: c['id']!,
+        name: c['name']!,
+        displayName: c['name']!,
+        type: 'team',
+        imageUrl: 'https://a.espncdn.com/i/teamlogos/soccer/500/${c['id']}.png',
+        leagueCode: c['league'],
+        leagueName: c['leagueName'],
+        abbreviation: c['name']!.length > 3 ? c['name']!.substring(0, 3).toUpperCase() : c['name']!.toUpperCase(),
+      );
+    }).toList();
+
+    return SearchResponse(players: players, teams: clubs);
+  }
+
+  /// Generic, unfiltered "popular right now" suggestions built from the
+  /// same offline seed dataset. Used when the live search is unavailable
+  /// AND the query doesn't match anything in our small predefined list —
+  /// e.g. searching an obscure player name while API-Football is
+  /// rate-limited. Better to show the user *something* recognizable than
+  /// a flat "no results found".
+  SearchResponse _predefinedTrendingSuggestions({int playerLimit = 6, int clubLimit = 4}) {
+    final players = seed.famousPlayers.take(playerLimit).map((p) {
+      return SearchResult(
+        id: p['id'] as String,
+        name: p['name'] as String,
+        displayName: p['name'] as String,
+        type: 'player',
+        imageUrl: p['imageUrl'] as String,
+        teamName: p['teamName'] as String,
+        teamId: p['teamId'] as String,
+        position: p['position'] as String,
+        jerseyNumber: p['jersey'] as String,
+        nationality: p['nationality'] as String,
+      );
+    }).toList();
+
+    final clubs = seed.famousClubs.take(clubLimit).map((c) {
+      return SearchResult(
+        id: c['id']!,
+        name: c['name']!,
+        displayName: c['name']!,
+        type: 'team',
+        imageUrl: 'https://a.espncdn.com/i/teamlogos/soccer/500/${c['id']}.png',
+        leagueCode: c['league'],
+        leagueName: c['leagueName'],
+        abbreviation: c['name']!.length > 3 ? c['name']!.substring(0, 3).toUpperCase() : c['name']!.toUpperCase(),
+      );
+    }).toList();
+
+    return SearchResponse(players: players, teams: clubs);
+  }
+
+  // lib/providers/app_provider.dart
+
+// Add this method to handle search with better error handling
+
 
 
   Future<void> setCurrentLeague(String leagueCode) async {
@@ -623,5 +989,21 @@ class AppProvider extends ChangeNotifier {
       fetchStandings(forceRefresh: true),
       fetchAllTeamsConcurrent(),
     ]);
+  }
+
+  void clearSearch() {
+    _searchQuery = '';
+    _searchResults = SearchResponse();
+    _isSearching = false;
+    _isSearchFallback = false;
+    // Don't clear cache on clear
+    notifyListeners();
+  }
+
+  /// Clear search cache manually (for testing or logout)
+  void clearSearchCache() {
+    _searchCache.clear();
+    _searchCacheTimestamps.clear();
+    print('[AppProvider] 🧹 Search cache cleared');
   }
 }
