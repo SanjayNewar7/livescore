@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "2026-11-21T08:52:16.889280Z",
+  "revision": "2026-11-21T09:35:52.179Z",
   "famousPlayers": [
     {
       "id": "22774",
@@ -490,7 +490,7 @@
       "position": "CAM",
       "jersey": "",
       "nationality": "England",
-      "imageUrl": ""
+      "imageUrl": "https://res.cloudinary.com/dkk7zqgnz/image/upload/v1795253740/78918_wxj1yz.png"
     },
     {
       "id": "fp_yann_sommer",
@@ -1174,187 +1174,6 @@
         "interceptions": 0.09
       }
     },
-    "231388": {
-      "careerAppearances": 594,
-      "careerGoals": 453,
-      "careerAssists": 178,
-      "careerStats": [
-        {
-          "season": "Career",
-          "team": "AS Monaco",
-          "appearances": 60,
-          "goals": 27,
-          "assists": 16
-        },
-        {
-          "season": "Career",
-          "team": "Paris Saint-Germain",
-          "appearances": 308,
-          "goals": 256,
-          "assists": 108
-        },
-        {
-          "season": "Career",
-          "team": "Real Madrid",
-          "appearances": 119,
-          "goals": 103,
-          "assists": 16
-        },
-        {
-          "season": "International",
-          "team": "France",
-          "appearances": 107,
-          "goals": 67,
-          "assists": 38
-        }
-      ],
-      "seasonStats": {
-        "statsSeason": "2026-27",
-        "statsLeague": "All competitions",
-        "statsTeam": "Real Madrid",
-        "goals": 17,
-        "goalsPer90": 1.1,
-        "shots": 4.8,
-        "shotsOnTarget": 2.2,
-        "passAccuracy": 83.5,
-        "tackles": 0.28,
-        "interceptions": 0.06
-      }
-    },
-    "253989": {
-      "careerAppearances": 439,
-      "careerGoals": 373,
-      "careerAssists": 79,
-      "careerStats": [
-        {
-          "season": "Career",
-          "team": "Bryne FK / Molde FK",
-          "appearances": 53,
-          "goals": 16,
-          "assists": 6
-        },
-        {
-          "season": "Career",
-          "team": "FC Red Bull Salzburg",
-          "appearances": 27,
-          "goals": 29,
-          "assists": 7
-        },
-        {
-          "season": "Career",
-          "team": "Borussia Dortmund",
-          "appearances": 89,
-          "goals": 86,
-          "assists": 23
-        },
-        {
-          "season": "Career",
-          "team": "Manchester City",
-          "appearances": 210,
-          "goals": 176,
-          "assists": 30
-        },
-        {
-          "season": "International",
-          "team": "Norway",
-          "appearances": 60,
-          "goals": 66,
-          "assists": 13
-        }
-      ],
-      "seasonStats": {
-        "statsSeason": "2026-27",
-        "statsLeague": "Premier League",
-        "statsTeam": "Manchester City",
-        "goals": 9,
-        "goalsPer90": 0.91,
-        "shots": 3.83,
-        "shotsOnTarget": 1.8,
-        "passAccuracy": 65.6,
-        "tackles": 0.33,
-        "interceptions": 0.18
-      }
-    },
-    "362150": {
-      "careerAppearances": 207,
-      "careerGoals": 75,
-      "careerAssists": 68,
-      "careerStats": [
-        {
-          "season": "Career",
-          "team": "FC Barcelona",
-          "appearances": 166,
-          "goals": 62,
-          "assists": 56
-        },
-        {
-          "season": "International",
-          "team": "Spain",
-          "appearances": 41,
-          "goals": 13,
-          "assists": 12
-        }
-      ],
-      "seasonStats": {
-        "statsSeason": "2026-27",
-        "statsLeague": "All competitions",
-        "statsTeam": "FC Barcelona",
-        "goals": 13,
-        "goalsPer90": 0.9,
-        "shots": 3.1,
-        "shotsOnTarget": 1.3,
-        "passAccuracy": 81.2,
-        "tackles": 0.85,
-        "interceptions": 0.22
-      }
-    },
-    "291281": {
-      "careerAppearances": 380,
-      "careerGoals": 90,
-      "careerAssists": 66,
-      "careerStats": [
-        {
-          "season": "Career",
-          "team": "Birmingham City",
-          "appearances": 44,
-          "goals": 3,
-          "assists": 2
-        },
-        {
-          "season": "Career",
-          "team": "Borussia Dortmund",
-          "appearances": 132,
-          "goals": 24,
-          "assists": 25
-        },
-        {
-          "season": "Career",
-          "team": "Real Madrid",
-          "appearances": 147,
-          "goals": 50,
-          "assists": 27
-        },
-        {
-          "season": "International",
-          "team": "England",
-          "appearances": 57,
-          "goals": 13,
-          "assists": 12
-        }
-      ],
-      "seasonStats": {
-        "statsSeason": "2026-27",
-        "statsLeague": "La Liga",
-        "statsTeam": "Real Madrid",
-        "goals": 4,
-        "goalsPer90": 0.4,
-        "shots": 2.3,
-        "shotsOnTarget": 1.0,
-        "passAccuracy": 87.8,
-        "tackles": 1.45,
-        "interceptions": 0.62
-      }
-    },
     "142200": {
       "careerAppearances": 746,
       "careerGoals": 544,
@@ -1456,6 +1275,107 @@
         "interceptions": 0.31
       }
     },
+    "231388": {
+      "careerAppearances": 594,
+      "careerGoals": 453,
+      "careerAssists": 178,
+      "careerStats": [
+        {
+          "season": "Career",
+          "team": "AS Monaco",
+          "appearances": 60,
+          "goals": 27,
+          "assists": 16
+        },
+        {
+          "season": "Career",
+          "team": "Paris Saint-Germain",
+          "appearances": 308,
+          "goals": 256,
+          "assists": 108
+        },
+        {
+          "season": "Career",
+          "team": "Real Madrid",
+          "appearances": 119,
+          "goals": 103,
+          "assists": 16
+        },
+        {
+          "season": "International",
+          "team": "France",
+          "appearances": 107,
+          "goals": 67,
+          "assists": 38
+        }
+      ],
+      "seasonStats": {
+        "statsSeason": "2026-27",
+        "statsLeague": "All competitions",
+        "statsTeam": "Real Madrid",
+        "goals": 17,
+        "goalsPer90": 1.1,
+        "shots": 4.8,
+        "shotsOnTarget": 2.2,
+        "passAccuracy": 83.5,
+        "tackles": 0.28,
+        "interceptions": 0.06
+      }
+    },
+    "253989": {
+      "careerAppearances": 439,
+      "careerGoals": 373,
+      "careerAssists": 79,
+      "careerStats": [
+        {
+          "season": "Career",
+          "team": "Bryne FK / Molde FK",
+          "appearances": 53,
+          "goals": 16,
+          "assists": 6
+        },
+        {
+          "season": "Career",
+          "team": "FC Red Bull Salzburg",
+          "appearances": 27,
+          "goals": 29,
+          "assists": 7
+        },
+        {
+          "season": "Career",
+          "team": "Borussia Dortmund",
+          "appearances": 89,
+          "goals": 86,
+          "assists": 23
+        },
+        {
+          "season": "Career",
+          "team": "Manchester City",
+          "appearances": 210,
+          "goals": 176,
+          "assists": 30
+        },
+        {
+          "season": "International",
+          "team": "Norway",
+          "appearances": 60,
+          "goals": 66,
+          "assists": 13
+        }
+      ],
+      "seasonStats": {
+        "statsSeason": "2026-27",
+        "statsLeague": "Premier League",
+        "statsTeam": "Manchester City",
+        "goals": 9,
+        "goalsPer90": 0.91,
+        "shots": 3.83,
+        "shotsOnTarget": 1.8,
+        "passAccuracy": 65.6,
+        "tackles": 0.33,
+        "interceptions": 0.18
+      }
+    },
     "270126": {
       "careerAppearances": 495,
       "careerGoals": 154,
@@ -1522,11 +1442,91 @@
         "statsTeam": "Arsenal",
         "goals": 3,
         "goalsPer90": 0.45,
-        "shots": 3.0,
+        "shots": 3,
         "shotsOnTarget": 1.8,
         "passAccuracy": 83.1,
         "tackles": 1.32,
         "interceptions": 0.45
+      }
+    },
+    "291281": {
+      "careerAppearances": 380,
+      "careerGoals": 90,
+      "careerAssists": 66,
+      "careerStats": [
+        {
+          "season": "Career",
+          "team": "Birmingham City",
+          "appearances": 44,
+          "goals": 3,
+          "assists": 2
+        },
+        {
+          "season": "Career",
+          "team": "Borussia Dortmund",
+          "appearances": 132,
+          "goals": 24,
+          "assists": 25
+        },
+        {
+          "season": "Career",
+          "team": "Real Madrid",
+          "appearances": 147,
+          "goals": 50,
+          "assists": 27
+        },
+        {
+          "season": "International",
+          "team": "England",
+          "appearances": 57,
+          "goals": 13,
+          "assists": 12
+        }
+      ],
+      "seasonStats": {
+        "statsSeason": "2026-27",
+        "statsLeague": "La Liga",
+        "statsTeam": "Real Madrid",
+        "goals": 4,
+        "goalsPer90": 0.4,
+        "shots": 2.3,
+        "shotsOnTarget": 1,
+        "passAccuracy": 87.8,
+        "tackles": 1.45,
+        "interceptions": 0.62
+      }
+    },
+    "362150": {
+      "careerAppearances": 207,
+      "careerGoals": 75,
+      "careerAssists": 68,
+      "careerStats": [
+        {
+          "season": "Career",
+          "team": "FC Barcelona",
+          "appearances": 166,
+          "goals": 62,
+          "assists": 56
+        },
+        {
+          "season": "International",
+          "team": "Spain",
+          "appearances": 41,
+          "goals": 13,
+          "assists": 12
+        }
+      ],
+      "seasonStats": {
+        "statsSeason": "2026-27",
+        "statsLeague": "All competitions",
+        "statsTeam": "FC Barcelona",
+        "goals": 13,
+        "goalsPer90": 0.9,
+        "shots": 3.1,
+        "shotsOnTarget": 1.3,
+        "passAccuracy": 81.2,
+        "tackles": 0.85,
+        "interceptions": 0.22
       }
     },
     "fp_vitinha": {
@@ -1571,7 +1571,7 @@
         "goalsPer90": 0.13,
         "shots": 1.9,
         "shotsOnTarget": 0.5,
-        "passAccuracy": 91.0,
+        "passAccuracy": 91,
         "tackles": 1.1,
         "interceptions": 0.6
       }
@@ -1612,7 +1612,7 @@
         "shots": 1.2,
         "shotsOnTarget": 0.5,
         "passAccuracy": 91.7,
-        "tackles": 1.0,
+        "tackles": 1,
         "interceptions": 0.5
       }
     },
@@ -1662,10 +1662,10 @@
         "statsLeague": "La Liga",
         "statsTeam": "Real Madrid",
         "goals": 0,
-        "goalsPer90": 0.0,
-        "shots": 0.0,
-        "shotsOnTarget": 0.0,
-        "passAccuracy": 82.0,
+        "goalsPer90": 0,
+        "shots": 0,
+        "shotsOnTarget": 0,
+        "passAccuracy": 82,
         "tackles": 0.1,
         "interceptions": 0.3
       }
@@ -1718,8 +1718,8 @@
         "goals": 8,
         "goalsPer90": 0.9,
         "shots": 3.4,
-        "shotsOnTarget": 2.0,
-        "passAccuracy": 80.0,
+        "shotsOnTarget": 2,
+        "passAccuracy": 80,
         "tackles": 0.4,
         "interceptions": 0.15
       }
@@ -1773,9 +1773,9 @@
         "goalsPer90": 0.17,
         "shots": 0.5,
         "shotsOnTarget": 0.2,
-        "passAccuracy": 90.0,
+        "passAccuracy": 90,
         "tackles": 1.4,
-        "interceptions": 1.0
+        "interceptions": 1
       }
     },
     "fp_raphinha": {
@@ -1827,8 +1827,8 @@
         "goalsPer90": 1.7,
         "shots": 3.6,
         "shotsOnTarget": 1.9,
-        "passAccuracy": 81.0,
-        "tackles": 1.0,
+        "passAccuracy": 81,
+        "tackles": 1,
         "interceptions": 0.3
       }
     },
@@ -1881,7 +1881,7 @@
         "goalsPer90": 0.13,
         "shots": 1.4,
         "shotsOnTarget": 0.6,
-        "passAccuracy": 85.0,
+        "passAccuracy": 85,
         "tackles": 1.6,
         "interceptions": 0.9
       }
@@ -1925,10 +1925,10 @@
         "statsLeague": "Premier League",
         "statsTeam": "Manchester City",
         "goals": 0,
-        "goalsPer90": 0.0,
-        "shots": 0.0,
-        "shotsOnTarget": 0.0,
-        "passAccuracy": 78.0,
+        "goalsPer90": 0,
+        "shots": 0,
+        "shotsOnTarget": 0,
+        "passAccuracy": 78,
         "tackles": 0.1,
         "interceptions": 0.2
       }
@@ -1966,7 +1966,7 @@
         "statsTeam": "Bayern Munich",
         "goals": 1,
         "goalsPer90": 0.14,
-        "shots": 1.0,
+        "shots": 1,
         "shotsOnTarget": 0.35,
         "passAccuracy": 92.5,
         "tackles": 1.8,
@@ -2015,7 +2015,7 @@
         "goalsPer90": 0.1,
         "shots": 0.9,
         "shotsOnTarget": 0.3,
-        "passAccuracy": 88.0,
+        "passAccuracy": 88,
         "tackles": 1.6,
         "interceptions": 0.8
       }
@@ -2062,7 +2062,7 @@
         "goalsPer90": 0.13,
         "shots": 1.1,
         "shotsOnTarget": 0.5,
-        "passAccuracy": 88.0,
+        "passAccuracy": 88,
         "tackles": 0.83,
         "interceptions": 0.5
       }
@@ -2109,7 +2109,7 @@
         "goalsPer90": 1.34,
         "shots": 3.2,
         "shotsOnTarget": 1.6,
-        "passAccuracy": 83.0,
+        "passAccuracy": 83,
         "tackles": 0.6,
         "interceptions": 0.3
       }
@@ -2160,10 +2160,10 @@
         "statsLeague": "Premier League",
         "statsTeam": "Liverpool",
         "goals": 0,
-        "goalsPer90": 0.0,
+        "goalsPer90": 0,
         "shots": 0.6,
         "shotsOnTarget": 0.1,
-        "passAccuracy": 90.0,
+        "passAccuracy": 90,
         "tackles": 0.6,
         "interceptions": 0.7
       }
@@ -2207,11 +2207,11 @@
         "statsLeague": "Premier League",
         "statsTeam": "Liverpool",
         "goals": 0,
-        "goalsPer90": 0.0,
-        "shots": 0.0,
-        "shotsOnTarget": 0.0,
-        "passAccuracy": 80.0,
-        "tackles": 0.0,
+        "goalsPer90": 0,
+        "shots": 0,
+        "shotsOnTarget": 0,
+        "passAccuracy": 80,
+        "tackles": 0,
         "interceptions": 0.1
       }
     },
@@ -2250,7 +2250,7 @@
         "goalsPer90": 1.02,
         "shots": 3.2,
         "shotsOnTarget": 1.7,
-        "passAccuracy": 78.0,
+        "passAccuracy": 78,
         "tackles": 0.3,
         "interceptions": 0.2
       }
@@ -2294,11 +2294,11 @@
         "statsLeague": "La Liga",
         "statsTeam": "Atlético Madrid",
         "goals": 0,
-        "goalsPer90": 0.0,
-        "shots": 0.0,
-        "shotsOnTarget": 0.0,
-        "passAccuracy": 75.0,
-        "tackles": 0.0,
+        "goalsPer90": 0,
+        "shots": 0,
+        "shotsOnTarget": 0,
+        "passAccuracy": 75,
+        "tackles": 0,
         "interceptions": 0.1
       }
     },
@@ -2351,7 +2351,7 @@
         "goalsPer90": 0.24,
         "shots": 3.3,
         "shotsOnTarget": 1.4,
-        "passAccuracy": 82.0,
+        "passAccuracy": 82,
         "tackles": 0.8,
         "interceptions": 0.3
       }
@@ -2402,11 +2402,11 @@
         "statsLeague": "Premier League",
         "statsTeam": "Chelsea",
         "goals": 0,
-        "goalsPer90": 0.0,
+        "goalsPer90": 0,
         "shots": 0.7,
-        "shotsOnTarget": 0.0,
-        "passAccuracy": 89.0,
-        "tackles": 2.0,
+        "shotsOnTarget": 0,
+        "passAccuracy": 89,
+        "tackles": 2,
         "interceptions": 1.4
       }
     },
@@ -2442,12 +2442,12 @@
         "statsLeague": "Premier League",
         "statsTeam": "Arsenal",
         "goals": 0,
-        "goalsPer90": 0.0,
+        "goalsPer90": 0,
         "shots": 1.3,
         "shotsOnTarget": 0.7,
-        "passAccuracy": 90.0,
+        "passAccuracy": 90,
         "tackles": 1.8,
-        "interceptions": 1.0
+        "interceptions": 1
       }
     },
     "fp_bruno_fernandes": {
@@ -2492,7 +2492,7 @@
         "goalsPer90": 0.58,
         "shots": 2.8,
         "shotsOnTarget": 1.3,
-        "passAccuracy": 81.0,
+        "passAccuracy": 81,
         "tackles": 1.4,
         "interceptions": 0.6
       }
