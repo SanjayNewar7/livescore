@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "2026-11-21T09:36:59.427Z",
+  "revision": "2026-11-21T09:53:10.892Z",
   "famousPlayers": [
     {
       "id": "22774",
@@ -1129,7 +1129,7 @@
     },
     "45843": {
       "careerAppearances": 1184,
-      "careerGoals": 932,
+      "careerGoals": 937,
       "careerAssists": 465,
       "careerStats": [
         {
@@ -1150,7 +1150,7 @@
           "season": "Career",
           "team": "Inter Miami CF",
           "appearances": 123,
-          "goals": 102,
+          "goals": 107,
           "assists": 58
         },
         {
