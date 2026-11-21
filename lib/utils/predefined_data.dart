@@ -1,4 +1,5 @@
 // lib/utils/predefined_data.dart
+import 'package:livescore/services/predefined_data_service.dart';
 //
 // Static, offline "seed" data used as a fallback whenever the live APIs
 // (API-Football / ESPN / TheSportsDB) fail to return something useful —
@@ -69,14 +70,24 @@
 // 'FC Barcelona' so the club badge resolves, and the Dembélé team name
 // standardised to 'Paris Saint-Germain'. Date on the earlier pass in this
 // header was wrong (it was written as 11-10; today is 11-20).
+// Sixth pass (2026-11-20, sourced against FotMob / Vavel / FootyStats /
+// Real Madrid & Bayern match reports): Mbappé 17 goals in 16 apps all comps
+// (13 La Liga), Real Madrid row 119/103, France 107 caps / 67 goals / 38
+// assists; Haaland 9 PL goals in 10 apps (890 min), Man City 210/176, Norway
+// 60 caps / 66 goals; Bellingham 4 La Liga goals (50th Real Madrid goal on
+// 1 Nov); Valverde 1 G / 2 A in 11 La Liga apps; Caicedo 0 G in 4 PL apps;
+// Gabriel 1 G in 8 PL apps; Van Dijk 0 G in 10 PL apps; Vitinha 1 G / 1 A in
+// 9 Ligue 1 apps. The Gemini copy's Mbappé and Bellingham numbers checked out
+// (the earlier 'unverified' note is superseded); its Haaland 378 career goals
+// and Norway 61/68 did not.
 // STILL NOT refreshed (kept as 2025-26, labelled '2025-26'): Dembélé (injured
-// since 20 Oct), Vitinha, Courtois, Hakimi, Donnarumma, Valverde, Gabriel,
-// Van Dijk, Alisson, Oblak, Caicedo — no reliable season-to-date figure found.
+// since 20 Oct), Courtois, Hakimi, Donnarumma, Alisson, Oblak — no reliable
+// season-to-date figure was found for them.
 // Secondary per-90 fields (shots, passAccuracy, tackles, interceptions) are
 // carried over from the last full season and are approximate everywhere.
 
 // ─── PREDEFINED FAMOUS PLAYERS (basic info + image) ────────────────────────
-const List<Map<String, dynamic>> famousPlayers = [
+const List<Map<String, dynamic>> bundledFamousPlayers = [
   {
     'id': '22774',
     'name': 'Cristiano Ronaldo',
@@ -1091,7 +1102,7 @@ const List<Map<String, dynamic>> famousPlayers = [
 ];
 
 // ─── PREDEFINED FAMOUS CLUBS ────────────────────────────────────────────────
-const List<Map<String, String>> famousClubs = [
+const List<Map<String, String>> bundledFamousClubs = [
   {'id': '86', 'name': 'Real Madrid', 'league': 'esp.1', 'leagueName': 'La Liga'},
   {'id': '83', 'name': 'Barcelona', 'league': 'esp.1', 'leagueName': 'La Liga'},
   {'id': '359', 'name': 'Arsenal', 'league': 'eng.1', 'leagueName': 'Premier League'},
@@ -1120,10 +1131,10 @@ const List<Map<String, String>> famousClubs = [
 /// entry are the sum of every row in that player's `careerStats` list
 /// (club spells + international), so they represent total competitive
 /// appearances across both club and country.
-const Map<String, Map<String, dynamic>> predefinedPlayerStats = {
+const Map<String, Map<String, dynamic>> bundledPredefinedPlayerStats = {
   '22774': { // Cristiano Ronaldo
     'careerAppearances': 1350,
-    'careerGoals': 985,
+    'careerGoals': 986,
     'careerAssists': 261,
     'careerStats': [
       {'season': '2009–2018', 'team': 'Real Madrid', 'appearances': 438, 'goals': 450, 'assists': 131},
@@ -1159,35 +1170,35 @@ const Map<String, Map<String, dynamic>> predefinedPlayerStats = {
     },
   },
   '231388': { // Kylian Mbappé
-    'careerAppearances': 588,
-    'careerGoals': 449,
-    'careerAssists': 159,
+    'careerAppearances': 594,
+    'careerGoals': 453,
+    'careerAssists': 178,
     'careerStats': [
       {'season': 'Career', 'team': 'AS Monaco', 'appearances': 60, 'goals': 27, 'assists': 16},
       {'season': 'Career', 'team': 'Paris Saint-Germain', 'appearances': 308, 'goals': 256, 'assists': 108},
-      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 116, 'goals': 100, 'assists': 15},
-      {'season': 'International', 'team': 'France', 'appearances': 104, 'goals': 66, 'assists': 20},
+      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 119, 'goals': 103, 'assists': 16},
+      {'season': 'International', 'team': 'France', 'appearances': 107, 'goals': 67, 'assists': 38},
     ],
     'seasonStats': {
       'statsSeason': '2026-27', 'statsLeague': 'All competitions', 'statsTeam': 'Real Madrid',
-      'goals': 14, 'goalsPer90': 1.10, 'shots': 4.8, 'shotsOnTarget': 2.2,
+      'goals': 17, 'goalsPer90': 1.10, 'shots': 4.8, 'shotsOnTarget': 2.2,
       'passAccuracy': 83.5, 'tackles': 0.28, 'interceptions': 0.06,
     },
   },
   '253989': { // Erling Haaland
-    'careerAppearances': 432,
-    'careerGoals': 369,
-    'careerAssists': 78,
+    'careerAppearances': 439,
+    'careerGoals': 373,
+    'careerAssists': 79,
     'careerStats': [
       {'season': 'Career', 'team': 'Bryne FK / Molde FK', 'appearances': 53, 'goals': 16, 'assists': 6},
       {'season': 'Career', 'team': 'FC Red Bull Salzburg', 'appearances': 27, 'goals': 29, 'assists': 7},
       {'season': 'Career', 'team': 'Borussia Dortmund', 'appearances': 89, 'goals': 86, 'assists': 23},
-      {'season': 'Career', 'team': 'Manchester City', 'appearances': 208, 'goals': 174, 'assists': 30},
-      {'season': 'International', 'team': 'Norway', 'appearances': 55, 'goals': 64, 'assists': 12},
+      {'season': 'Career', 'team': 'Manchester City', 'appearances': 210, 'goals': 176, 'assists': 30},
+      {'season': 'International', 'team': 'Norway', 'appearances': 60, 'goals': 66, 'assists': 13},
     ],
     'seasonStats': {
       'statsSeason': '2026-27', 'statsLeague': 'Premier League', 'statsTeam': 'Manchester City',
-      'goals': 9, 'goalsPer90': 1.05, 'shots': 3.83, 'shotsOnTarget': 1.80,
+      'goals': 9, 'goalsPer90': 0.91, 'shots': 3.83, 'shotsOnTarget': 1.80,
       'passAccuracy': 65.6, 'tackles': 0.33, 'interceptions': 0.18,
     },
   },
@@ -1206,18 +1217,18 @@ const Map<String, Map<String, dynamic>> predefinedPlayerStats = {
     },
   },
   '291281': { // Jude Bellingham
-    'careerAppearances': 373,
+    'careerAppearances': 380,
     'careerGoals': 90,
     'careerAssists': 66,
     'careerStats': [
       {'season': 'Career', 'team': 'Birmingham City', 'appearances': 44, 'goals': 3, 'assists': 2},
       {'season': 'Career', 'team': 'Borussia Dortmund', 'appearances': 132, 'goals': 24, 'assists': 25},
-      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 142, 'goals': 50, 'assists': 27},
-      {'season': 'International', 'team': 'England', 'appearances': 55, 'goals': 13, 'assists': 12},
+      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 147, 'goals': 50, 'assists': 27},
+      {'season': 'International', 'team': 'England', 'appearances': 57, 'goals': 13, 'assists': 12},
     ],
     'seasonStats': {
       'statsSeason': '2026-27', 'statsLeague': 'La Liga', 'statsTeam': 'Real Madrid',
-      'goals': 3, 'goalsPer90': 0.39, 'shots': 2.3, 'shotsOnTarget': 1.0,
+      'goals': 4, 'goalsPer90': 0.40, 'shots': 2.3, 'shotsOnTarget': 1.0,
       'passAccuracy': 87.8, 'tackles': 1.45, 'interceptions': 0.62,
     },
   },
@@ -1303,18 +1314,18 @@ const Map<String, Map<String, dynamic>> predefinedPlayerStats = {
   // pages / FIFA's World Cup 2026 profile pages and are the most reliable
   // figures here.
   'fp_vitinha': { // Vitinha
-    'careerAppearances': 280,
-    'careerGoals': 28,
-    'careerAssists': 28,
+    'careerAppearances': 298,
+    'careerGoals': 31,
+    'careerAssists': 29,
     'careerStats': [
       {'season': 'Career', 'team': 'FC Porto', 'appearances': 44, 'goals': 3, 'assists': 2},
       {'season': 'Loan', 'team': 'Wolverhampton Wanderers', 'appearances': 19, 'goals': 1, 'assists': 0},
-      {'season': 'Career', 'team': 'Paris Saint-Germain', 'appearances': 182, 'goals': 21, 'assists': 26},
-      {'season': 'International', 'team': 'Portugal', 'appearances': 35, 'goals': 3, 'assists': 0},
+      {'season': 'Career', 'team': 'Paris Saint-Germain', 'appearances': 195, 'goals': 23, 'assists': 27},
+      {'season': 'International', 'team': 'Portugal', 'appearances': 40, 'goals': 4, 'assists': 0},
     ],
     'seasonStats': {
-      'statsSeason': '2025-26', 'statsLeague': 'Ligue 1', 'statsTeam': 'Paris Saint-Germain',
-      'goals': 1, 'goalsPer90': 0.04, 'shots': 1.5, 'shotsOnTarget': 0.7,
+      'statsSeason': '2026-27', 'statsLeague': 'Ligue 1', 'statsTeam': 'Paris Saint-Germain',
+      'goals': 1, 'goalsPer90': 0.13, 'shots': 1.9, 'shotsOnTarget': 0.5,
       'passAccuracy': 91.0, 'tackles': 1.1, 'interceptions': 0.6,
     },
   },
@@ -1474,34 +1485,34 @@ const Map<String, Map<String, dynamic>> predefinedPlayerStats = {
     },
   },
   'fp_federico_valverde': { // Federico Valverde
-    'careerAppearances': 560,
-    'careerGoals': 56,
-    'careerAssists': 44,
+    'careerAppearances': 571,
+    'careerGoals': 57,
+    'careerAssists': 46,
     'careerStats': [
       {'season': 'Career', 'team': 'Peñarol', 'appearances': 20, 'goals': 2, 'assists': 1},
       {'season': 'Loan', 'team': 'Deportivo La Coruña', 'appearances': 32, 'goals': 3, 'assists': 2},
-      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 432, 'goals': 42, 'assists': 41},
+      {'season': 'Career', 'team': 'Real Madrid', 'appearances': 443, 'goals': 43, 'assists': 43},
       {'season': 'International', 'team': 'Uruguay', 'appearances': 76, 'goals': 9, 'assists': 0},
     ],
     'seasonStats': {
-      'statsSeason': '2025-26', 'statsLeague': 'La Liga', 'statsTeam': 'Real Madrid',
-      'goals': 5, 'goalsPer90': 0.15, 'shots': 1.55, 'shotsOnTarget': 0.67,
+      'statsSeason': '2026-27', 'statsLeague': 'La Liga', 'statsTeam': 'Real Madrid',
+      'goals': 1, 'goalsPer90': 0.10, 'shots': 0.9, 'shotsOnTarget': 0.3,
       'passAccuracy': 88.0, 'tackles': 1.6, 'interceptions': 0.8,
     },
   },
   'fp_gabriel': { // Gabriel Magalhães
-    'careerAppearances': 378,
-    'careerGoals': 28,
+    'careerAppearances': 390,
+    'careerGoals': 29,
     'careerAssists': 9,
     'careerStats': [
       {'season': 'Career', 'team': 'Avaí', 'appearances': 35, 'goals': 2, 'assists': 1},
       {'season': 'Career', 'team': 'Lille (incl. loans)', 'appearances': 70, 'goals': 5, 'assists': 3},
-      {'season': 'Career', 'team': 'Arsenal', 'appearances': 248, 'goals': 20, 'assists': 4},
+      {'season': 'Career', 'team': 'Arsenal', 'appearances': 260, 'goals': 21, 'assists': 4},
       {'season': 'International', 'team': 'Brazil', 'appearances': 25, 'goals': 1, 'assists': 1},
     ],
     'seasonStats': {
-      'statsSeason': '2025-26', 'statsLeague': 'Premier League', 'statsTeam': 'Arsenal',
-      'goals': 3, 'goalsPer90': 0.10, 'shots': 1.0, 'shotsOnTarget': 0.5,
+      'statsSeason': '2026-27', 'statsLeague': 'Premier League', 'statsTeam': 'Arsenal',
+      'goals': 1, 'goalsPer90': 0.13, 'shots': 1.1, 'shotsOnTarget': 0.5,
       'passAccuracy': 88.0, 'tackles': 0.83, 'interceptions': 0.50,
     },
   },
@@ -1522,19 +1533,19 @@ const Map<String, Map<String, dynamic>> predefinedPlayerStats = {
     },
   },
   'fp_virgil_van_dijk': { // Virgil van Dijk
-    'careerAppearances': 779,
+    'careerAppearances': 793,
     'careerGoals': 80,
     'careerAssists': 22,
     'careerStats': [
       {'season': 'Career', 'team': 'Groningen', 'appearances': 63, 'goals': 3, 'assists': 2},
       {'season': 'Career', 'team': 'Celtic', 'appearances': 71, 'goals': 5, 'assists': 2},
       {'season': 'Career', 'team': 'Southampton', 'appearances': 151, 'goals': 15, 'assists': 5},
-      {'season': 'Career', 'team': 'Liverpool', 'appearances': 398, 'goals': 44, 'assists': 13},
+      {'season': 'Career', 'team': 'Liverpool', 'appearances': 412, 'goals': 44, 'assists': 13},
       {'season': 'International', 'team': 'Netherlands', 'appearances': 96, 'goals': 13, 'assists': 0},
     ],
     'seasonStats': {
-      'statsSeason': '2025-26', 'statsLeague': 'Premier League', 'statsTeam': 'Liverpool',
-      'goals': 6, 'goalsPer90': 0.20, 'shots': 1.0, 'shotsOnTarget': 0.5,
+      'statsSeason': '2026-27', 'statsLeague': 'Premier League', 'statsTeam': 'Liverpool',
+      'goals': 0, 'goalsPer90': 0.0, 'shots': 0.6, 'shotsOnTarget': 0.1,
       'passAccuracy': 90.0, 'tackles': 0.6, 'interceptions': 0.7,
     },
   },
@@ -1603,19 +1614,19 @@ const Map<String, Map<String, dynamic>> predefinedPlayerStats = {
     },
   },
   'fp_moises_caicedo': { // Moisés Caicedo
-    'careerAppearances': 349,
+    'careerAppearances': 354,
     'careerGoals': 24,
     'careerAssists': 23,
     'careerStats': [
       {'season': 'Career', 'team': 'Independiente del Valle', 'appearances': 34, 'goals': 2, 'assists': 2},
       {'season': 'Loan', 'team': 'Beerschot', 'appearances': 29, 'goals': 1, 'assists': 2},
       {'season': 'Career', 'team': 'Brighton & Hove Albion', 'appearances': 35, 'goals': 5, 'assists': 3},
-      {'season': 'Career', 'team': 'Chelsea', 'appearances': 186, 'goals': 13, 'assists': 11},
+      {'season': 'Career', 'team': 'Chelsea', 'appearances': 191, 'goals': 13, 'assists': 11},
       {'season': 'International', 'team': 'Ecuador', 'appearances': 65, 'goals': 3, 'assists': 5},
     ],
     'seasonStats': {
-      'statsSeason': '2025-26', 'statsLeague': 'Premier League', 'statsTeam': 'Chelsea',
-      'goals': 3, 'goalsPer90': 0.12, 'shots': 1.0, 'shotsOnTarget': 0.4,
+      'statsSeason': '2026-27', 'statsLeague': 'Premier League', 'statsTeam': 'Chelsea',
+      'goals': 0, 'goalsPer90': 0.0, 'shots': 0.7, 'shotsOnTarget': 0.0,
       'passAccuracy': 89.0, 'tackles': 2.0, 'interceptions': 1.4,
     },
   },
@@ -1666,7 +1677,7 @@ const Map<String, Map<String, dynamic>> predefinedPlayerStats = {
 /// map — a country isn't an ESPN club entity, so the UI should render those
 /// with a flag (see `Helpers.getLeagueFlag`-style lookups) rather than a
 /// crest.
-const Map<String, String> clubLogoIds = {
+const Map<String, String> bundledClubLogoIds = {
   'Real Madrid': '86',
   'FC Barcelona': '83',
   'Arsenal': '359',
@@ -1706,6 +1717,19 @@ const Map<String, String> clubLogoIds = {
   'Crystal Palace': '384',
   'Reading': '335',
 };
+
+/// Returns an ESPN crest URL for [teamName] if we have a confirmed logo id
+List<Map<String, dynamic>> get famousPlayers =>
+    PredefinedDataService().famousPlayers ?? bundledFamousPlayers;
+
+List<Map<String, String>> get famousClubs =>
+    PredefinedDataService().famousClubs ?? bundledFamousClubs;
+
+Map<String, Map<String, dynamic>> get predefinedPlayerStats =>
+    PredefinedDataService().predefinedPlayerStats ?? bundledPredefinedPlayerStats;
+
+Map<String, String> get clubLogoIds =>
+    PredefinedDataService().clubLogoIds ?? bundledClubLogoIds;
 
 /// Returns an ESPN crest URL for [teamName] if we have a confirmed logo id
 /// for it, otherwise null (caller should fall back to a generic icon).

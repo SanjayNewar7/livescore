@@ -15,6 +15,7 @@ import 'package:livescore/widgets/football_pitch_lineup.dart';
 import 'package:livescore/utils/theme.dart';
 import 'package:livescore/utils/predefined_data.dart' as seed;
 import 'package:livescore/services/sportsdb_service.dart';
+import 'package:livescore/services/predefined_data_service.dart';
 
 // ─── Design Tokens ───────────────────────────────────────────────────────────
 // Previously this screen used a one-off blue (0xFF1A62C8) that didn't match
@@ -72,10 +73,12 @@ class _SearchScreenState extends State<SearchScreen> {
     super.initState();
     _focusNode.requestFocus();
     _buildPredefinedData();
+    PredefinedDataService().addListener(_buildPredefinedData);
   }
 
   @override
   void dispose() {
+    PredefinedDataService().removeListener(_buildPredefinedData);
     _searchController.dispose();
     _focusNode.dispose();
     super.dispose();

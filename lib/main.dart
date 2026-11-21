@@ -13,6 +13,7 @@ import 'package:livescore/utils/theme.dart';
 import 'package:livescore/services/cache_service.dart';
 import 'package:livescore/services/preferences_service.dart';
 import 'package:livescore/services/profile_service.dart';
+import 'package:livescore/services/predefined_data_service.dart';
 import 'package:livescore/services/quiz_service.dart';
 import 'package:livescore/services/notification_service.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -28,6 +29,8 @@ void notificationWorker() {
     try {
       WidgetsFlutterBinding.ensureInitialized();
       await Hive.initFlutter();
+      await PredefinedDataService().init();
+      await PredefinedDataService().refresh(force: true);
       await PreferencesService().init();
       await NotificationService().init();
       await NotificationService().pollTeamActivity();
@@ -37,6 +40,15 @@ void notificationWorker() {
       return false;
     }
   });
+}
+
+class _DataLifecycleObserver extends WidgetsBindingObserver {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(PredefinedDataService().refresh(force: true));
+    }
+  }
 }
 
 void main() async {
@@ -64,6 +76,7 @@ void main() async {
   } catch (e) {
     print('[Main] ProfileService init error: $e');
   }
+  await PredefinedDataService().init();
   try {
     await QuizService().init();
   } catch (e) {
@@ -91,10 +104,13 @@ void main() async {
   print('[Main] Service initialization complete');
 
   runApp(const MyApp());
+  unawaited(PredefinedDataService().refresh());
+  WidgetsBinding.instance.addObserver(_DataLifecycleObserver());
   unawaited(ProfileService().ensureDefaultAvatar());
   Connectivity().onConnectivityChanged.listen((results) {
     if (results.any((result) => result != ConnectivityResult.none)) {
       unawaited(ProfileService().ensureDefaultAvatar());
+      unawaited(PredefinedDataService().refresh(force: true));
     }
   });
 }

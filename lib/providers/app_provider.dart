@@ -13,6 +13,7 @@ import 'package:livescore/models/player_model.dart';
 import 'package:livescore/models/search_model.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/utils/predefined_data.dart' as seed;
+import 'package:livescore/services/predefined_data_service.dart';
 
 // ── Football keyword filter ───────────────────────────────────────────────────
 bool _isFootballArticle(NewsArticle a) {
@@ -36,6 +37,15 @@ bool _isFootballArticle(NewsArticle a) {
 }
 
 class AppProvider extends ChangeNotifier {
+  AppProvider() {
+    PredefinedDataService().addListener(_onPredefinedDataUpdated);
+  }
+
+  void _onPredefinedDataUpdated() {
+    _searchCache.clear();
+    _searchCacheTimestamps.clear();
+    if (_isMounted) notifyListeners();
+  }
   final SportService _sportService = SportService();
   final PreferencesService _prefs = PreferencesService();
   final NotificationService _notificationService = NotificationService();
@@ -178,6 +188,7 @@ class AppProvider extends ChangeNotifier {
   @override
   void dispose() {
     _isMounted = false;
+    PredefinedDataService().removeListener(_onPredefinedDataUpdated);
     super.dispose();
   }
 
