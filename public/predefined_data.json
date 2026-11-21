@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "2026-11-21T09:53:10.892Z",
+  "revision": "2026-11-21T09:56:44.525Z",
   "famousPlayers": [
     {
       "id": "22774",
@@ -170,7 +170,7 @@
       "position": "RB",
       "jersey": "",
       "nationality": "Morocco",
-      "imageUrl": ""
+      "imageUrl": "https://res.cloudinary.com/dkk7zqgnz/image/upload/v1795254980/44920_c1n3u5.webp"
     },
     {
       "id": "fp_gianluigi_donnarumma",
