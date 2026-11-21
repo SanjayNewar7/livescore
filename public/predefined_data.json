@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "2026-11-21T09:56:44.525Z",
+  "revision": "2026-11-21T14:47:19.043Z",
   "famousPlayers": [
     {
       "id": "22774",
@@ -940,7 +940,7 @@
       "position": "CAM",
       "jersey": "",
       "nationality": "France",
-      "imageUrl": ""
+      "imageUrl": "https://res.cloudinary.com/dkk7zqgnz/image/upload/v1795272424/4059.vresize.350.350.medium.2_knryut.webp"
     },
     {
       "id": "fp_luka_modric",
