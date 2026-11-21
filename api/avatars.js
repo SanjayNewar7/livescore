@@ -17,13 +17,6 @@ export async function GET() {
     });
     if (!response.ok) throw new Error('Cloudinary request failed');
     const data = await response.json();
-    console.info('Avatar source summary', {
-      keyLast4: key.trim().slice(-4),
-      responseFields: Object.keys(data),
-      resourcesIsArray: Array.isArray(data.resources),
-      resourceCount: data.resources?.length ?? null,
-      responseError: data.error?.message ?? null,
-    });
     const avatars = (data.resources ?? [])
       .filter(asset => asset.resource_type === 'image' && asset.type === 'upload' &&
         typeof asset.secure_url === 'string' && asset.secure_url.startsWith(`https://res.cloudinary.com/${cloud}/image/upload/`))
