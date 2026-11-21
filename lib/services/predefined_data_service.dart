@@ -18,6 +18,7 @@ class PredefinedDataService extends ChangeNotifier {
   );
 
   Map<String, dynamic>? _snapshot;
+  bool get hasPublishedData => _snapshot != null;
   Future<void>? _refreshing;
   DateTime? _lastCheck;
 

@@ -10,6 +10,7 @@ import '../models/search_model.dart';
 import '../models/team_page_data.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/utils/predefined_data.dart';
+import 'package:livescore/services/predefined_data_service.dart';
 import 'package:livescore/screens/game_detail_screen.dart'
     show MatchLineup, LineupPlayer, H2HResult;
 
@@ -791,13 +792,13 @@ class SportService {
       print('[SportService]    Nationality: ${merged.nationality}');
       print('[SportService]    Stats: ${merged.statistics}');
       print('[SportService]    SeasonStats: ${merged.seasonStats}');
-      return merged;
+      return _applyPublishedPlayerStats(merged, playerId);
     }
 
     // ─── STEP 4: Fallback to SportsDB if ESPN failed ──────────────────────
     if (sportsDbPlayer != null && sportsDbPlayer.id.isNotEmpty) {
       print('[SportService] ✅ Using SportsDB as fallback for: ${sportsDbPlayer.displayName}');
-      return sportsDbPlayer;
+      return _applyPublishedPlayerStats(sportsDbPlayer, playerId);
     }
 
     // ─── STEP 5: Return empty player ────────────────────────────────────────
@@ -825,6 +826,23 @@ class SportService {
       age: 0,
       college: '',
       statistics: {},
+    );
+  }
+
+  Player _applyPublishedPlayerStats(Player player, String playerId) {
+    if (!PredefinedDataService().hasPublishedData) return player;
+    final published = predefinedPlayerStats[playerId];
+    if (published == null) return player;
+    return player.copyWith(
+      statistics: {
+        'goals': published['careerGoals'],
+        'assists': published['careerAssists'],
+        'appearances': published['careerAppearances'],
+      },
+      seasonStats: Map<String, dynamic>.from(published['seasonStats'] as Map),
+      careerStats: (published['careerStats'] as List)
+          .map((row) => Map<String, dynamic>.from(row as Map))
+          .toList(),
     );
   }
 
@@ -1306,4 +1324,4 @@ class SportService {
       return [];
     }
   }
-}  
+}

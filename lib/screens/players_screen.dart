@@ -7,6 +7,7 @@ import 'package:livescore/models/player_model.dart';
 import 'package:livescore/models/team_model.dart';
 import 'package:livescore/models/game_model.dart';
 import 'package:livescore/services/sport_service.dart';
+import 'package:livescore/services/predefined_data_service.dart';
 import 'package:livescore/widgets/football_pitch_lineup.dart';
 import 'package:livescore/utils/constants.dart';
 import 'package:livescore/utils/predefined_data.dart';
@@ -80,10 +81,31 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
     );
 
     _loadPlayerDetails();
+    PredefinedDataService().addListener(_onPublishedStatsUpdated);
+  }
+
+  void _onPublishedStatsUpdated() {
+    final details = _playerDetails;
+    final published = predefinedPlayerStats[widget.player.id];
+    if (!mounted || details == null || published == null) return;
+    setState(() {
+      _playerDetails = details.copyWith(
+        statistics: {
+          'goals': published['careerGoals'],
+          'assists': published['careerAssists'],
+          'appearances': published['careerAppearances'],
+        },
+        seasonStats: Map<String, dynamic>.from(published['seasonStats'] as Map),
+        careerStats: (published['careerStats'] as List)
+            .map((row) => Map<String, dynamic>.from(row as Map))
+            .toList(),
+      );
+    });
   }
 
   @override
   void dispose() {
+    PredefinedDataService().removeListener(_onPublishedStatsUpdated);
     _animationController.dispose();
     super.dispose();
   }
