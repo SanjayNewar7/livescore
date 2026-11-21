@@ -24,6 +24,21 @@ export async function GET() {
       firstDeliveryType: data.resources?.[0]?.type ?? null,
       firstAssetFolder: data.resources?.[0]?.asset_folder ?? null,
     });
+    if ((data.resources ?? []).length === 0) {
+      const headers = { Authorization: `Basic ${Buffer.from(`${key}:${secret}`).toString('base64')}` };
+      const [foldersResponse, imagesResponse] = await Promise.all([
+        fetch(`https://api.cloudinary.com/v1_1/${cloud}/folders`, { headers }),
+        fetch(`https://api.cloudinary.com/v1_1/${cloud}/resources/image/upload?max_results=10`, { headers }),
+      ]);
+      const folders = foldersResponse.ok ? await foldersResponse.json() : {};
+      const images = imagesResponse.ok ? await imagesResponse.json() : {};
+      console.info('Avatar catalog diagnosis', {
+        foldersStatus: foldersResponse.status,
+        rootFolderNames: folders.folders?.map(folder => folder.name) ?? [],
+        imagesStatus: imagesResponse.status,
+        sampleImageFolders: images.resources?.map(asset => asset.asset_folder) ?? [],
+      });
+    }
     const avatars = (data.resources ?? [])
       .filter(asset => asset.resource_type === 'image' && asset.type === 'upload' &&
         typeof asset.secure_url === 'string' && asset.secure_url.startsWith(`https://res.cloudinary.com/${cloud}/image/upload/`))
