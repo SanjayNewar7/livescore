@@ -17,11 +17,19 @@ export async function GET() {
     });
     if (!response.ok) throw new Error('Cloudinary request failed');
     const data = await response.json();
+    console.info('Avatar catalog source', {
+      resourceCount: Array.isArray(data.resources) ? data.resources.length : null,
+      firstResourceFields: Object.keys(data.resources?.[0] ?? {}),
+      firstResourceType: data.resources?.[0]?.resource_type ?? null,
+      firstDeliveryType: data.resources?.[0]?.type ?? null,
+      firstAssetFolder: data.resources?.[0]?.asset_folder ?? null,
+    });
     const avatars = (data.resources ?? [])
       .filter(asset => asset.resource_type === 'image' && asset.type === 'upload' &&
         typeof asset.secure_url === 'string' && asset.secure_url.startsWith(`https://res.cloudinary.com/${cloud}/image/upload/`))
       .map(asset => ({ id: asset.asset_id, url: asset.secure_url }))
       .filter(asset => typeof asset.id === 'string' && asset.id.length > 0);
+    console.info('Avatar catalog filtered', { count: avatars.length });
     return Response.json({ avatars }, {
       headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400' },
     });
