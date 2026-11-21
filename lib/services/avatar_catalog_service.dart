@@ -24,7 +24,10 @@ class AnimeAvatar {
 }
 
 class AvatarCatalogService {
-  static const endpoint = String.fromEnvironment('AVATAR_CATALOG_URL');
+  static const endpoint = String.fromEnvironment(
+    'AVATAR_CATALOG_URL',
+    defaultValue: 'https://livescore-one.vercel.app/api/avatars',
+  );
   static const _boxName = 'anime_avatar_catalog';
   static const _key = 'avatars';
 

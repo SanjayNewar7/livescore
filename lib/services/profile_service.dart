@@ -23,6 +23,7 @@ import 'package:livescore/services/avatar_catalog_service.dart';
 import 'package:livescore/utils/suggested_profile_names.dart';
 
 class ProfileService extends ChangeNotifier {
+  Future<void>? _defaultAvatarInFlight;
   static const String _boxName = 'user_profile_box';
   static const String _profileKey = 'profile';
 
@@ -171,7 +172,12 @@ class ProfileService extends ChangeNotifier {
       final dir = await getApplicationDocumentsDirectory();
       temporary = File('${dir.path}/avatar_download.tmp');
       await temporary.writeAsBytes(response.bodyBytes, flush: true);
-      if (onlyIfEmpty && profile.hasImage) return null;
+      if (onlyIfEmpty) {
+        final existingPath = profile.imagePath;
+        if (existingPath != null && await File(existingPath).exists()) {
+          return null;
+        }
+      }
       final savedPath = await _storeImage(temporary);
       final updated =
           profile.copyWith(imagePath: savedPath, avatarId: avatar.id);
@@ -186,9 +192,23 @@ class ProfileService extends ChangeNotifier {
   }
 
   Future<void> ensureDefaultAvatar() async {
-    if (profile.hasImage) return;
+    if (_defaultAvatarInFlight != null) return _defaultAvatarInFlight;
+    final pending = _loadDefaultAvatar();
+    _defaultAvatarInFlight = pending;
+    try {
+      await pending;
+    } finally {
+      _defaultAvatarInFlight = null;
+    }
+  }
+
+  Future<void> _loadDefaultAvatar() async {
+    final currentPath = profile.imagePath;
+    if (currentPath != null && await File(currentPath).exists()) return;
     final avatars = await AvatarCatalogService().getAvatars();
-    if (avatars.isEmpty || profile.hasImage) return;
+    final latestPath = profile.imagePath;
+    if (avatars.isEmpty ||
+        (latestPath != null && await File(latestPath).exists())) return;
     final selected = avatars.firstWhere(
       (avatar) => avatar.id == profile.avatarId,
       orElse: () => avatars[Random().nextInt(avatars.length)],

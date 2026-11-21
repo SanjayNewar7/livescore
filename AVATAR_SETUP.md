@@ -14,11 +14,13 @@ API secret must stay on the server.
    key and secret belong to the same product environment as the 27 images,
    that its cloud name is `dkk7zqgnz`, and that the root asset folder is named
    exactly `LiveGoal Avatar`. Check a sample asset's public delivery URL.
-3. Build Flutter with
-   `flutter build apk --dart-define=AVATAR_CATALOG_URL=https://YOUR-PROJECT.vercel.app/api/avatars`.
-   Use the same define for `flutter run` and release App Bundles.
+3. Build Flutter normally. The app defaults to
+   `https://livescore-one.vercel.app/api/avatars` for both debug and release builds.
+   To point a build at another catalog, pass
+   `--dart-define=AVATAR_CATALOG_URL=https://YOUR-PROJECT.vercel.app/api/avatars`
+   to `flutter run`, `flutter build apk`, or `flutter build appbundle`.
 
 The app caches the catalog on the phone and saves the chosen avatar image in
 application documents storage for offline display. The first avatar download
-requires a network connection. If no catalog URL is configured, custom photos
-and suggested names still work, but anime avatar selection is unavailable.
+requires a network connection. If the first download fails, the app retries
+when connectivity returns. Custom photos and suggested names also work offline.

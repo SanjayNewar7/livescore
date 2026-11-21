@@ -92,6 +92,11 @@ void main() async {
 
   runApp(const MyApp());
   unawaited(ProfileService().ensureDefaultAvatar());
+  Connectivity().onConnectivityChanged.listen((results) {
+    if (results.any((result) => result != ConnectivityResult.none)) {
+      unawaited(ProfileService().ensureDefaultAvatar());
+    }
+  });
 }
 
 class MyApp extends StatelessWidget {

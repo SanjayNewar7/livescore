@@ -785,6 +785,13 @@ class _ProfileAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: ProfileService(),
+      builder: (context, _) => _buildAvatar(context),
+    );
+  }
+
+  Widget _buildAvatar(BuildContext context) {
     final profile = ProfileService().profile;
     final imagePath = profile.imagePath;
     final hasPhoto = imagePath != null &&
