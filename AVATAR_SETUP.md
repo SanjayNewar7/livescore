@@ -10,8 +10,10 @@ API secret must stay on the server.
    add `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET` as environment variables
    for the function. Do not put either value in Flutter or in source control.
 2. Visit `https://YOUR-PROJECT.vercel.app/api/avatars` and confirm it returns an
-   `avatars` array. If it is empty, confirm the Cloudinary folder is named
-   exactly `LiveGoal Avatar` and that its assets have public delivery enabled.
+   `avatars` array. If it reports no images, confirm that the Cloudinary API
+   key and secret belong to the same product environment as the 27 images,
+   that its cloud name is `dkk7zqgnz`, and that the root asset folder is named
+   exactly `LiveGoal Avatar`. Check a sample asset's public delivery URL.
 3. Build Flutter with
    `flutter build apk --dart-define=AVATAR_CATALOG_URL=https://YOUR-PROJECT.vercel.app/api/avatars`.
    Use the same define for `flutter run` and release App Bundles.
