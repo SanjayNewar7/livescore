@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0f1623">
+  <title>Players · LiveGoal Studio</title>
+  <link rel="stylesheet" href="/players/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/players/" aria-label="LiveGoal Studio home">
+        <span class="brand-mark">⚽</span><span><strong>LiveGoal</strong><small>STUDIO</small></span>
+      </a>
+      <div class="nav-label">WORKSPACE</div>
+      <a class="nav-link active" href="/players/"><span>♟</span> Players <span class="nav-dot"></span></a>
+      <a class="nav-link" href="/api/avatars" target="_blank" rel="noopener"><span>◉</span> Avatar catalog <span class="external">↗</span></a>
+      <div class="sidebar-bottom">
+        <div class="sidebar-help"><span class="help-icon">↗</span><strong>Published data</strong><p>Changes are saved to GitHub, then deployed to the app feed.</p></div>
+        <button class="logout" id="logout" hidden>Sign out <span>↗</span></button>
+      </div>
+    </aside>
+    <main class="workspace">
+      <header class="topbar"><span>Content management <span class="crumb">/</span> Players</span><div class="top-right"><span class="live-dot"></span> Connected to Vercel <span id="account" class="account"></span></div></header>
+      <section class="page-head"><div><div class="eyebrow">PLAYER DATABASE</div><h1>Players <span class="heading-spark">✦</span></h1><p>Keep every player profile ready for match day.</p></div><div class="head-actions"><a class="ghost-button" href="/predefined_data.json" target="_blank" rel="noopener">View live feed <span>↗</span></a><button class="primary-button" id="addPlayer">＋ Add player</button></div></section>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <section id="authPanel" class="auth-panel"><div class="auth-icon">♟</div><div class="eyebrow">PRIVATE WORKSPACE</div><h2 id="authTitle">Checking access…</h2><p id="authMessage">Connecting to your player workspace.</p><a class="primary-button sign-in" id="signIn" href="/api/admin/login" hidden>Continue with GitHub <span>↗</span></a></section>
+      <section id="editorPanel" class="content-grid" hidden>
+        <div class="list-card"><div class="list-head"><div><span class="eyebrow">CATALOG</span><h2>All players <span id="playerCount" class="count">0</span></h2></div><button id="reload" class="icon-button" title="Reload from GitHub" aria-label="Reload from GitHub">↻</button></div><label class="search-wrap"><span>⌕</span><input id="search" type="search" placeholder="Search name, club, nationality…" autocomplete="off"></label><div class="list-meta"><span id="shownCount">Showing all players</span><span>A–Z</span></div><div id="playerList" class="player-list"></div></div>
+        <div class="detail-card"><div id="emptyState" class="empty-state"><div class="empty-illustration">⚽</div><h2>Select a player</h2><p>Choose a profile from the catalog to view and edit their details.</p></div><form id="playerForm" hidden>
+          <div class="detail-toolbar"><div><span class="eyebrow" id="editMode">PLAYER PROFILE</span><h2 id="detailTitle">Player details</h2></div><span class="status-pill">● &nbsp; Draft</span></div>
+          <div class="profile-hero"><div class="hero-photo"><img id="preview" alt="Player portrait"><span id="photoFallback">♟</span></div><div><span class="hero-kicker">PLAYER CARD</span><strong id="heroName">New player</strong><span id="heroMeta">Add profile details below</span></div></div>
+          <div class="form-section"><div class="section-heading"><div><span class="section-number">01</span><h3>Basic information</h3></div><p>Identity and current club</p></div><div class="form-grid"><label>Player ID<input name="id" required maxlength="100" placeholder="e.g. fp_player_name"></label><label>Full name<input name="name" required maxlength="100" placeholder="Player name"></label><label>Club name<input name="teamName" maxlength="100" placeholder="Current club"></label><label>Club ID<input name="teamId" maxlength="100" placeholder="ESPN club ID"></label><label>Position<input name="position" maxlength="30" placeholder="FW, MF, DF, GK"></label><label>Jersey number<input name="jersey" maxlength="20" placeholder="Number"></label><label>Nationality<input name="nationality" maxlength="100" placeholder="Country"></label><label class="span-two">Image URL<input name="imageUrl" type="url" placeholder="https://…"></label></div></div>
+          <div class="form-section"><div class="section-heading"><div><span class="section-number">02</span><h3>Career totals</h3></div><label class="toggle"><input id="hasStats" type="checkbox"><span>Detailed stats</span></label></div><div id="statsFields"><div class="form-grid three"><label>Appearances<input name="careerAppearances" type="number" min="0" step="1"></label><label>Goals<input name="careerGoals" type="number" min="0" step="1"></label><label>Assists<input name="careerAssists" type="number" min="0" step="1"></label></div></div></div>
+          <div id="seasonSection" class="form-section"><div class="section-heading"><div><span class="section-number">03</span><h3>Current season</h3></div><p>Published season figures</p></div><div class="form-grid"><label>Season<input name="statsSeason" placeholder="2026-27"></label><label>League<input name="statsLeague" placeholder="Premier League"></label><label>Team<input name="statsTeam" placeholder="Club name"></label><label>Goals<input name="goals" type="number" min="0" step="any"></label><label>Goals per 90<input name="goalsPer90" type="number" min="0" step="any"></label><label>Shots<input name="shots" type="number" min="0" step="any"></label><label>Shots on target<input name="shotsOnTarget" type="number" min="0" step="any"></label><label>Pass accuracy %<input name="passAccuracy" type="number" min="0" max="100" step="any"></label><label>Tackles<input name="tackles" type="number" min="0" step="any"></label><label>Interceptions<input name="interceptions" type="number" min="0" step="any"></label></div></div>
+          <div id="historySection" class="form-section"><div class="section-heading"><div><span class="section-number">04</span><h3>Career history</h3></div><button type="button" id="addRow" class="text-button">＋ Add row</button></div><div id="careerRows" class="career-rows"></div></div>
+          <div class="form-actions"><button type="button" id="deletePlayer" class="delete-button">Delete player</button><div><span id="saveState" class="save-state"></span><button type="submit" class="primary-button" id="savePlayer">Save changes <span>→</span></button></div></div>
+        </form></div>
+      </section>
+      <footer>LiveGoal Studio <span>•</span> Changes publish after Vercel finishes deploying.</footer>
+    </main>
+  </div>
+  <script src="/players/app.js" defer></script>
+</body>
+</html>
