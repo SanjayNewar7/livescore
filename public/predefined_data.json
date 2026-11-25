@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "2026-11-21T14:47:19.043Z",
+  "revision": "2026-11-25T01:48:24.725Z",
   "famousPlayers": [
     {
       "id": "22774",
@@ -1068,7 +1068,7 @@
   "predefinedPlayerStats": {
     "22774": {
       "careerAppearances": 1350,
-      "careerGoals": 986,
+      "careerGoals": 988,
       "careerAssists": 261,
       "careerStats": [
         {
@@ -1089,7 +1089,7 @@
           "season": "2023–Present",
           "team": "Al-Nassr FC",
           "appearances": 167,
-          "goals": 138,
+          "goals": 140,
           "assists": 23
         },
         {
